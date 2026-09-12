@@ -1,0 +1,51 @@
+# Root .gitignore — applies to whole repo. Subprojects may add their own.
+# Note: poc-v2/backend/.gitignore already covers backend-specific entries.
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# Logs (workspace is full of test/build logs)
+*.log
+*.err.log
+*.out.log
+
+# Databases / build artifacts
+*.db
+*.sqlite
+*.sqlite3
+coverage.html
+coverage.out
+.nyc_output/
+
+# Local tools / downloads
+.tools/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go binaries (defense-in-depth even if backend has its own .gitignore)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Local smoke-test scratch
+_smoke.ts
+.poc-tests*.log
