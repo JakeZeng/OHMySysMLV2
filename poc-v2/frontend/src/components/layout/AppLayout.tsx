@@ -1,0 +1,18 @@
+/**
+ * 主布局：顶导航 + 内容区 Outlet。
+ */
+
+import * as React from 'react';
+import { Outlet } from 'react-router-dom';
+import { TopNav } from './TopNav';
+
+export const AppLayout: React.FC = () => {
+  return (
+    <div className="flex h-screen flex-col">
+      <TopNav />
+      <main className="flex-1 overflow-hidden">
+        <Outlet />
+      </main>
+    </div>
+  );
+};

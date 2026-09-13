@@ -1,0 +1,31 @@
+# poc-v2/.gitignore — covers all subprojects
+# Note: root .gitignore + poc-v2/frontend/.gitignore + poc-v2/backend/.gitignore
+# handle most cases. This file is the catch-all for shared TS-compile output
+# and debug scratch under poc-v2/.
+# Patterns below are relative to this .gitignore's location (poc-v2/).
+
+# --- TypeScript compile output for the shared libs (parser/validator/transform/ast).
+# The .ts sources are tracked; the .js + .d.ts siblings are build artifacts
+# emitted by `tsc`/vitest. We list them explicitly so frontend .js configs
+# (tailwind.config.js, postcss.config.js) are NOT accidentally ignored.
+parser/*.js
+parser/*.d.ts
+parser/*.generated.js
+parser/*.generated.d.ts
+transform/*.js
+transform/*.d.ts
+validator/*.js
+validator/*.d.ts
+ast/*.js
+ast/*.d.ts
+
+# Root package's tsc emit (dist/, top-level .d.ts/.js if any)
+dist/
+
+# Local debug scratch (not part of the test suite)
+tests/_debug.ts
+tests/_smoke.ts
+
+# Coverage / test artifacts already in root .gitignore, but explicit here
+coverage/
+.nyc_output/

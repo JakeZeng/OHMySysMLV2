@@ -1,0 +1,39 @@
+# poc-v2/frontend/.gitignore
+# Note: root .gitignore already covers node_modules/, dist/, *.log, .env*,
+# *.exe, .DS_Store, .idea/, .vscode/. This file only adds frontend-specific
+# build/cache artifacts that the root rules miss.
+
+# Vite dev server cache
+.vite/
+.vite-optimizer-cache/
+.vite-deps/
+
+# Vite-style env overrides (loaded at dev time, never commit)
+*.local
+
+# Vitest / coverage
+coverage/
+.nyc_output/
+.vitest-cache/
+
+# Playwright (E2E runner — keep this forward-compatible)
+playwright-report/
+test-results/
+.playwright/
+
+# TypeScript build info
+*.tsbuildinfo
+.tsbuild/
+
+# ESLint / Prettier caches (project doesn't ship these today, but if a
+# developer adds them locally we don't want CI noise)
+.eslintcache
+.stylelintcache
+.cache/
+
+# Monaco / @monaco-editor loader local cache (loader fetches the editor
+# from a CDN at runtime; the cache dir is per-machine)
+.monaco-cache/
+
+# React 18 devtools bookmark — local-only
+# (no path to add; document-only note)

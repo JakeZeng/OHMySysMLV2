@@ -1,0 +1,104 @@
+/**
+ * 顶部导航：Logo + 用户菜单（Radix DropdownMenu）。
+ */
+
+import * as React from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { LogOut, User as UserIcon, Settings } from 'lucide-react';
+import { useAuthStore } from '../../stores/authStore';
+import { cn } from '../../lib/utils';
+
+export const TopNav: React.FC = () => {
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
+  return (
+    <header
+      className={cn(
+        'flex h-14 items-center justify-between border-b border-gray-200',
+        'bg-white px-4 shadow-sm'
+      )}
+    >
+      <Link
+        to="/"
+        className="flex items-center gap-2 text-base font-semibold text-gray-900 hover:text-brand-600"
+      >
+        <div className="flex h-7 w-7 items-center justify-center rounded bg-brand-600 text-sm font-bold text-white">
+          S
+        </div>
+        <span>SysML v2 MBSE</span>
+      </Link>
+
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-500">
+          {user ? user.email : '未登录'}
+        </span>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              className={cn(
+                'flex h-9 w-9 items-center justify-center rounded-full',
+                'bg-gray-100 text-gray-600 transition hover:bg-gray-200',
+                'focus:outline-none focus:ring-2 focus:ring-brand-500'
+              )}
+              aria-label="用户菜单"
+            >
+              <UserIcon className="h-4 w-4" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={6}
+              className={cn(
+                'z-50 min-w-[200px] rounded-md border border-gray-200 bg-white p-1',
+                'shadow-lg focus:outline-none'
+              )}
+            >
+              {user && (
+                <div className="px-2 py-2">
+                  <div className="text-sm font-medium text-gray-900">
+                    {user.username}
+                  </div>
+                  <div className="truncate text-xs text-gray-500">
+                    {user.email}
+                  </div>
+                </div>
+              )}
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+              <DropdownMenu.Item
+                className={cn(
+                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
+                  'text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100'
+                )}
+              >
+                <Settings className="h-4 w-4" />
+                设置
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={(e) => {
+                  e.preventDefault();
+                  void handleLogout();
+                }}
+                className={cn(
+                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
+                  'text-sm text-red-600 outline-none data-[highlighted]:bg-red-50'
+                )}
+              >
+                <LogOut className="h-4 w-4" />
+                退出登录
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
+    </header>
+  );
+};

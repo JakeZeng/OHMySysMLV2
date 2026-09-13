@@ -1,0 +1,14 @@
+.tools/
+.git/
+.github/
+.idea/
+.vscode/
+*.md
+*.log
+coverage.*
+.env
+.env.local
+bin/
+dist/
+docker-compose.yml
+Dockerfile

@@ -13,6 +13,9 @@ build/
 *.log
 *.err.log
 *.out.log
+# Service stdout/stderr redirects (Start-Process -RedirectStandard*)
+*.out
+*.err
 
 # Databases / build artifacts
 *.db
@@ -21,6 +24,24 @@ build/
 coverage.html
 coverage.out
 .nyc_output/
+
+# Vite dev / build cache (frontend)
+.vite/
+.vite-optimizer-cache/
+.vite-deps/
+
+# Test runner artifacts
+playwright-report/
+test-results/
+.vitest-cache/
+
+# TypeScript build info
+*.tsbuildinfo
+.tsbuild/
+
+# Go runtime temp build outputs (defense-in-depth; backend/.gitignore also
+# covers these, but the workspace root is broad)
+.coverage/
 
 # Local tools / downloads
 .tools/
@@ -49,3 +70,8 @@ Thumbs.db
 # Local smoke-test scratch
 _smoke.ts
 .poc-tests*.log
+
+# Deprecated prototype (v1) — kept on disk as a reference but not part of
+# the M0/M1 codebase. Uncomment the next line if you want to keep it out of
+# git history entirely.
+# poc.deprecated.bak/

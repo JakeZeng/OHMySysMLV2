@@ -1,0 +1,24 @@
+{
+  "name": "sysmlv2-poc-v2",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "SysML v2 MBSE POC v2 — real parser, validator, transformer",
+  "scripts": {
+    "parser:build": "tsx parser/build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "vitest run tests/e2e.test.ts",
+    "verify": "npm run parser:build && npm run test"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.4.4",
+    "peggy": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "~5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
