@@ -1,0 +1,206 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sysmlv2-poc.example.com/schema/v1",
+  "title": "SysML v2 POC Model",
+  "description": "SysML v2 POC 工具的模型 JSON 格式",
+  "type": "object",
+  "required": ["$schema", "version", "exportedAt", "model"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "https://sysmlv2-poc.example.com/schema/v1"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "$ref": "#/definitions/SysMLModel"
+    }
+  },
+  "definitions": {
+    "SysMLModel": {
+      "type": "object",
+      "required": ["packages", "connections"],
+      "properties": {
+        "packages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Package" }
+        },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Connection" }
+        }
+      }
+    },
+    "SourceLocation": {
+      "type": "object",
+      "required": ["line", "column", "offset"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "offset": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Package": {
+      "type": "object",
+      "required": ["kind", "name", "members", "location"],
+      "properties": {
+        "kind": { "const": "package" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "inherits": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "members": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NamespaceMember" }
+        },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "NamespaceMember": {
+      "oneOf": [
+        { "$ref": "#/definitions/Package" },
+        { "$ref": "#/definitions/ImportStatement" },
+        { "$ref": "#/definitions/PartDefinition" },
+        { "$ref": "#/definitions/PortDefinition" },
+        { "$ref": "#/definitions/PartUsage" },
+        { "$ref": "#/definitions/PortUsage" },
+        { "$ref": "#/definitions/AttributeUsage" },
+        { "$ref": "#/definitions/Connection" }
+      ]
+    },
+    "ImportStatement": {
+      "type": "object",
+      "required": ["kind", "namespace", "location"],
+      "properties": {
+        "kind": { "const": "import" },
+        "id": { "type": "string" },
+        "namespace": { "type": "string" },
+        "isRecursive": { "type": "boolean" },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "PartDefinition": {
+      "type": "object",
+      "required": ["kind", "name", "body", "location"],
+      "properties": {
+        "kind": { "const": "partDef" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "isAbstract": { "type": "boolean" },
+        "inherits": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/PortUsage" },
+              { "$ref": "#/definitions/AttributeUsage" }
+            ]
+          }
+        },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "PortDefinition": {
+      "type": "object",
+      "required": ["kind", "name", "body", "location"],
+      "properties": {
+        "kind": { "const": "portDef" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "isAbstract": { "type": "boolean" },
+        "direction": { "enum": ["in", "out", "inout"] },
+        "inherits": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/PortUsage" },
+              { "$ref": "#/definitions/AttributeUsage" }
+            ]
+          }
+        },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "PartUsage": {
+      "type": "object",
+      "required": ["kind", "name", "typeRef", "body", "location"],
+      "properties": {
+        "kind": { "const": "partUsage" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "typeRef": { "type": "string" },
+        "body": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/definitions/PortUsage" },
+              { "$ref": "#/definitions/AttributeUsage" }
+            ]
+          }
+        },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "PortUsage": {
+      "type": "object",
+      "required": ["kind", "location"],
+      "properties": {
+        "kind": { "const": "portUsage" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "typeRef": { "type": "string" },
+        "redefines": { "type": "string" },
+        "direction": { "enum": ["in", "out", "inout"] },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "AttributeUsage": {
+      "type": "object",
+      "required": ["kind", "name", "typeRef", "location"],
+      "properties": {
+        "kind": { "const": "attributeUsage" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "typeRef": { "type": "string" },
+        "defaultValue": { "type": "string" },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "Connection": {
+      "type": "object",
+      "required": ["kind", "source", "target", "location"],
+      "properties": {
+        "kind": { "const": "connection" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "source": { "$ref": "#/definitions/EndpointRef" },
+        "target": { "$ref": "#/definitions/EndpointRef" },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "EndpointRef": {
+      "type": "object",
+      "required": ["partName", "portName", "location"],
+      "properties": {
+        "partName": { "type": "string" },
+        "portName": { "type": "string" },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    }
+  }
+}

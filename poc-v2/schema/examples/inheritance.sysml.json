@@ -1,0 +1,65 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v1",
+  "version": "1.0.0",
+  "exportedAt": "2026-09-14T12:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-inherit",
+        "name": "Inheritance",
+        "members": [
+          {
+            "kind": "portDef",
+            "id": "portdef-power",
+            "name": "Power",
+            "direction": "inout",
+            "body": [],
+            "location": { "line": 2, "column": 3, "offset": 20 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-vehicle",
+            "name": "Vehicle",
+            "isAbstract": true,
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-vehicle-power",
+                "name": "powerPort",
+                "typeRef": "Power",
+                "location": { "line": 5, "column": 5, "offset": 70 }
+              }
+            ],
+            "location": { "line": 4, "column": 3, "offset": 45 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-car",
+            "name": "Car",
+            "inherits": ["Vehicle"],
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-car-power-redef",
+                "redefines": "powerPort",
+                "location": { "line": 9, "column": 5, "offset": 140 }
+              }
+            ],
+            "location": { "line": 8, "column": 3, "offset": 120 }
+          },
+          {
+            "kind": "partUsage",
+            "id": "pu-myCar",
+            "name": "myCar",
+            "typeRef": "Car",
+            "body": [],
+            "location": { "line": 12, "column": 3, "offset": 175 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      }
+    ],
+    "connections": []
+  }
+}

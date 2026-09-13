@@ -1,0 +1,87 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v1",
+  "version": "1.0.0",
+  "exportedAt": "2026-09-14T12:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-car",
+        "name": "CarBasic",
+        "members": [
+          {
+            "kind": "portDef",
+            "id": "portdef-power",
+            "name": "Power",
+            "direction": "inout",
+            "body": [],
+            "location": { "line": 3, "column": 3, "offset": 30 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-engine",
+            "name": "Engine",
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-engine-power",
+                "name": "powerPort",
+                "typeRef": "Power",
+                "location": { "line": 7, "column": 5, "offset": 90 }
+              }
+            ],
+            "location": { "line": 6, "column": 3, "offset": 70 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-car",
+            "name": "Car",
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-car-power",
+                "name": "powerPort",
+                "typeRef": "Power",
+                "location": { "line": 11, "column": 5, "offset": 150 }
+              }
+            ],
+            "location": { "line": 10, "column": 3, "offset": 130 }
+          },
+          {
+            "kind": "partUsage",
+            "id": "pu-car1",
+            "name": "car1",
+            "typeRef": "Car",
+            "body": [],
+            "location": { "line": 14, "column": 3, "offset": 180 }
+          },
+          {
+            "kind": "partUsage",
+            "id": "pu-engine1",
+            "name": "engine1",
+            "typeRef": "Engine",
+            "body": [],
+            "location": { "line": 15, "column": 3, "offset": 200 }
+          },
+          {
+            "kind": "connection",
+            "id": "conn-1",
+            "source": {
+              "partName": "car1",
+              "portName": "powerPort",
+              "location": { "line": 17, "column": 10, "offset": 230 }
+            },
+            "target": {
+              "partName": "engine1",
+              "portName": "powerPort",
+              "location": { "line": 17, "column": 35, "offset": 255 }
+            },
+            "location": { "line": 17, "column": 3, "offset": 223 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      }
+    ],
+    "connections": []
+  }
+}

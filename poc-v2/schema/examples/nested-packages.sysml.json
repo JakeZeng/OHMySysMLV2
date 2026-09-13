@@ -1,0 +1,103 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v1",
+  "version": "1.0.0",
+  "exportedAt": "2026-09-14T12:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-powertrain",
+        "name": "Powertrain",
+        "members": [
+          {
+            "kind": "portDef",
+            "id": "portdef-power",
+            "name": "Power",
+            "direction": "inout",
+            "body": [],
+            "location": { "line": 2, "column": 3, "offset": 20 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-motor",
+            "name": "Motor",
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-motor-power",
+                "name": "powerIn",
+                "typeRef": "Power",
+                "direction": "in",
+                "location": { "line": 5, "column": 5, "offset": 65 }
+              }
+            ],
+            "location": { "line": 4, "column": 3, "offset": 45 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      },
+      {
+        "kind": "package",
+        "id": "pkg-chassis",
+        "name": "Chassis",
+        "members": [
+          {
+            "kind": "import",
+            "id": "import-powertrain",
+            "namespace": "Powertrain",
+            "isRecursive": false,
+            "location": { "line": 10, "column": 3, "offset": 110 }
+          },
+          {
+            "kind": "partDef",
+            "id": "partdef-car",
+            "name": "Car",
+            "body": [
+              {
+                "kind": "portUsage",
+                "id": "port-car-power",
+                "name": "powerPort",
+                "typeRef": "Power",
+                "location": { "line": 13, "column": 5, "offset": 165 }
+              }
+            ],
+            "location": { "line": 12, "column": 3, "offset": 145 }
+          },
+          {
+            "kind": "partUsage",
+            "id": "pu-car1",
+            "name": "car1",
+            "typeRef": "Car",
+            "body": [],
+            "location": { "line": 16, "column": 3, "offset": 200 }
+          },
+          {
+            "kind": "partUsage",
+            "id": "pu-motor1",
+            "name": "motor1",
+            "typeRef": "Motor",
+            "body": [],
+            "location": { "line": 17, "column": 3, "offset": 220 }
+          },
+          {
+            "kind": "connection",
+            "id": "conn-1",
+            "source": {
+              "partName": "car1",
+              "portName": "powerPort",
+              "location": { "line": 19, "column": 10, "offset": 250 }
+            },
+            "target": {
+              "partName": "motor1",
+              "portName": "powerIn",
+              "location": { "line": 19, "column": 35, "offset": 275 }
+            },
+            "location": { "line": 19, "column": 3, "offset": 243 }
+          }
+        ],
+        "location": { "line": 9, "column": 1, "offset": 100 }
+      }
+    ],
+    "connections": []
+  }
+}

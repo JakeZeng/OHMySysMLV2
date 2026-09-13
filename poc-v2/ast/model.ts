@@ -62,7 +62,8 @@ export type NamespaceMember =
   | PortDefinition
   | PartUsage
   | PortUsage
-  | AttributeUsage;
+  | AttributeUsage
+  | Connection;
 
 /** `import Foo::*;` 或 `import Bar;` */
 export interface ImportStatement extends SysMLNode {

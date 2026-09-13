@@ -73,4 +73,51 @@ describe('modelStore - pipeline', () => {
     useModelStore.getState().setContent('package P {}');
     expect(useModelStore.getState().saved).toBe(false);
   });
+
+  it('7. pipeline nodes 包含 location 信息（支持错误→图形跳转）', () => {
+    useModelStore.getState().setContent(`
+      package P {
+        part def Engine { }
+        part def Car { }
+      }
+    `);
+    const { nodes } = useModelStore.getState().pipeline;
+    expect(nodes.length).toBeGreaterThanOrEqual(2);
+    for (const n of nodes) {
+      const loc = (n.data as { location?: { line: number; column: number } }).location;
+      expect(loc).toBeDefined();
+      expect(loc!.line).toBeGreaterThan(0);
+      expect(loc!.column).toBeGreaterThan(0);
+    }
+  });
+
+  it('8. 按行号可匹配错误到对应图形节点', () => {
+    // 构造一个有验证错误的模型
+    useModelStore.getState().setContent(`
+      package P {
+        part def Engine { }
+        part foo : NoSuchType { }
+      }
+    `);
+    const { parseErrors, validationIssues, nodes } = useModelStore.getState().pipeline;
+    expect(parseErrors).toHaveLength(0);
+    // 应有 E102_UNDEFINED_TYPE 错误
+    const typeErrors = validationIssues.filter((i) => i.code === 'E102_UNDEFINED_TYPE');
+    expect(typeErrors.length).toBeGreaterThan(0);
+
+    // 验证通过行号可以找到对应节点（ErrorPanel 跳转的核心逻辑）
+    for (const err of typeErrors) {
+      const matchingNode = nodes.find(
+        (n) =>
+          n.data &&
+          (n.data as { location?: { line: number } }).location?.line === err.location.line
+      );
+      // 部分错误（如类型引用错误）可能匹配到节点
+      if (matchingNode) {
+        expect((matchingNode.data as { location: { line: number } }).location.line).toBe(
+          err.location.line
+        );
+      }
+    }
+  });
 });

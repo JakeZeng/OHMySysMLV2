@@ -16,13 +16,17 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
+  Download,
+  Upload,
 } from 'lucide-react';
-import SysMLEditor, { type PipelineResult } from '../editor/SysMLEditor';
-import { DiagramCanvas } from '../canvas/DiagramCanvas';
+import SysMLEditor, { type PipelineResult, type SysMLEditorHandle } from '../editor/SysMLEditor';
+import { DiagramCanvas, type DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { ErrorPanel } from '../editor/ErrorPanel';
 import { Button } from '../components/ui/Button';
 import { useModelStore } from '../stores/modelStore';
 import { useToast } from '../components/ui/Toast';
+import { downloadJson } from '@transform/exportJson';
+import { importFromJson } from '@transform/importJson';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -51,7 +55,9 @@ export const ModelEditor: React.FC = () => {
   const deleteConnection = useModelStore((s) => s.deleteConnection);
   const setNodePosition = useModelStore((s) => s.setNodePosition);
 
-  const editorRef = React.useRef<unknown>(null);
+  const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
+  const diagramRef = React.useRef<DiagramCanvasHandle>(null);
+  const [errorPanelExpanded, setErrorPanelExpanded] = React.useState(true);
 
   // 暴露 dev hook：浏览器演示脚本可直接调用 store action
   React.useEffect(() => {
@@ -88,6 +94,24 @@ export const ModelEditor: React.FC = () => {
     // pipeline 已在 store 中更新，这里只需要触发一次 UI 反馈
   }, []);
 
+  // 错误面板跳转：同时跳 Monaco 和图聚焦
+  const handleJumpTo = React.useCallback(
+    (line: number, column: number) => {
+      // 1. Monaco 跳转
+      sysmlEditorRef.current?.revealPosition(line, column);
+      // 2. 图形聚焦：找到 location 匹配的 node 并高亮
+      const matchingNode = pipeline.nodes.find(
+        (n) =>
+          n.data &&
+          (n.data as { location?: { line: number } }).location?.line === line
+      );
+      if (matchingNode) {
+        diagramRef.current?.focusNode(String(matchingNode.id));
+      }
+    },
+    [pipeline.nodes]
+  );
+
   const handleSave = async () => {
     try {
       await saveModel();
@@ -100,6 +124,49 @@ export const ModelEditor: React.FC = () => {
       });
     }
   };
+
+  // 导出 JSON
+  const handleExportJson = React.useCallback(() => {
+    try {
+      downloadJson(pipeline.model, `${name || 'model'}.sysml.json`);
+      showToast({ title: '已导出 JSON', variant: 'success' });
+    } catch (e) {
+      showToast({
+        title: '导出失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [pipeline.model, name, showToast]);
+
+  // 导入 JSON
+  const handleImportJson = React.useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = reader.result as string;
+        const result = importFromJson(text);
+        if (result.ok) {
+          setContent(result.text);
+          showToast({ title: '已导入 JSON', variant: 'success' });
+        } else {
+          const firstErr = result.errors[0];
+          showToast({
+            title: '导入失败',
+            description: `${firstErr.path}: ${firstErr.message}`,
+            variant: 'error',
+          });
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, [setContent, showToast]);
 
   const parseErrorCount = pipeline.parseErrors.length;
   const validationErrorCount = pipeline.validationIssues.filter(
@@ -147,28 +214,60 @@ export const ModelEditor: React.FC = () => {
           )}
         </Button>
 
+        <div className="mx-1 h-5 w-px bg-gray-200" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleExportJson}
+          disabled={loading}
+          title="导出 JSON"
+        >
+          <Download className="h-3.5 w-3.5" /> 导出
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleImportJson}
+          title="导入 JSON"
+        >
+          <Upload className="h-3.5 w-3.5" /> 导入
+        </Button>
+
         <div className="flex-1" />
 
-        {/* 状态徽章 */}
+        {/* 状态徽章（可点击展开/折叠错误面板） */}
         {loading ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
             <Loader2 className="h-3 w-3 animate-spin" /> 加载中
           </span>
         ) : parseErrorCount > 0 ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+          <button
+            type="button"
+            onClick={() => setErrorPanelExpanded((v) => !v)}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 transition hover:bg-red-200"
+          >
             <AlertCircle className="h-3 w-3" />
             {parseErrorCount} 解析错误
-          </span>
+          </button>
         ) : validationErrorCount > 0 ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+          <button
+            type="button"
+            onClick={() => setErrorPanelExpanded((v) => !v)}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 transition hover:bg-red-200"
+          >
             <AlertCircle className="h-3 w-3" />
             {validationErrorCount} 语义错误
-          </span>
+          </button>
         ) : warningCount > 0 ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+          <button
+            type="button"
+            onClick={() => setErrorPanelExpanded((v) => !v)}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 transition hover:bg-amber-200"
+          >
             <AlertTriangle className="h-3 w-3" />
             {warningCount} 警告
-          </span>
+          </button>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
             <CheckCircle2 className="h-3 w-3" /> 有效
@@ -187,18 +286,24 @@ export const ModelEditor: React.FC = () => {
         <div className="flex w-3/5 flex-col border-r border-gray-200">
           <div className="flex-1 overflow-hidden">
             <SysMLEditor
+              ref={sysmlEditorRef}
               value={content}
               onChange={(v) => setContent(v)}
               onPipelineResult={handlePipeline}
             />
           </div>
-          <ErrorPanel
-            parseErrors={pipeline.parseErrors}
-            validationIssues={pipeline.validationIssues}
-          />
+          {errorPanelExpanded && (
+            <ErrorPanel
+              parseErrors={pipeline.parseErrors}
+              validationIssues={pipeline.validationIssues}
+              onJumpTo={handleJumpTo}
+              onJumpToGraphNode={handleJumpTo}
+            />
+          )}
         </div>
         <div className="relative w-2/5 bg-gray-50">
           <DiagramCanvas
+            ref={diagramRef}
             nodes={pipeline.nodes}
             edges={pipeline.edges}
             onNodeRename={renameNode}

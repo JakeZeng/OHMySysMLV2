@@ -5,7 +5,13 @@
  * 提供实时解析和图形同步功能（端到端 pipeline）。
  */
 
-import React, { useCallback, useRef, useEffect } from 'react';
+import React, {
+  useCallback,
+  useRef,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
 import Editor, { OnMount, OnChange } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { parse } from '@parser/parser';
@@ -13,7 +19,7 @@ import { validate } from '@validator/validator';
 import type { ValidationIssue } from '@validator/validator';
 import type { ParseError } from '@ast/model';
 
-// ─── 组件 Props ──────────────────────────────────────────────────────────
+// ─── 组件 Props & Ref Handle ────────────────────────────────────────────
 
 export interface PipelineResult {
   parseErrors: ParseError[];
@@ -26,6 +32,16 @@ interface SysMLEditorProps {
   onPipelineResult?: (result: PipelineResult) => void;
   height?: string | number;
   readOnly?: boolean;
+}
+
+/** 暴露给父组件的操作接口 */
+export interface SysMLEditorHandle {
+  /** 滚动到指定行列并闪烁高亮 2 秒 */
+  revealPosition(line: number, column: number): void;
+  /** 获取 Monaco editor 实例 */
+  getEditor(): Monaco.editor.IStandaloneCodeEditor | null;
+  /** 获取 Monaco 命名空间 */
+  getMonaco(): typeof Monaco | null;
 }
 
 // ─── SysML Monarch Tokenizer ────────────────────────────────────────────
@@ -120,16 +136,52 @@ function registerSysMLLanguage(monacoInstance: typeof Monaco) {
 
 // ─── 组件实现 ─────────────────────────────────────────────────────────────
 
-const SysMLEditor: React.FC<SysMLEditorProps> = ({
+const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   value,
   onChange,
   onPipelineResult,
   height = '100%',
   readOnly = false,
-}) => {
+}, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const decorationCollectionRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+
+  // 暴露给父组件的导航接口
+  useImperativeHandle(ref, () => ({
+    revealPosition(line: number, column: number) {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      if (!editor || !monaco) return;
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column });
+      editor.focus();
+      // 临时高亮：在目标行添加全行背景色，2 秒后移除
+      if (decorationCollectionRef.current) {
+        decorationCollectionRef.current.clear();
+      }
+      decorationCollectionRef.current = editor.createDecorationsCollection([
+        {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: 'sysml-error-line-highlight',
+            glyphMarginClassName: 'sysml-error-glyph',
+          },
+        },
+      ]);
+      setTimeout(() => {
+        decorationCollectionRef.current?.clear();
+      }, 2000);
+    },
+    getEditor() {
+      return editorRef.current;
+    },
+    getMonaco() {
+      return monacoRef.current;
+    },
+  }), []);
 
   // 完整的端到端 pipeline：text → parse → validate
   const runPipeline = useCallback(
@@ -284,6 +336,6 @@ const SysMLEditor: React.FC<SysMLEditorProps> = ({
       theme="vs-dark"
     />
   );
-};
+});
 
 export default SysMLEditor;

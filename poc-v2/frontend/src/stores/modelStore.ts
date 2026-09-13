@@ -20,6 +20,7 @@ import type {
 import type { ValidationIssue } from '@validator/validator';
 import type { Node, Edge } from '@xyflow/react';
 import { modelApi, type ModelRecord } from '../services/modelApi';
+import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 
 interface PipelineResult {
   parseErrors: ParseError[];
@@ -46,6 +47,12 @@ interface ModelState {
   userPositions: Record<string, { x: number; y: number }>;
   /** 上一次 ELK layout 耗时（ms） */
   perfMs: number;
+  // M2 AI 语法检查
+  aiChecking: boolean;
+  aiStreamContent: string;
+  aiIssues: AIIssue[];
+  aiError: string | null;
+  aiAbortController: AbortController | null;
 
   setName: (n: string) => void;
   setContent: (c: string) => void;
@@ -61,6 +68,10 @@ interface ModelState {
   deleteConnection: (edgeId: string) => void;
   setNodePosition: (nodeId: string, x: number, y: number) => void;
   applyElkLayout: () => Promise<void>;
+
+  // M2 AI 语法检查
+  runAiCheck: () => void;
+  cancelAiCheck: () => void;
 }
 
 const EMPTY_PIPELINE: PipelineResult = {
@@ -84,6 +95,11 @@ export const useModelStore = create<ModelState>((set, get) => ({
   error: null,
   userPositions: {},
   perfMs: 0,
+  aiChecking: false,
+  aiStreamContent: '',
+  aiIssues: [],
+  aiError: null,
+  aiAbortController: null,
 
   setName(n) {
     set({ name: n, saved: false });
@@ -288,5 +304,58 @@ export const useModelStore = create<ModelState>((set, get) => ({
       String(n.id) === nodeId ? { ...n, position: { x, y } } : n
     );
     set({ pipeline: { ...get().pipeline, nodes } });
+  },
+
+  // ─── M2 AI 语法检查 ──────────────────────────────────────────────
+
+  runAiCheck() {
+    const { content, aiAbortController } = get();
+    // 取消前一次请求
+    if (aiAbortController) {
+      aiAbortController.abort();
+    }
+
+    set({
+      aiChecking: true,
+      aiStreamContent: '',
+      aiIssues: [],
+      aiError: null,
+    });
+
+    const controller = checkSyntaxStream(
+      content,
+      {
+        onChunk(chunk) {
+          set((s) => ({ aiStreamContent: s.aiStreamContent + chunk }));
+        },
+        onDone(issues) {
+          set({
+            aiChecking: false,
+            aiIssues: issues,
+            aiAbortController: null,
+          });
+        },
+        onError(error) {
+          set({
+            aiChecking: false,
+            aiError: error,
+            aiAbortController: null,
+          });
+        },
+      }
+    );
+
+    set({ aiAbortController: controller });
+  },
+
+  cancelAiCheck() {
+    const { aiAbortController } = get();
+    if (aiAbortController) {
+      aiAbortController.abort();
+      set({
+        aiChecking: false,
+        aiAbortController: null,
+      });
+    }
   },
 }));

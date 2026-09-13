@@ -36,6 +36,7 @@ func main() {
 	defer repo.Close()
 
 	h := handler.New(repo)
+	aiH := handler.NewAIHandler()
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -82,6 +83,14 @@ func main() {
 			models.GET("/:id", h.GetModel)
 			models.PUT("/:id", h.UpdateModel)
 			models.DELETE("/:id", h.DeleteModel)
+		}
+
+		// AI 语法检查（也需认证）
+		aiGroup := v1.Group("/ai")
+		aiGroup.Use(middleware.AuthRequired())
+		{
+			aiGroup.POST("/check", aiH.CheckSyntax)
+			aiGroup.POST("/check/stream", aiH.CheckSyntaxStream)
 		}
 	}
 

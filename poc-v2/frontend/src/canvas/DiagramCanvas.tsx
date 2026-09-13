@@ -7,7 +7,14 @@
  *   - 持久化：拖动后位置写入 store
  */
 
-import React, { useMemo, useCallback } from 'react';
+import React, {
+  useMemo,
+  useCallback,
+  useRef,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
 import {
   ReactFlow,
   Background,
@@ -21,6 +28,7 @@ import {
   type NodeChange,
   type EdgeChange,
   type Connection,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -163,9 +171,15 @@ export interface DiagramCanvasProps {
   nodeCount?: number;
 }
 
+/** 暴露给父组件的操作接口 */
+export interface DiagramCanvasHandle {
+  /** 聚焦并高亮指定节点 */
+  focusNode(nodeId: string): void;
+}
+
 // ─── 组件 ─────────────────────────────────────────────────────────────
 
-export const DiagramCanvas: React.FC<DiagramCanvasProps> = ({
+export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>(({
   nodes,
   edges,
   onNodeRename,
@@ -174,10 +188,44 @@ export const DiagramCanvas: React.FC<DiagramCanvasProps> = ({
   onEdgesDelete,
   onNodePositionChange,
   nodeCount,
-}) => {
+}, ref) => {
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [highlightedNodeId, setHighlightedNodeId] = React.useState<string | null>(null);
+
+  const scheduleClear = useCallback(() => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightedNodeId(null), 2000);
+  }, []);
+
+  // 暴露给父组件
+  useImperativeHandle(ref, () => ({
+    focusNode(nodeId: string) {
+      const instance = rfInstanceRef.current;
+      if (!instance) return;
+      const node = instance.getNode(nodeId);
+      if (node) {
+        instance.fitView({ nodes: [node as Node], duration: 500, padding: 0.5 });
+        setHighlightedNodeId(nodeId);
+        scheduleClear();
+      }
+    },
+  }), [scheduleClear]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
   const stableNodes = useMemo(
-    () => nodes.map((n) => ({ ...n, id: String(n.id) })),
-    [nodes]
+    () =>
+      nodes.map((n) => ({
+        ...n,
+        id: String(n.id),
+        className: String(n.id) === highlightedNodeId ? 'rf-node-highlight' : undefined,
+      })),
+    [nodes, highlightedNodeId]
   );
   const stableEdges = useMemo(
     () => edges.map((e) => ({ ...e, id: String(e.id) })),
@@ -251,6 +299,12 @@ export const DiagramCanvas: React.FC<DiagramCanvasProps> = ({
     // no-op
   }, []);
 
+  // ReactFlow 初始化：保存实例引用
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleInit = useCallback((instance: any) => {
+    rfInstanceRef.current = instance as ReactFlowInstance;
+  }, []);
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <ReactFlow
@@ -263,6 +317,7 @@ export const DiagramCanvas: React.FC<DiagramCanvasProps> = ({
         onEdgesDelete={handleEdgesDelete}
         onNodeDoubleClick={handleNodeDoubleClick}
         onConnect={handleConnect}
+        onInit={handleInit}
         onlyRenderVisibleElements={true}  // M2 性能：视口内才渲染
         nodesDraggable={true}
         nodesConnectable={false}
@@ -308,4 +363,4 @@ export const DiagramCanvas: React.FC<DiagramCanvasProps> = ({
       )}
     </div>
   );
-};
+});
