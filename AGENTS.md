@@ -58,7 +58,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 - All tests must pass before opening a PR: `cd poc-v2 && npm test` and `cd poc-v2/backend && go test ./...`
 - New behavior = new test in the matching `*.test.ts` next to the code (mirror existing layout)
-- Parser/grammar changes require regenerating `parser.generated.ts` and re-running the full 54-test suite
+- Parser/grammar changes require regenerating `parser.generated.ts` and re-running the full 64-test suite
 - E2E pipeline: `poc-v2/tests/e2e.test.ts` covers parse → validate → transform → flow
 
 ## Security & secrets

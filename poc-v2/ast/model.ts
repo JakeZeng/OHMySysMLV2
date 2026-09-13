@@ -46,6 +46,11 @@ export interface SysMLNode {
 export interface Package extends SysMLNode {
   kind: 'package';
   name: string;
+  /**
+   * 父包限定名（来自 `package Sub : Parent { ... }`）。
+   * M1 不做继承的 package 语义合并，仅用于 import 解析。
+   */
+  inherits?: string[];
   members: NamespaceMember[];
 }
 
@@ -72,6 +77,11 @@ export interface PartDefinition extends SysMLNode {
   kind: 'partDef';
   name: string;
   isAbstract?: boolean;
+  /**
+   * 直接父类型限定名（来自 `part def Sub : Base`）。
+   * 多层继承解析依赖验证器沿此链向上追溯。
+   */
+  inherits?: string[];
   body: PartBodyMember[];
 }
 
@@ -80,6 +90,7 @@ export interface PortDefinition extends SysMLNode {
   name: string;
   isAbstract?: boolean;
   direction?: Direction;
+  inherits?: string[];
   body: PortBodyMember[];
 }
 

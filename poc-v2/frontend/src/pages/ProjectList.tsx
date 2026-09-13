@@ -94,7 +94,7 @@ export const ProjectList: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {list.map((p) => (
-              <Link key={p.id} to={`/projects/${p.id}`} className="block">
+              <Link key={p.id} to={`/projects/${p.id}`} className="block" data-testid="project-card">
                 <Card className="h-full transition hover:border-brand-300 hover:shadow">
                   <CardHeader>
                     <CardTitle className="truncate">{p.name}</CardTitle>

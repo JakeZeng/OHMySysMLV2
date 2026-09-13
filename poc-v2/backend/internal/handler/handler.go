@@ -2,9 +2,7 @@
 package handler
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/model"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
 )
@@ -52,14 +51,18 @@ type loginReq struct {
 
 type tokenResp struct {
 	Token    string      `json:"token"`
+	Expires  time.Time   `json:"expires"`
 	User     *model.User `json:"user"`
 }
 
-// newToken 生成 32 字节随机 hex token。
-func newToken() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+// newToken 生成 JWT token（24 小时有效期）。
+func newToken(userID string) (string, time.Time, error) {
+	expires := time.Now().Add(24 * time.Hour)
+	token, err := middleware.GenerateToken(userID, 24*time.Hour)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return token, expires, nil
 }
 
 // Register 注册新用户。
@@ -92,9 +95,16 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
+	token, expires, err := newToken(user.ID)
+	if err != nil {
+		serverError(c, "生成 token 失败", err)
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": tokenResp{
-		Token: newToken(),
-		User:  user,
+		Token:   token,
+		Expires: expires,
+		User:    user,
 	}})
 }
 
@@ -116,9 +126,16 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	token, expires, err := newToken(user.ID)
+	if err != nil {
+		serverError(c, "生成 token 失败", err)
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": tokenResp{
-		Token: newToken(),
-		User:  user,
+		Token:   token,
+		Expires: expires,
+		User:    user,
 	}})
 }
 
@@ -427,6 +444,5 @@ func checkPassword(pw, stored string) bool {
 }
 
 func sha256Sum(s string) string {
-	// 延迟 import 避免顶部导包
 	return sha256Of(s)
 }

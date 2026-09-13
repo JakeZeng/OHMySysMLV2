@@ -37,3 +37,7 @@ test-results/
 
 # React 18 devtools bookmark — local-only
 # (no path to add; document-only note)
+
+# Local browser-demo artifacts (manual verification only; not part of code)
+demo.js
+demo-screenshots/

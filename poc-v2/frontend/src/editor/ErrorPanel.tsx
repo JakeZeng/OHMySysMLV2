@@ -37,6 +37,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
 
   return (
     <div
+      data-testid="error-panel"
       style={{
         maxHeight: '200px',
         overflowY: 'auto',

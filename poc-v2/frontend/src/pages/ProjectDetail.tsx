@@ -181,6 +181,7 @@ export const ProjectDetail: React.FC = () => {
                 key={m.id}
                 to={`/models/${m.id}?projectId=${projectId}`}
                 className="block"
+                data-testid="model-row"
               >
                 <Card className="transition hover:border-brand-300 hover:shadow">
                   <CardHeader>

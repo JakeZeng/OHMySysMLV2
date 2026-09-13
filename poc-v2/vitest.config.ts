@@ -12,4 +12,8 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**', 'frontend/**'],
   },
+  resolve: {
+    // 强制 .ts 优先于 .js（避免 vitest 拿旧的 build 产物 .js）
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'],
+  },
 });

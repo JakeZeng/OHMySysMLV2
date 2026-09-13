@@ -24,5 +24,6 @@
       "@ast/*": ["../ast/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["../parser/parser.generated.ts"]
 }

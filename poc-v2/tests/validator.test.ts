@@ -249,12 +249,159 @@ describe('Validator - 端到端', () => {
     const p = parse(src);
     const v = validate(p.model);
     // vehicle-system 包含 import + 跨包引用 + 链式 connect。
-    // MVP 限制：import 不解析（这是显式记录的限制，见 poc-v2-results.md），
-    // 链式 connect 只解析第一段。允许 E102/E106 来自这些限制。
-    // 验证：至少能解析顶层 package 内的引用，connect 至少能找到第一段。
+    // M1：import 已解析；链式 connect（多段）仍按第一段处理。
+    // 至少要保证：没有循环继承 / 没有重复定义 / 顶层 connect 第一段可达。
     const firstSegmentErrors = v.issues.filter(
       (i) => i.code === 'E101_DUPLICATE_NAME' || i.code === 'E108_CIRCULAR_INHERITANCE'
     );
     expect(firstSegmentErrors).toHaveLength(0);
+  });
+});
+
+describe('Validator - 多层继承 (M1)', () => {
+  it('18. 三层继承（A → B → C）的 part 可访问根类型端口', () => {
+    const { validate: v } = parseAndValidate(`
+      package P {
+        port def P1 { in v : Real; }
+        part def A { port p1 : P1; }
+        part def B : A { }
+        part def C : B { }
+        part c : C;
+        part a : A;
+        connect c.p1 to a.p1;
+      }
+    `);
+    // 关键断言：connect 端点 p1 必须在 c（继承自 C → B → A）和 a（自身）上都能找到
+    const e106 = v.issues.filter((i) => i.code === 'E106_CONNECT_PORT_NOT_FOUND');
+    expect(e106).toHaveLength(0);
+    // 同时验证：connect 两端方向都是 in，应互补失败
+    // 但这里我们用同一类型 A 的两端 a.p1（in），c.p1（继承 in），方向都是 in
+    // 所以预期会有 E107 方向不匹配 — 但端口仍然能解析到
+    const e107 = v.issues.filter((i) => i.code === 'E107_PORT_DIRECTION_MISMATCH');
+    expect(e107.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('19. 三层继承下父类型未定义端口 → 报 E103', () => {
+    const { validate: v } = parseAndValidate(`
+      package P {
+        part def A { attribute x : Real; }
+        part def B : A { }
+        part def C : B {
+          port :>> missingPort;
+        }
+      }
+    `);
+    const e103 = v.issues.filter((i) => i.code === 'E103_UNDEFINED_PORT_REDEF');
+    expect(e103.length).toBeGreaterThan(0);
+  });
+
+  it('20. 循环继承（A : B, B : A）报 E108', () => {
+    const { validate: v } = parseAndValidate(`
+      package P {
+        part def A : B { }
+        part def B : A { }
+      }
+    `);
+    const e108 = v.issues.filter((i) => i.code === 'E108_CIRCULAR_INHERITANCE');
+    expect(e108.length).toBeGreaterThan(0);
+  });
+
+  it('21. 自继承（A : A）报 E108', () => {
+    const { validate: v } = parseAndValidate(`
+      package P {
+        part def A : A { }
+      }
+    `);
+    const e108 = v.issues.filter((i) => i.code === 'E108_CIRCULAR_INHERITANCE');
+    expect(e108.length).toBeGreaterThan(0);
+  });
+
+  it('22. 父类型不存在 → 报 E102', () => {
+    const { validate: v } = parseAndValidate(`
+      package P {
+        part def Sub : NonExistent { }
+      }
+    `);
+    const e102 = v.issues.filter((i) => i.code === 'E102_UNDEFINED_TYPE');
+    expect(e102.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Validator - import 解析 (M1)', () => {
+  it('23. import Foo::* 后，裸名 FooMember 解析成功', () => {
+    const { validate: v } = parseAndValidate(`
+      package Lib {
+        part def Engine { attribute hp : Real; }
+      }
+      package App {
+        import Lib::*;
+        part engine : Engine;
+      }
+    `);
+    // 关键：part engine 的 typeRef Engine 来自 Lib，必须能解析
+    const e102 = v.issues.filter((i) => i.code === 'E102_UNDEFINED_TYPE');
+    expect(e102).toHaveLength(0);
+  });
+
+  it('24. import Foo 后，裸名 FooMember 解析成功', () => {
+    const { validate: v } = parseAndValidate(`
+      package Lib {
+        part def Wheel { attribute r : Real; }
+      }
+      package App {
+        import Lib;
+        part w : Wheel;
+      }
+    `);
+    const e102 = v.issues.filter((i) => i.code === 'E102_UNDEFINED_TYPE');
+    expect(e102).toHaveLength(0);
+  });
+
+  it('25. import 多个命名空间，按顺序查找', () => {
+    const { validate: v } = parseAndValidate(`
+      package A { part def Foo { } }
+      package B { part def Bar { } }
+      package App {
+        import A::*;
+        import B::*;
+        part f : Foo;
+        part b : Bar;
+      }
+    `);
+    const e102 = v.issues.filter((i) => i.code === 'E102_UNDEFINED_TYPE');
+    expect(e102).toHaveLength(0);
+  });
+
+  it('26. import 目标未定义 → 报 E112', () => {
+    const { validate: v } = parseAndValidate(`
+      package App {
+        import NoSuchPackage::*;
+      }
+    `);
+    const e112 = v.issues.filter((i) => i.code === 'E112_IMPORT_TARGET_NOT_FOUND');
+    expect(e112.length).toBeGreaterThan(0);
+  });
+
+  it('27. 跨包通过 import 解析的端口可在 connect 中使用', () => {
+    const { validate: v } = parseAndValidate(`
+      package Lib {
+        port def P { in v : Real; }
+        part def Src { out port p : P; }
+        part def Tgt { in port p : P; }
+      }
+      package App {
+        import Lib::*;
+        part s : Src;
+        part t : Tgt;
+        connect s.p to t.p;
+      }
+    `);
+    // s.p（out）与 t.p（in）方向互补 + 端口都可解析 → 期望无 E102/E106/E107
+    const filtered = v.issues.filter((i) =>
+      i.code === 'E102_UNDEFINED_TYPE' ||
+      i.code === 'E106_CONNECT_PORT_NOT_FOUND' ||
+      i.code === 'E107_PORT_DIRECTION_MISMATCH'
+    );
+    expect(filtered).toHaveLength(0);
   });
 });

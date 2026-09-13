@@ -95,16 +95,24 @@ NamespaceOrTopLevel
 // ─── Package ───────────────────────────────────────────────────────────
 
 Package
-  = "package" WS name:QualifiedName OPEN _ members:(_ PackageMember)* CLOSE
+  = "package" WS name:QualifiedName inh:PackageSpecialization? OPEN _ members:(_ PackageMember)* CLOSE
     {
       return {
         kind: 'package',
         id: nextId('pkg'),
         name,
+        inherits: inh || undefined,
         members: members.map(m => m[1]),
         location: locationOf(location().start.offset),
       };
     }
+
+PackageSpecialization
+  = WS ":" WS inh:QualifiedNames { return inh; }
+
+QualifiedNames
+  = head:QualifiedName tail:(WS "," WS q:QualifiedName { return q; })*
+    { return [head, ...tail]; }
 
 PackageMember
   = Package
@@ -142,13 +150,14 @@ PartDef
         id: nextId('partDef'),
         name,
         isAbstract: !!isAbstract,
+        inherits: specialization || undefined,
         body: body.map(b => b[1]),
         location: locationOf(location().start.offset),
       };
     }
 
 PartDefSpecialization
-  = WS ":" WS QualifiedName
+  = WS ":" WS inh:QualifiedNames { return inh; }
 
 PartBodyMember
   = PartUsage
@@ -170,13 +179,14 @@ PortDef
         name,
         isAbstract: !!isAbstract,
         direction: dir || undefined,
+        inherits: specialization || undefined,
         body: body.map(b => b[1]),
         location: locationOf(location().start.offset),
       };
     }
 
 PortDefSpecialization
-  = WS ":" WS QualifiedName
+  = WS ":" WS inh:QualifiedNames { return inh; }
 
 PortBodyMember
   = PortUsageWithDir

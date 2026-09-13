@@ -1,0 +1,58 @@
+# SysML v2 MBSE — 一键启动（开发环境）
+#
+# 用法：
+#   docker compose up --build          # 后端 + 前端
+#   docker compose down -v             # 停止并清理数据卷
+#
+# 访问：
+#   前端 http://localhost:3000
+#   后端 http://localhost:8080/health
+#
+# 数据：
+#   backend-data (volume) → /data/sysmlv2.db
+#
+# M1 备注：DB 仍为 SQLite（modernc.org 纯 Go，无需 CGO）。
+#         迁移到 PostgreSQL 在 M2-M3 阶段完成（见 timeline_v2.md §2.3）。
+
+name: sysmlv2-mbse
+
+services:
+  backend:
+    build:
+      context: ./poc-v2/backend
+      dockerfile: Dockerfile
+    image: sysmlv2-mbse/backend:dev
+    container_name: sysmlv2-backend
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      DB_PATH: /data/sysmlv2.db
+      GIN_MODE: release
+    volumes:
+      - backend-data:/data
+    healthcheck:
+      test: ["CMD", "/app/server", "-version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./poc-v2/frontend
+      dockerfile: Dockerfile
+    image: sysmlv2-mbse/frontend:dev
+    container_name: sysmlv2-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    environment:
+      # 前端运行时无需环境变量；nginx 通过内部 DNS 访问 backend
+      BACKEND_URL: http://backend:8080
+
+volumes:
+  backend-data:
+    driver: local
+    name: sysmlv2-backend-data

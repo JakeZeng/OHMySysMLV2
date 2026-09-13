@@ -17,6 +17,7 @@ package Vehicle {
     attribute vin : String;
     part engine : Engine;
     part wheels[4] : Wheel;
+    port powerOut : Power;
   }
 
   port def Power {

@@ -1,18 +1,20 @@
 // @ts-nocheck — POC v2 reference code; not all narrowings reach strict mode.
 
 /**
- * SysML v2 Semantic Validator
+ * SysML v2 Semantic Validator (M1)
  *
  * 输入：ParseResult（已通过解析器）
  * 输出：ValidationResult
  *
- * 验证范围（Phase 1 MVP）：
+ * 验证范围（M1）：
  *   1. 名称唯一性（同一作用域内 PartDef/PortDef/PartUsage 不能重名）
  *   2. 引用存在性（part foo : Car 中的 Car 必须存在）
  *   3. 端口继承一致性（part 子类型中 :>> 的端口必须在父类型中）
  *   4. connect 端点存在（carA.powerPort 中的 carA 与 powerPort 都必须存在）
  *   5. 端口方向匹配（connect 两端方向必须互补：in ↔ out）
  *   6. 循环引用（part 类型的继承链不能成环）
+ *   7. 多层继承解析（part 继承自父类型，端口沿继承链可见）
+ *   8. import 解析（`import Foo;` / `import Bar::*;` 在本包内使 Foo 成员可见）
  *
  * 错误格式：
  *   { code, message, location, severity, relatedLocations? }
@@ -23,6 +25,7 @@
 import type {
   AttributeUsage,
   Connection,
+  ImportStatement,
   NamespaceMember,
   Package,
   PartDefinition,
@@ -46,7 +49,9 @@ export type ValidationIssueCode =
   | 'E108_CIRCULAR_INHERITANCE'
   | 'E109_DUPLICATE_PORT_IN_DEF'
   | 'E110_EMPTY_PACKAGE'
-  | 'E111_INVALID_BUILTIN_TYPE';
+  | 'E111_INVALID_BUILTIN_TYPE'
+  | 'E112_IMPORT_TARGET_NOT_FOUND'
+  | 'E113_INHERITED_PORT_NOT_FOUND';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -71,6 +76,7 @@ interface TypeSymbol {
   qualifiedName: string;
   location: SourceLocation;
   isAbstract: boolean;
+  inherits?: string[];             // 父类限定名（解析后填充）
   ports: Map<string, PortUsage>;
 }
 
@@ -83,11 +89,22 @@ interface PartSymbol {
   ports: Map<string, PortUsage>;
 }
 
+interface ImportSymbol {
+  namespace: string;                // `Powertrain` 或 `Powertrain::*` 中的 `Powertrain`
+  isRecursive: boolean;             // `Powertrain::**` 形式（M1 不启用递归，保留字段）
+  location: SourceLocation;
+}
+
 interface Scope {
   packages: Map<string, Package>;
-  partDefs: Map<string, TypeSymbol>;        // 限定名
+  partDefs: Map<string, TypeSymbol>;
   portDefs: Map<string, TypeSymbol>;
-  partUsages: Map<string, PartSymbol>;      // 仅顶层 package 下的
+  partUsages: Map<string, PartSymbol>;
+  /**
+   * 每个包自己的 import 列表（按包限定名索引）。
+   * 用于在本包内把裸名解析到被导入的命名空间成员。
+   */
+  imports: Map<string, ImportSymbol[]>;
 }
 
 // ─── 内置类型 ──────────────────────────────────────────────────────────
@@ -105,19 +122,30 @@ export function validate(model: SysMLModel): ValidationResult {
     partDefs: new Map(),
     portDefs: new Map(),
     partUsages: new Map(),
+    imports: new Map(),
   };
 
-  // 第一遍：收集所有定义（不查引用）
+  // 第一遍：收集所有定义与 import
   for (const pkg of model.packages) {
     collectFromPackage(pkg, pkg.name, scope, issues);
   }
 
-  // 第二遍：检查引用
+  // 1.5 补全 inherits 中的裸名为限定名（基于当前包作用域）
+  for (const pkg of model.packages) {
+    resolveInheritsInPackage(pkg, pkg.name, scope, issues);
+  }
+
+  // 第二遍：循环继承检测
+  for (const [qname, sym] of scope.partDefs) {
+    detectCircularInheritance(qname, sym, scope, issues);
+  }
+
+  // 第三遍：检查引用（包括裸名通过 import 解析）
   for (const pkg of model.packages) {
     checkReferences(pkg, pkg.name, scope, issues);
   }
 
-  // 第三遍：检查 connect 语句（包括嵌套在 package 内的 connect）
+  // 第四遍：检查 connect 语句（包括嵌套在 package 内的 connect）
   for (const conn of model.connections) {
     checkConnection(conn, scope, issues);
   }
@@ -158,6 +186,16 @@ function collectFromPackage(
       case 'package':
         collectFromPackage(m, memberQName, scope, issues);
         break;
+      case 'import': {
+        const list = scope.imports.get(qualifiedName) ?? [];
+        list.push({
+          namespace: m.namespace,
+          isRecursive: m.isRecursive,
+          location: m.location,
+        });
+        scope.imports.set(qualifiedName, list);
+        break;
+      }
       case 'partDef': {
         if (scope.partDefs.has(memberQName)) {
           issues.push({
@@ -175,6 +213,7 @@ function collectFromPackage(
           qualifiedName: memberQName,
           location: m.location,
           isAbstract: !!m.isAbstract,
+          inherits: m.inherits,
           ports: collectPorts(m.body),
         });
         break;
@@ -196,6 +235,7 @@ function collectFromPackage(
           qualifiedName: memberQName,
           location: m.location,
           isAbstract: !!m.isAbstract,
+          inherits: m.inherits,
           ports: collectPorts(m.body),
         });
         break;
@@ -232,11 +272,50 @@ function collectFromPackage(
 function memberName(m: NamespaceMember): string {
   switch (m.kind) {
     case 'package': return m.name;
+    case 'import': return '';            // 不参与成员名拼接
     case 'partDef': return m.name;
     case 'portDef': return m.name;
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
+  }
+}
+
+/**
+ * 把每个 partDef/portDef 的 inherits 数组中的裸名补全为限定名。
+ * 限定名查找顺序：限定名直查 → 当前包内裸名 → import 引入命名空间。
+ * 解析失败时把名字保留为裸名（后续会由 E102 报错）。
+ */
+function resolveInheritsInPackage(
+  pkg: Package,
+  qualifiedName: string,
+  scope: Scope,
+  _issues: ValidationIssue[]
+): void {
+  for (const m of pkg.members) {
+    if (m.kind === 'package') {
+      const memberQName = `${qualifiedName}::${m.name}`;
+      resolveInheritsInPackage(m, memberQName, scope, _issues);
+    } else if (m.kind === 'partDef' || m.kind === 'portDef') {
+      const sym = scope.partDefs.get(`${qualifiedName}::${m.name}`)
+        ?? scope.portDefs.get(`${qualifiedName}::${m.name}`);
+      if (!sym || !m.inherits) continue;
+      const resolved: string[] = [];
+      for (const ref of m.inherits) {
+        if (ref.includes('::')) {
+          resolved.push(ref);
+          continue;
+        }
+        const found = resolveType(scope, ref, qualifiedName);
+        if (found) {
+          resolved.push(found.qualifiedName);
+        } else {
+          // 保留原名以触发 E102
+          resolved.push(ref);
+        }
+      }
+      sym.inherits = resolved;
+    }
   }
 }
 
@@ -250,7 +329,54 @@ function collectPorts(body: Array<AttributeUsage | PortUsage>): Map<string, Port
   return ports;
 }
 
-// ─── 第二遍：检查引用 ──────────────────────────────────────────────────
+// ─── 第二遍：循环继承检测 ──────────────────────────────────────────────
+
+/**
+ * 沿 `inherits` 链向上走，若回到起点则报 E108。
+ * 使用 visited 集合检测环；线性链超过 32 步也按疑似环处理（防御性）。
+ */
+function detectCircularInheritance(
+  startQName: string,
+  sym: TypeSymbol,
+  scope: Scope,
+  issues: ValidationIssue[]
+): void {
+  if (!sym.inherits || sym.inherits.length === 0) return;
+
+  const visited = new Set<string>([startQName]);
+  const chain: string[] = [startQName];
+  const MAX_DEPTH = 32;
+
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const current = chain[chain.length - 1];
+    const currentSym = scope.partDefs.get(current) ?? scope.portDefs.get(current);
+    if (!currentSym || !currentSym.inherits || currentSym.inherits.length === 0) return;
+
+    const next = currentSym.inherits[0]; // M1：单继承，多继承后续支持
+    if (visited.has(next)) {
+      issues.push({
+        code: 'E108_CIRCULAR_INHERITANCE',
+        message: `检测到循环继承：\`${startQName}\` → \`${next}\`（继承链成环）`,
+        location: currentSym.location,
+        severity: 'error',
+        relatedLocations: [scope.partDefs.get(next)?.location ?? scope.portDefs.get(next)?.location ?? currentSym.location],
+      });
+      return;
+    }
+    visited.add(next);
+    chain.push(next);
+  }
+
+  // 超过 MAX_DEPTH 视为疑似环
+  issues.push({
+    code: 'E108_CIRCULAR_INHERITANCE',
+    message: `继承链过深（>${MAX_DEPTH}），疑似循环：\`${startQName}\``,
+    location: sym.location,
+    severity: 'error',
+  });
+}
+
+// ─── 第三遍：检查引用 ──────────────────────────────────────────────────
 
 function checkReferences(
   pkg: Package,
@@ -258,22 +384,25 @@ function checkReferences(
   scope: Scope,
   issues: ValidationIssue[]
 ): void {
+  // qualifiedName 是本包（enclosing package）的限定名，
+  // 内部成员的限定名是 `${qualifiedName}::${memberName}`，但解析裸名引用时
+  // 上下文仍是本包。
   for (const m of pkg.members) {
-    const memberQName = `${qualifiedName}::${memberName(m)}`;
-
     switch (m.kind) {
       case 'package':
-        checkReferences(m, memberQName, scope, issues);
+        checkReferences(m, `${qualifiedName}::${m.name}`, scope, issues);
         break;
       case 'partDef':
-        checkPartDefBody(m, memberQName, scope, issues);
+        checkPartDefBody(m, qualifiedName, scope, issues);
         break;
       case 'portDef':
-        checkPortDefBody(m, memberQName, scope, issues);
+        checkPortDefBody(m, qualifiedName, scope, issues);
         break;
       case 'partUsage':
-        // part usage 的引用解析需要在「本包」作用域内查找裸名
         checkPartUsageRefs(m, qualifiedName, scope, issues);
+        break;
+      case 'import':
+        checkImportTarget(m, qualifiedName, scope, issues);
         break;
     }
   }
@@ -285,17 +414,40 @@ function checkPartDefBody(
   scope: Scope,
   issues: ValidationIssue[]
 ): void {
-  // port def 内可能存在 attribute 引用 BuiltIn 类型 → 已通过解析保证合法
-  // 检查 port usage :>> 重定义
+  // 1) 继承父类必须存在
+  if (def.inherits) {
+    for (const parentRef of def.inherits) {
+      const found = BUILTIN_TYPES.has(parentRef)
+        ? null
+        : scope.partDefs.get(parentRef) ??
+          scope.portDefs.get(parentRef) ??
+          resolveType(scope, parentRef, qualifiedName);
+      if (!found) {
+        issues.push({
+          code: 'E102_UNDEFINED_TYPE',
+          message: `part def \`${def.name}\` 的父类型 \`${parentRef}\` 未定义`,
+          location: def.location,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  // 2) port :>> 重定义：沿继承链查找父类是否声明了该端口
   for (const p of def.body) {
     if (p.kind === 'portUsage' && p.redefines) {
-      // 当前 part def 自身无父类型（先不展开继承，仅检查同包内 port def）
-      // MVP：父类型检查需要追溯继承链，暂时只校验 port def 是否存在
-      const found = findPortDef(scope, p.redefines);
+      // 先按限定名查
+      let found =
+        lookupInheritedPort(scope, def.inherits ?? [], p.redefines) ?? null;
+      // fallback：port def 内的同包重定义
+      if (!found) {
+        const portSym = findPortDef(scope, p.redefines);
+        if (portSym) found = { location: portSym.location, source: 'portDef' };
+      }
       if (!found) {
         issues.push({
           code: 'E103_UNDEFINED_PORT_REDEF',
-          message: `重定义的端口 \`${p.redefines}\` 未定义或不可见`,
+          message: `重定义的端口 \`${p.redefines}\` 在父类型中未定义`,
           location: p.location,
           severity: 'error',
         });
@@ -313,13 +465,38 @@ function checkPortDefBody(
   // port def 内部通常只有 attribute，目前无需额外检查
 }
 
+/**
+ * 沿 inherits 链查找名字为 `name` 的端口，返回首个匹配及其位置。
+ * 用于 :>> 重定义检查以及多层继承的 connect 端口解析。
+ */
+function lookupInheritedPort(
+  scope: Scope,
+  inherits: string[],
+  name: string,
+  visited: Set<string> = new Set()
+): { location: SourceLocation; source: string } | undefined {
+  for (const parent of inherits) {
+    if (visited.has(parent)) continue;
+    visited.add(parent);
+    const sym = scope.partDefs.get(parent) ?? scope.portDefs.get(parent);
+    if (!sym) continue;
+    const port = sym.ports.get(name);
+    if (port) return { location: port.location, source: sym.qualifiedName };
+    if (sym.inherits) {
+      const found = lookupInheritedPort(scope, sym.inherits, name, visited);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
 function checkPartUsageRefs(
   usage: PartUsage,
   qualifiedName: string,
   scope: Scope,
   issues: ValidationIssue[]
 ): void {
-  // 类型引用：支持裸名（在本包内查找）或限定名（全局查找）
+  // 类型引用：支持裸名（本包或通过 import 引入）或限定名
   if (!BUILTIN_TYPES.has(usage.typeRef) && !resolveType(scope, usage.typeRef, qualifiedName)) {
     issues.push({
       code: 'E102_UNDEFINED_TYPE',
@@ -329,25 +506,59 @@ function checkPartUsageRefs(
     });
   }
 
-  // port :>> 重定义
+  // port :>> 重定义：父类型链中必须存在
   for (const p of usage.body) {
     if (p.kind === 'portUsage' && p.redefines) {
-      // 检查父类型是否存在
-      const parentType = scope.partDefs.get(usage.typeRef);
-      if (parentType) {
-        if (!parentType.ports.has(p.redefines)) {
+      // 找到父类型
+      const parentRef = usage.typeRef;
+      const parentSym =
+        scope.partDefs.get(parentRef) ??
+        scope.portDefs.get(parentRef) ??
+        resolveType(scope, parentRef, qualifiedName);
+      if (parentSym) {
+        // 在父类型（及父类型的父类型）中查找
+        const found = lookupInheritedPort(
+          scope,
+          [parentSym.qualifiedName],
+          p.redefines
+        );
+        if (!found) {
           issues.push({
             code: 'E103_UNDEFINED_PORT_REDEF',
-            message: `父类型 \`${usage.typeRef}\` 中没有端口 \`${p.redefines}\`，无法重定义`,
+            message: `父类型 \`${parentRef}\` 及其父类型中没有端口 \`${p.redefines}\`，无法重定义`,
             location: p.location,
             severity: 'error',
-            relatedLocations: [parentType.location],
+            relatedLocations: [parentSym.location],
           });
         }
       }
       // 如果父类型未定义，前面 E102 已经报错
     }
   }
+}
+
+function checkImportTarget(
+  imp: ImportStatement,
+  qualifiedName: string,
+  scope: Scope,
+  issues: ValidationIssue[]
+): void {
+  // `import Foo;` → Foo 必须是已知的 package
+  // `import Foo::*;` → 同上
+  const ns = imp.namespace; // 可能是 "Foo" 或 "Foo::*"
+  if (!scope.packages.has(ns) && !scope.partDefs.has(ns) && !scope.portDefs.has(ns)) {
+    // 仅当命名空间前导段未找到时报错
+    if (!scope.packages.has(ns)) {
+      issues.push({
+        code: 'E112_IMPORT_TARGET_NOT_FOUND',
+        message: `import 的目标 \`${ns}\` 未定义`,
+        location: imp.location,
+        severity: 'error',
+      });
+    }
+  }
+  // 静默：qualifiedName 当前未使用（仅作占位便于未来扩展）
+  void qualifiedName;
 }
 
 function findPortDef(scope: Scope, name: string): TypeSymbol | undefined {
@@ -358,19 +569,23 @@ function findPortDef(scope: Scope, name: string): TypeSymbol | undefined {
 }
 
 /**
- * 解析类型引用：先按限定名查，找不到时按裸名在「本包」范围内查。
- * 本 MVP 不做 import 解析，跨包引用必须使用限定名（如 Powertrain::Engine）。
+ * 解析类型引用：
+ *   1. 限定名直接查 partDef / portDef
+ *   2. 裸名：在当前包内查找同名 partDef
+ *   3. 裸名：通过本包的 import 列表在被导入命名空间中查找
  */
-function resolveType(scope: Scope, ref: string, currentQualifiedName: string): TypeSymbol | undefined {
+function resolveType(
+  scope: Scope,
+  ref: string,
+  currentQualifiedName: string
+): TypeSymbol | undefined {
   // 1. 限定名直接查
   const exact = scope.partDefs.get(ref);
   if (exact) return exact;
-
-  // 2. 限定名查 port def（虽然 PartUsage 通常引用 PartDef，但容错）
   const portExact = scope.portDefs.get(ref);
   if (portExact) return portExact;
 
-  // 3. 裸名：在当前包内查找同名 PartDef
+  // 2. 裸名：在当前包内查找同名 PartDef
   if (!ref.includes('::')) {
     const pkgPrefix = currentQualifiedName + '::';
     for (const [qname, sym] of scope.partDefs) {
@@ -378,20 +593,45 @@ function resolveType(scope: Scope, ref: string, currentQualifiedName: string): T
         return sym;
       }
     }
+
+    // 3. 通过本包（及祖先包）累积的 import 列表在被导入命名空间中查找
+    //    M1：从当前包开始向上遍历 import 链。
+    const seen = new Set<string>();
+    const pkgsToCheck: string[] = [currentQualifiedName];
+    while (pkgsToCheck.length > 0) {
+      const pkg = pkgsToCheck.shift()!;
+      if (seen.has(pkg)) continue;
+      seen.add(pkg);
+      const imports = scope.imports.get(pkg) ?? [];
+      for (const imp of imports) {
+        // imp.namespace 是 "Foo" 或 "Foo::*" —— 取前缀作为命名空间限定名
+        const ns = imp.namespace.endsWith('::*')
+          ? imp.namespace.slice(0, -3)
+          : imp.namespace;
+        const candidate = `${ns}::${ref}`;
+        const found = scope.partDefs.get(candidate) ?? scope.portDefs.get(candidate);
+        if (found) return found;
+        // 命名空间本身是嵌套包：把子包加入检查队列
+        for (const subPkg of scope.packages.keys()) {
+          if (subPkg.startsWith(ns + '::') && !seen.has(subPkg)) {
+            pkgsToCheck.push(subPkg);
+          }
+        }
+      }
+    }
   }
 
   return undefined;
 }
 
-// ─── 第三遍：检查 connect ──────────────────────────────────────────────
+// ─── 第四遍：检查 connect ──────────────────────────────────────────────
 
 function checkConnection(
   conn: Connection,
   scope: Scope,
   issues: ValidationIssue[]
 ): void {
-  // 找 source part —— 优先按限定名（partUsage 在包内时 qualifiedName 是 Vehicle::carA），
-  // 找不到时按裸名在同一作用域内的 partUsages / partDefs 中查找。
+  // 找 source part
   const src = lookupPart(scope, conn.source.partName);
   if (!src) {
     issues.push({
@@ -401,13 +641,12 @@ function checkConnection(
       severity: 'error',
     });
   } else {
-    // 收集源端可见的端口（自身 + 继承自 typeRef）
     const srcPorts = collectVisiblePorts(scope, src);
     const srcPort = srcPorts.get(conn.source.portName);
     if (!srcPort) {
       issues.push({
         code: 'E106_CONNECT_PORT_NOT_FOUND',
-        message: `源端 \`${conn.source.partName}\` 上没有端口 \`${conn.source.portName}\``,
+        message: `源端 \`${conn.source.partName}\` 上没有端口 \`${conn.source.portName}\`（自身 + 继承链中均未找到）`,
         location: conn.source.location,
         severity: 'error',
         relatedLocations: [src.location],
@@ -429,7 +668,7 @@ function checkConnection(
       if (!tgtPort) {
         issues.push({
           code: 'E106_CONNECT_PORT_NOT_FOUND',
-          message: `目标端 \`${conn.target.partName}\` 上没有端口 \`${conn.target.portName}\``,
+          message: `目标端 \`${conn.target.partName}\` 上没有端口 \`${conn.target.portName}\`（自身 + 继承链中均未找到）`,
           location: conn.target.location,
           severity: 'error',
           relatedLocations: [tgt.location],
@@ -455,29 +694,56 @@ function checkConnection(
 }
 
 /**
- * 收集 part 上可见的端口：自身 body 中的 + 继承自 typeRef 的（递归一层）。
- * MVP 不做多层继承解析。
+ * 收集 part 上可见的端口：自身 body 中的 + 沿 inherits 链向上递归收集。
+ * 防环：使用 visited 集合；并限制最大深度 32。
  */
 function collectVisiblePorts(
   scope: Scope,
-  sym: PartSymbol | TypeSymbol
-): Map<string, import('../ast/model').PortUsage> {
-  const result = new Map<string, import('../ast/model').PortUsage>();
+  sym: PartSymbol | TypeSymbol,
+  visited: Set<string> = new Set(),
+  depth: number = 0
+): Map<string, PortUsage> {
+  const result = new Map<string, PortUsage>();
   // 自身
   for (const [name, p] of sym.ports) {
     result.set(name, p);
   }
-  // 继承自类型
-  if ((sym as PartSymbol).typeRef) {
-    const typeRef = (sym as PartSymbol).typeRef;
-    const typeSym = lookupPartDef(scope, typeRef);
-    if (typeSym) {
-      for (const [name, p] of typeSym.ports) {
-        if (!result.has(name)) result.set(name, p);
-      }
+  // 沿继承链向上
+  if (depth >= 32) return result;
+  const parents: string[] = (sym as TypeSymbol).inherits ?? [];
+  // partUsage 的 typeRef 也算"父"（裸名需用 resolveType 解析到限定名）
+  const usageTypeRef = (sym as PartSymbol).typeRef;
+  if (usageTypeRef) {
+    const resolved =
+      scope.partDefs.get(usageTypeRef) ??
+      scope.portDefs.get(usageTypeRef) ??
+      resolveType(scope, usageTypeRef, parentPackageOf(sym, scope));
+    if (resolved && !parents.includes(resolved.qualifiedName)) {
+      parents.push(resolved.qualifiedName);
+    }
+  }
+  for (const parent of parents) {
+    if (visited.has(parent)) continue;
+    visited.add(parent);
+    const parentSym =
+      scope.partDefs.get(parent) ?? scope.portDefs.get(parent);
+    if (!parentSym) continue;
+    const inherited = collectVisiblePorts(scope, parentSym, visited, depth + 1);
+    for (const [name, p] of inherited) {
+      if (!result.has(name)) result.set(name, p);
     }
   }
   return result;
+}
+
+/**
+ * 推断 partUsage / partDef 所在的最近包限定名（用于 resolveType 上下文）。
+ * M1 简化：从 qualifiedName 的最后一段之前取得。
+ */
+function parentPackageOf(sym: PartSymbol | TypeSymbol, _scope: Scope): string {
+  const qn = sym.qualifiedName;
+  const idx = qn.lastIndexOf('::');
+  return idx > 0 ? qn.substring(0, idx) : '';
 }
 
 function lookupPartDef(scope: Scope, ref: string): TypeSymbol | undefined {
