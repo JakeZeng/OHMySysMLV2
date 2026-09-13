@@ -2,12 +2,17 @@
  * Model Store — 当前编辑的模型 + 解析/验证结果。
  *
  * 复用 POC v2 的端到端 pipeline：text → parse → validate → modelToFlow。
+ * M2 增强：
+ *   - 双向同步：renameNode / deleteNode / deleteConnection
+ *   - 节点位置持久化：用户拖动后位置保存到 store
+ *   - ELK 自动布局：异步触发，避免阻塞编辑器
  */
 
 import { create } from 'zustand';
 import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
-import { modelToFlow } from '@transform/modelToFlow';
+import { modelToFlow, modelToFlowLayouted } from '@transform/modelToFlow';
+import { renameNode as editRename, deleteNode as editDelete, deleteConnection as editDeleteConn } from '@transform/textEdit';
 import type {
   ParseError,
   SysMLModel,
@@ -22,6 +27,8 @@ interface PipelineResult {
   model: SysMLModel;
   nodes: Node[];
   edges: Edge[];
+  layoutMs?: number;
+  layoutEngine?: 'grid' | 'elk';
 }
 
 interface ModelState {
@@ -35,6 +42,10 @@ interface ModelState {
   saved: boolean;
   loading: boolean;
   error: string | null;
+  /** 用户拖动后做位置覆盖（nodeId → {x,y}） */
+  userPositions: Record<string, { x: number; y: number }>;
+  /** 上一次 ELK layout 耗时（ms） */
+  perfMs: number;
 
   setName: (n: string) => void;
   setContent: (c: string) => void;
@@ -43,6 +54,13 @@ interface ModelState {
   loadModel: (projectId: string, modelId: string) => Promise<void>;
   saveModel: () => Promise<void>;
   reset: () => void;
+
+  // M2 双向同步
+  renameNode: (nodeId: string, newName: string) => void;
+  deleteNode: (nodeId: string) => void;
+  deleteConnection: (edgeId: string) => void;
+  setNodePosition: (nodeId: string, x: number, y: number) => void;
+  applyElkLayout: () => Promise<void>;
 }
 
 const EMPTY_PIPELINE: PipelineResult = {
@@ -64,6 +82,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   saved: false,
   loading: false,
   error: null,
+  userPositions: {},
+  perfMs: 0,
 
   setName(n) {
     set({ name: n, saved: false });
@@ -79,11 +99,14 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   runPipeline(text) {
+    const t0 = performance.now();
     let parseErrors: ParseError[] = [];
     let validationIssues: ValidationIssue[] = [];
     let model: SysMLModel = { packages: [], connections: [] };
     let nodes: Node[] = [];
     let edges: Edge[] = [];
+    let layoutMs = 0;
+    let layoutEngine: 'grid' | 'elk' = 'grid';
 
     try {
       const r = parse(text);
@@ -97,6 +120,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
         const f = modelToFlow(model);
         nodes = f.nodes;
         edges = f.edges;
+        layoutMs = performance.now() - t0;
       }
     } catch (e) {
       parseErrors = [
@@ -109,11 +133,56 @@ export const useModelStore = create<ModelState>((set, get) => ({
       ];
     }
 
-    set({ pipeline: { parseErrors, validationIssues, model, nodes, edges } });
+    // 应用 userPositions（覆盖网格坐标，保留用户拖动结果）
+    const userPositions = get().userPositions;
+    nodes = nodes.map((n) => {
+      if ((n as { parentId?: string }).parentId) return n;
+      const up = userPositions[String(n.id)];
+      return up ? { ...n, position: up } : n;
+    });
+
+    set({
+      pipeline: { parseErrors, validationIssues, model, nodes, edges, layoutMs, layoutEngine },
+      perfMs: layoutMs,
+    });
+
+    // 异步触发 ELK 自动布局（M2）：完成后用 ELK 坐标覆盖 grid 坐标
+    if (parseErrors.length === 0) {
+      void get().applyElkLayout();
+    }
+  },
+
+  async applyElkLayout() {
+    const { pipeline } = get();
+    if (pipeline.parseErrors.length > 0) return;
+    const t0 = performance.now();
+    try {
+      const laid = await modelToFlowLayouted(pipeline.model);
+      const userPositions = get().userPositions;
+      // 用户拖动过的节点保留用户位置，未拖动的采用 ELK 坐标
+      const merged = laid.nodes.map((n) => {
+        if ((n as { parentId?: string }).parentId) return n;
+        const up = userPositions[String(n.id)];
+        return up ? { ...n, position: up } : n;
+      });
+      const ms = performance.now() - t0;
+      set({
+        pipeline: {
+          ...pipeline,
+          nodes: merged,
+          layoutMs: ms,
+          layoutEngine: 'elk',
+        },
+        perfMs: ms,
+      });
+    } catch (e) {
+      // ELK 布局失败不影响同步 grid 结果
+      console.warn('ELK layout failed:', e);
+    }
   },
 
   async loadModel(projectId, modelId) {
-    set({ loading: true, error: null, projectId, modelId });
+    set({ loading: true, error: null, projectId, modelId, userPositions: {} });
     try {
       const rec: ModelRecord = await modelApi.get(projectId, modelId);
       set({
@@ -160,7 +229,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
         saved: true,
       });
       setTimeout(() => {
-        // 简单的 "已保存" 提示
         set((s) => (s.saved ? { saved: false } : s));
       }, 2000);
     } catch (e) {
@@ -181,6 +249,44 @@ export const useModelStore = create<ModelState>((set, get) => ({
       saved: false,
       loading: false,
       error: null,
+      userPositions: {},
+      perfMs: 0,
     });
+  },
+
+  // ─── M2 双向同步 ──────────────────────────────────────────────────
+
+  renameNode(nodeId, newName) {
+    const { content, pipeline } = get();
+    const result = editRename(content, pipeline.model, nodeId, newName);
+    if (result.text === content) return; // no-op
+    set({ content: result.text, saved: false, userPositions: {} });
+    get().runPipeline(result.text);
+  },
+
+  deleteNode(nodeId) {
+    const { content, pipeline } = get();
+    const result = editDelete(content, pipeline.model, nodeId);
+    if (result.text === content) return;
+    set({ content: result.text, saved: false });
+    get().runPipeline(result.text);
+  },
+
+  deleteConnection(edgeId) {
+    const { content, pipeline } = get();
+    const result = editDeleteConn(content, pipeline.model, edgeId);
+    if (result.text === content) return;
+    set({ content: result.text, saved: false });
+    get().runPipeline(result.text);
+  },
+
+  setNodePosition(nodeId, x, y) {
+    const userPositions = { ...get().userPositions, [nodeId]: { x, y } };
+    set({ userPositions });
+    // 立即更新 pipeline.nodes 中的 position，避免 React Flow 跳回
+    const nodes = get().pipeline.nodes.map((n) =>
+      String(n.id) === nodeId ? { ...n, position: { x, y } } : n
+    );
+    set({ pipeline: { ...get().pipeline, nodes } });
   },
 }));

@@ -20,7 +20,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 ## Test & verify
 
-- TS unit + e2e: `cd poc-v2 && npm test` (54 vitest tests: 25 parser + 17 validator + 12 e2e)
+- TS unit + e2e: `cd poc-v2 && npm test` (84 vitest tests: 25 parser + 27 validator + 12 e2e + 5 layoutEngine + 5 perf + 10 textEdit)
 - TS watch mode: `cd poc-v2 && npm run test:watch`
 - Frontend tests: `cd poc-v2/frontend && npm test`
 - Go tests: `cd poc-v2/backend && go test ./...`
@@ -58,7 +58,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 - All tests must pass before opening a PR: `cd poc-v2 && npm test` and `cd poc-v2/backend && go test ./...`
 - New behavior = new test in the matching `*.test.ts` next to the code (mirror existing layout)
-- Parser/grammar changes require regenerating `parser.generated.ts` and re-running the full 64-test suite
+- Parser/grammar changes require regenerating `parser.generated.ts` and re-running the full 100-test suite (root + frontend)
 - E2E pipeline: `poc-v2/tests/e2e.test.ts` covers parse → validate → transform → flow
 
 ## Security & secrets

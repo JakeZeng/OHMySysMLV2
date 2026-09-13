@@ -38,14 +38,30 @@ export const ModelEditor: React.FC = () => {
   const saving = useModelStore((s) => s.saving);
   const saved = useModelStore((s) => s.saved);
   const error = useModelStore((s) => s.error);
+  const perfMs = useModelStore((s) => s.perfMs);
+  const layoutEngine = useModelStore((s) => s.pipeline.layoutEngine);
   const setName = useModelStore((s) => s.setName);
   const setContent = useModelStore((s) => s.setContent);
   const loadModel = useModelStore((s) => s.loadModel);
   const saveModel = useModelStore((s) => s.saveModel);
   const setProject = useModelStore((s) => s.setProject);
   const reset = useModelStore((s) => s.reset);
+  const renameNode = useModelStore((s) => s.renameNode);
+  const deleteNode = useModelStore((s) => s.deleteNode);
+  const deleteConnection = useModelStore((s) => s.deleteConnection);
+  const setNodePosition = useModelStore((s) => s.setNodePosition);
 
   const editorRef = React.useRef<unknown>(null);
+
+  // 暴露 dev hook：浏览器演示脚本可直接调用 store action
+  React.useEffect(() => {
+    (window as unknown as { __sysmlDemoDelete?: (id: string) => void }).__sysmlDemoDelete = (id: string) => {
+      deleteNode(id);
+    };
+    return () => {
+      delete (window as unknown as { __sysmlDemoDelete?: unknown }).__sysmlDemoDelete;
+    };
+  }, [deleteNode]);
 
   // 加载模型（或新建空白）
   React.useEffect(() => {
@@ -181,11 +197,23 @@ export const ModelEditor: React.FC = () => {
             validationIssues={pipeline.validationIssues}
           />
         </div>
-        <div className="w-2/5 bg-gray-50">
+        <div className="relative w-2/5 bg-gray-50">
           <DiagramCanvas
             nodes={pipeline.nodes}
             edges={pipeline.edges}
+            onNodeRename={renameNode}
+            onNodeDelete={deleteNode}
+            onNodesDelete={(ids) => ids.forEach(deleteNode)}
+            onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
+            onNodePositionChange={setNodePosition}
+            nodeCount={pipeline.nodes.length}
           />
+          <div
+            data-testid="layout-engine-badge"
+            className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[11px] text-white"
+          >
+            布局: {layoutEngine ?? 'grid'} · {perfMs.toFixed(0)}ms
+          </div>
         </div>
       </div>
     </div>

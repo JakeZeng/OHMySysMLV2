@@ -40,4 +40,6 @@ test-results/
 
 # Local browser-demo artifacts (manual verification only; not part of code)
 demo.js
+demo-m2.js
 demo-screenshots/
+demo-m2-screenshots/

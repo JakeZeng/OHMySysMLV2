@@ -28,7 +28,7 @@ const source = fs.readFileSync(GRAMMAR_PATH, 'utf-8');
 
 const generated = peggy.generate(source, {
   output: 'source',
-  format: 'commonjs',
+  format: 'es',
   allowedStartRules: ['File'],
 });
 

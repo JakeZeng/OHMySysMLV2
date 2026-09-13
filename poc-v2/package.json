@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.4.4",
+    "elkjs": "^0.9.3",
     "peggy": "^4.0.3"
   },
   "devDependencies": {

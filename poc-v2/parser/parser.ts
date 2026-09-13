@@ -13,16 +13,11 @@
 
 import { locationOf, type ParseError, type ParseResult, type SysMLModel } from '../ast/model';
 
-// 引入 peggy 生成的代码（commonjs 格式：module.exports = { parse, SyntaxError, StartRules }）
+// 引入 peggy 生成的代码（ESM 格式：export { peg$parse as parse, ... }）
 // @ts-expect-error - generated file has no type definitions
 import * as generatedParser from './parser.generated';
-// 由于 parser.generated.ts 是 CommonJS (`module.exports = { parse, ... }`)，但项目
-// `package.json` 声明 `"type": "module"`，Node 会把 .ts 当 ESM 加载；
-// 此时 `import * as ...` 拿到 `{ default: { parse, ... }, __esModule: true }`。
-// 因此必须 fallback 取 .default.parse。
-const generatedModule = generatedParser as any;
 const rawParse: (input: string, options?: any) => unknown =
-  generatedModule.parse ?? generatedModule.default?.parse;
+  (generatedParser as any).parse;
 
 // 声明 global 类型
 declare global {

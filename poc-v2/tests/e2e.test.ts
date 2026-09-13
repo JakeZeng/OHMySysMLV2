@@ -55,9 +55,9 @@ describe('E2E - 端到端 pipeline', () => {
     expect(p.ok).toBe(true);
     const portNodes = f.nodes.filter((n) => n.type === 'sysmlPort');
     expect(portNodes.length).toBe(2);
-    // 验证子节点有 parentNode
+    // 验证子节点有 parentId（@xyflow/react v12）
     for (const port of portNodes) {
-      expect(port.parentNode).toBeDefined();
+      expect((port as { parentId?: string }).parentId).toBeDefined();
     }
   });
 

@@ -5,14 +5,14 @@
  *
  * 把已解析、验证过的 SysMLModel 转换为 React Flow 所需的 nodes/edges。
  *
- * 布局策略（Phase 1 MVP）：
- *   - PartDef / PartUsage 放在顶层
- *   - Port 作为子节点贴在 PartDef/PartUsage 周围（带 `parentNode` 标记）
- *   - 顶层 Connection 转换为边
+ * 布局策略（M2）：
+ *   - 收集 part def / part usage / port def / port usage / connection
+ *   - 构造 React Flow Node/Edge（无坐标）
+ *   - 调用 ELK.js 布局（layered, LR）得到坐标
  *
- * Phase 2 改进点：
- *   - 用 dagre / elk.js 做有向层次布局
- *   - 支持嵌套 package（递归布局）
+ * M1 的网格瀑布式布局已被 ELK 替换。ELK 仍是可选（异步），不阻塞
+ * parse → validate 同步路径——前端 store 在 runPipeline 同步产出
+ * 临时坐标后异步触发 ELK 重排。
  */
 
 import type {
@@ -25,6 +25,7 @@ import type {
   SysMLModel,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
+import { elkLayout } from './layoutEngine';
 
 // ─── 输出类型 ──────────────────────────────────────────────────────────
 
@@ -35,137 +36,154 @@ export interface FlowGraph {
   bounds: { width: number; height: number };
 }
 
-// ─── 布局参数 ──────────────────────────────────────────────────────────
+// ─── 入口（同步，立即返回临时坐标）─────────────────────────────────
 
-const PART_WIDTH = 220;
-const PART_HEIGHT = 120;
-const PORT_X_OFFSET = 12;     // 相对父 part 左上角
-const PORT_Y_START = 36;
-const PORT_GAP = 32;
-const COL_GAP = 80;           // 列间距
-const ROW_GAP = 160;          // 行间距
-const ORIGIN_X = 80;
-const ORIGIN_Y = 80;
-const MAX_COL_X = 1400;
-
-// ─── 入口 ──────────────────────────────────────────────────────────────
-
+/**
+ * 同步入口：立即返回一个带临时坐标的 FlowGraph，便于 store 在 pipeline
+ * 同步路径里使用。临时坐标是简单的网格布局，由 ELK 异步重排后覆盖。
+ */
 export function modelToFlow(model: SysMLModel): FlowGraph {
+  const partial = buildGraph(model, gridLayout);
+  return partial;
+}
+
+/**
+ * 异步入口：构建图 + ELK 自动布局。返回带最终坐标的 FlowGraph。
+ * 这是 M2 推荐的入口。
+ */
+export async function modelToFlowLayouted(model: SysMLModel): Promise<FlowGraph> {
+  const partial = buildGraph(model, gridLayout);
+  return elkLayout(partial);
+}
+
+// ─── 图构建（不含布局）───────────────────────────────────────────────
+
+interface LayoutFn {
+  (nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds: { width: number; height: number } };
+}
+
+function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // 1. 收集顶层元素：所有 partDef/portDef/partUsage（递归遍历 package）
+  // 1. 收集
   const partDefs: PartDefinition[] = [];
   const portDefs: PortDefinition[] = [];
   const partUsages: PartUsage[] = [];
-  const connections: import('../ast/model').Connection[] = [];
-
+  const connections: Connection[] = [];
   for (const pkg of model.packages) {
     collectMembers(pkg, partDefs, portDefs, partUsages, connections);
   }
-  // 顶层 connect 也要算
   connections.push(...model.connections);
 
-  // 名字 → 节点 id 的映射（用于 connect）
+  // 2. name → nodeId
   const nameToPartId = new Map<string, string>();
-  // part 节点 id → 该 part 下的 port 节点 id（按 port 名）
   const partToPortIds = new Map<string, Map<string, string>>();
 
-  // 2. 布局 part def
-  let cursorX = ORIGIN_X;
-  let cursorY = ORIGIN_Y;
-  let rowHeight = 0;
-
+  // 3. 节点构造
   for (const pd of partDefs) {
     const id = `pd:${pd.id}`;
     nameToPartId.set(pd.name, id);
-    nodes.push(makePartDefNode(id, pd, cursorX, cursorY));
-    const portIds = new Map<string, string>();
-    let py = PORT_Y_START;
-    for (const m of pd.body) {
-      if (m.kind === 'portUsage') {
-        const portId = `port:${m.id}`;
-        portIds.set(m.name ?? '', portId);
-        nodes.push(makePortNode(portId, m, id, PORT_X_OFFSET, py));
-        py += PORT_GAP;
-      }
-    }
-    partToPortIds.set(id, portIds);
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, py + 24);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-  }
-
-  // 3. 布局 part usage
-  if (partUsages.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
+    nodes.push(makePartDefNode(id, pd));
+    partToPortIds.set(id, collectPortNodes(nodes, pd.body, id));
   }
   for (const pu of partUsages) {
     const id = `pu:${pu.id}`;
     nameToPartId.set(pu.name, id);
-    nodes.push(makePartUsageNode(id, pu, cursorX, cursorY));
-    const portIds = new Map<string, string>();
-    let py = PORT_Y_START;
-    for (const m of pu.body) {
-      if (m.kind === 'portUsage') {
-        const portId = `port:${m.id}`;
-        portIds.set(m.name ?? '', portId);
-        nodes.push(makePortNode(portId, m, id, PORT_X_OFFSET, py));
-        py += PORT_GAP;
-      }
-    }
-    partToPortIds.set(id, portIds);
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, py + 24);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-  }
-
-  // 4. 布局 port def（单独成行）
-  if (portDefs.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
+    nodes.push(makePartUsageNode(id, pu));
+    partToPortIds.set(id, collectPortNodes(nodes, pu.body, id));
   }
   for (const portDef of portDefs) {
     const id = `portdef:${portDef.id}`;
-    nodes.push(makePortDefNode(id, portDef, cursorX, cursorY));
-    cursorX += PART_WIDTH + COL_GAP;
+    nodes.push(makePortDefNode(id, portDef));
   }
 
-  // 5. connect → edges
+  // 4. 边
   for (const conn of connections) {
     const edge = makeEdge(conn, nameToPartId, partToPortIds);
     if (edge) edges.push(edge);
   }
 
-  // 6. 包围盒
-  const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x), ORIGIN_X) + PART_WIDTH + 40;
-  const maxY = nodes.reduce((m, n) => Math.max(m, n.position.y), ORIGIN_Y) + PART_HEIGHT + 40;
+  // 5. 布局
+  const { positioned, bounds } = layout(nodes, edges);
+  return { nodes: positioned, edges, bounds };
+}
 
-  return { nodes, edges, bounds: { width: maxX, height: maxY } };
+// ─── 网格 fallback（M1 的瀑布布局，仅用于同步入口）───────────────────
+
+const PART_WIDTH = 220;
+const PART_HEIGHT = 120;
+const PORT_X_OFFSET = 12;
+const PORT_Y_START = 36;
+const PORT_GAP = 32;
+const COL_GAP = 80;
+const ROW_GAP = 160;
+const ORIGIN_X = 80;
+const ORIGIN_Y = 80;
+const MAX_COL_X = 1400;
+
+function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds: { width: number; height: number } } {
+  const positioned: Node[] = [];
+  const partNodes = nodes.filter((n) => !n.parentId && (n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage'));
+  const portDefNodes = nodes.filter((n) => n.type === 'sysmlPortDef');
+  const childPortNodes = nodes.filter((n) => n.parentId);
+
+  let cursorX = ORIGIN_X;
+  let cursorY = ORIGIN_Y;
+  let rowHeight = 0;
+  const childByParent = new Map<string, Node[]>();
+  for (const c of childPortNodes) {
+    const arr = childByParent.get(String(c.parentId)) ?? [];
+    arr.push(c);
+    childByParent.set(String(c.parentId), arr);
+  }
+
+  for (const n of partNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    const kids = childByParent.get(String(n.id)) ?? [];
+    let py = PORT_Y_START;
+    for (const k of kids) {
+      positioned.push({ ...k, position: { x: PORT_X_OFFSET, y: py } });
+      py += PORT_GAP;
+    }
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, py + 24);
+    if (cursorX > MAX_COL_X) {
+      cursorX = ORIGIN_X;
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+  }
+  if (portDefNodes.length > 0) {
+    if (rowHeight > 0) {
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+    cursorX = ORIGIN_X;
+  }
+  for (const n of portDefNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    cursorX += PART_WIDTH + COL_GAP;
+  }
+
+  const maxX = positioned.filter((n) => !n.parentId).reduce(
+    (m, n) => Math.max(m, n.position.x),
+    ORIGIN_X
+  ) + PART_WIDTH + 40;
+  const maxY = positioned.filter((n) => !n.parentId).reduce(
+    (m, n) => Math.max(m, n.position.y),
+    ORIGIN_Y
+  ) + PART_HEIGHT + 40;
+  return { positioned, bounds: { width: maxX, height: maxY } };
 }
 
 // ─── 节点构造 ──────────────────────────────────────────────────────────
 
-function makePartDefNode(id: string, pd: PartDefinition, x: number, y: number): Node {
+function makePartDefNode(id: string, pd: PartDefinition): Node {
   return {
     id,
     type: 'sysmlPartDef',
-    position: { x, y },
+    position: { x: 0, y: 0 },
     data: {
       label: pd.name,
       kind: 'partDef',
@@ -177,11 +195,11 @@ function makePartDefNode(id: string, pd: PartDefinition, x: number, y: number): 
   };
 }
 
-function makePartUsageNode(id: string, pu: PartUsage, x: number, y: number): Node {
+function makePartUsageNode(id: string, pu: PartUsage): Node {
   return {
     id,
     type: 'sysmlPartUsage',
-    position: { x, y },
+    position: { x: 0, y: 0 },
     data: {
       label: pu.name,
       kind: 'partUsage',
@@ -193,11 +211,11 @@ function makePartUsageNode(id: string, pu: PartUsage, x: number, y: number): Nod
   };
 }
 
-function makePortDefNode(id: string, pd: PortDefinition, x: number, y: number): Node {
+function makePortDefNode(id: string, pd: PortDefinition): Node {
   return {
     id,
     type: 'sysmlPortDef',
-    position: { x, y },
+    position: { x: 0, y: 0 },
     data: {
       label: pd.name,
       kind: 'portDef',
@@ -207,18 +225,28 @@ function makePortDefNode(id: string, pd: PortDefinition, x: number, y: number): 
   };
 }
 
-function makePortNode(
-  id: string,
-  p: PortUsage,
-  parentId: string,
-  x: number,
-  y: number
-): Node {
+function collectPortNodes(
+  out: Node[],
+  body: PartDefinition['body'] | PartUsage['body'],
+  parentId: string
+): Map<string, string> {
+  const portIds = new Map<string, string>();
+  for (const m of body) {
+    if (m.kind === 'portUsage') {
+      const portId = `port:${m.id}`;
+      portIds.set(m.name ?? '', portId);
+      out.push(makePortNode(portId, m, parentId));
+    }
+  }
+  return portIds;
+}
+
+function makePortNode(id: string, p: PortUsage, parentId: string): Node {
   return {
     id,
     type: 'sysmlPort',
-    position: { x, y },
-    parentNode: parentId,
+    position: { x: 0, y: 0 },
+    parentId: parentId,
     extent: 'parent',
     data: {
       label: p.name ?? (p.redefines ? `:>> ${p.redefines}` : '<anon>'),
@@ -240,16 +268,11 @@ function makeEdge(
 ): Edge | null {
   const srcPartId = nameToPartId.get(conn.source.partName);
   const tgtPartId = nameToPartId.get(conn.target.partName);
-
   if (!srcPartId || !tgtPartId) return null;
-
   const srcPortMap = partToPortIds.get(srcPartId);
   const tgtPortMap = partToPortIds.get(tgtPartId);
-
   const srcPortId = srcPortMap?.get(conn.source.portName);
   const tgtPortId = tgtPortMap?.get(conn.target.portName);
-
-  // 如果 port 找不到，退化连接到 part 自身（保证边可见）
   return {
     id: `edge:${conn.id}`,
     source: srcPortId ?? srcPartId,
@@ -269,7 +292,7 @@ function collectMembers(
   partDefs: PartDefinition[],
   portDefs: PortDefinition[],
   partUsages: PartUsage[],
-  connections: import('../ast/model').Connection[]
+  connections: Connection[]
 ): void {
   for (const m of pkg.members) {
     switch (m.kind) {
