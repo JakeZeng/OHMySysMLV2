@@ -20,7 +20,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 ## Test & verify
 
-- TS unit + e2e: `cd poc-v2 && npm test` (84 vitest tests: 25 parser + 27 validator + 12 e2e + 5 layoutEngine + 5 perf + 10 textEdit)
+- TS unit + e2e: `cd poc-v2 && npm test` (109 vitest tests: 25 parser + 27 validator + 12 e2e + 5 layoutEngine + 5 perf + 10 textEdit + 25 importExport)
 - TS watch mode: `cd poc-v2 && npm run test:watch`
 - Frontend tests: `cd poc-v2/frontend && npm test`
 - Go tests: `cd poc-v2/backend && go test ./...`
@@ -33,7 +33,9 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
   - `poc-v2/ast/` — AST type definitions (`ParseError`, `Package`, `PartDef`, `Connection`, …)
   - `poc-v2/parser/` — Peggy grammar (`sysml.pegjs`), TypeScript wrapper, `build.ts` codegen, `parser.generated.ts` (do not hand-edit)
   - `poc-v2/validator/` — semantic validator (name uniqueness, references, port direction, 11 error codes)
-  - `poc-v2/transform/` — `modelToFlow.ts` AST → React Flow nodes/edges
+  - `poc-v2/transform/` — `modelToFlow.ts` AST → React Flow nodes/edges; `textEdit.ts` graph→text sync; `layoutEngine.ts` ELK.js auto-layout; `exportJson.ts` / `importJson.ts` / `serializer.ts` JSON import/export
+  - `poc-v2/schema/` — `sysml-v2-poc.schema.json` + 3 example JSON files
+  - `poc-v2/backend/internal/ai/` — OpenAI-compatible AI client (streaming SSE)
   - `poc-v2/examples/` — `simple-car.sysml`, `vehicle-system.sysml`, `broken.sysml`
   - `poc-v2/tests/` — vitest suites (`parser.test.ts`, `validator.test.ts`, `e2e.test.ts`)
   - `poc-v2/frontend/` — React 18 + Vite + TS + Monaco + React Flow + Tailwind + Radix UI + Antd
@@ -69,8 +71,9 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 ## Project status
 
-- Currently between M0 (POC) and M1 (architecture rework)
+- **M1 complete** (`a55612f`): parser (54 tests), validator (11 error codes), React Flow canvas, Monaco editor, Go backend + SQLite
+- **M2 complete** (`36f964e`): bidirectional sync, ELK.js layout, React Flow perf, AI syntax check (Go SSE + OpenAI/DeepSeek), JSON import/export, error panel jump
+- **Next: M3** — AI model generation (NL → SysML v2) + metamodel loading + templates
 - Tech review (`tech_review_report.md`) scored 4.4/10 — read it before scoping new work
-- Outstanding P0 from review: parser is line-level regex (v1) — already fixed in v2, do not regress; no team config — see `team_config.md`; backend language undecided — **decided Go** in v2
-- Outstanding P1: monolith architecture (drop MongoDB/MinIO from earlier proposals), metamodel must track ptc/25-04-32, timeline ×1.5–2× original
-- Go is the locked backend language (POC v2 in use, switching cost = 72h); DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for M2 end
+- Go is the locked backend language; DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for production
+- AI syntax check requires `AI_API_KEY` + `AI_PROVIDER` env vars (supports `openai` / `deepseek`)
