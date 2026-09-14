@@ -31,7 +31,14 @@ services:
     volumes:
       - backend-data:/data
     healthcheck:
-      test: ["CMD", "/app/server", "-version"]
+      # 旧版 ["CMD", "/app/server", "-version"] 不可用：
+      # 1) main.go 没有 -version flag（程序启动后立即 listen，这个
+      #    flag 永远不会 return）
+      # 2) 即便有，/app/server 默认 8080 端口已 listen，-version 路径
+      #    也走不到 healthcheck
+      # 改用 wget 主动 GET /health（Gin 注册的路由）。
+      # 配套：backend Dockerfile 换 alpine 才有 wget（distroless 没有）。
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
