@@ -127,8 +127,11 @@ jobs:
         run: docker buildx build -t sysmlv2-mbse/backend:ci -f Dockerfile .
 
       - name: Build frontend image
-        working-directory: poc-v2/frontend
-        run: docker buildx build -t sysmlv2-mbse/frontend:ci -f Dockerfile .
+        # frontend Dockerfile 的 build context 是仓库根 (poc-v2/)，
+        # 因为它需要同时 COPY frontend/ 和 parser/。
+        # 详见 poc-v2/frontend/Dockerfile 头部说明。
+        working-directory: poc-v2
+        run: docker buildx build -t sysmlv2-mbse/frontend:ci -f frontend/Dockerfile .
 
   # ─── 5. E2E：Playwright（启动后端 + 前端 + 跑测试）──────────────────
   e2e:
