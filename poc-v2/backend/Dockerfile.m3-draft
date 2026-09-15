@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1.7
+#
+# SysML v2 MBSE Backend (Go + Gin + SQLite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Build:    docker buildx build -t sysmlv2-mbse/backend:dev -f Dockerfile .
+# Run:      docker run --rm -p 8080:8080 -e DB_PATH=/data/sysmlv2.db \
+#                   -v sysmlv2-backend-data:/data sysmlv2-mbse/backend:dev
+# Health:   docker inspect --format='{{.State.Health.Status}}' <container>
+#
+# 镜像选型说明
+# ─────────────
+#   Builder:  golang:1.23-alpine    镜像小、含 git（go mod download 偶尔需要）
+#   Runtime:  alpine:3.20           含 wget + ca-certificates，方便 healthcheck
+#                                    （distroless 镜像无 shell/wget，调试不便）
+#   非 root:  UID 10001
+#
+# 已知不匹配（待决策）
+# ─────────────────────
+#   docker-compose.yml 的 healthcheck 写的是 ["CMD", "/app/server", "-version"]
+#   但 main.go 当前未实现 -version flag。本 Dockerfile 不动 main.go；如不修
+#   main.go，需同步调整 compose 的 healthcheck 为：
+#       test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+#   决策权在用户（commit 时一并处理）。
+#
+# CGO 决策
+# ────────
+#   CGO_ENABLED=0：modernc.org/sqlite 是 pure-Go，无需 CGO
+#                  镜像可跨 linux/amd64 + linux/arm64，无需 gcc/musl 工具链
+
+# ─── Stage 1: builder ───────────────────────────────────────────────────────
+FROM golang:1.23-alpine AS build
+
+WORKDIR /src
+
+# 单独 COPY go.mod/go.sum 并先 go mod download，缓存命中
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制源码（go.mod 没变就跳过这一层重建）
+COPY . .
+
+# 构建参数
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+# -trimpath    去除文件系统路径（可重现构建）
+# -ldflags     -s 去除符号表，-w 去除调试信息
+# -tags        留空备用
+RUN go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/server \
+    ./cmd/server
+
+# ─── Stage 2: runtime ──────────────────────────────────────────────────────
+FROM alpine:3.20
+
+# ca-certificates：HTTPS 客户端需要（AI API 调用）
+# wget         ：healthcheck 用
+# tini          ：PID 1 信号转发，容器优雅退出
+RUN apk add --no-cache ca-certificates wget tini \
+    && adduser -D -u 10001 -g '' app
+
+WORKDIR /app
+
+COPY --from=build /out/server /app/server
+RUN chown -R app:app /app
+
+# 数据卷挂载点（与 compose 中 /data 一致）
+RUN mkdir -p /data && chown app:app /data
+VOLUME ["/data"]
+
+USER app
+EXPOSE 8080
+
+# tini 转发 SIGTERM/SIGINT，让 main.go 的 graceful shutdown 生效
+ENTRYPOINT ["/sbin/tini", "--", "/app/server"]
+
+# 本镜像自带的 healthcheck（compose 已有，会被覆盖；这里作为单跑镜像的兜底）
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
+    CMD wget -q --spider http://localhost:8080/health || exit 1
+
+# 默认环境变量（可被 -e 覆盖）
+ENV PORT=8080 \
+    DB_PATH=/data/sysmlv2.db \
+    GIN_MODE=release
