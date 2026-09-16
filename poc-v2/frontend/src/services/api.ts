@@ -85,15 +85,25 @@ export function createApi(
     baseURL: API_BASE,
     timeout: 15_000,
     headers: { 'Content-Type': 'application/json' },
+    withCredentials: true,
   });
 
-  // ── 请求：注入 JWT ──
+  // ── 请求：注入 JWT + CSRF ──
   instance.interceptors.request.use(
     (config: InternalAxiosRequestConfig) => {
       const token = getStoredToken();
       if (token) {
         config.headers = config.headers ?? {};
         config.headers['Authorization'] = `Bearer ${token}`;
+      }
+      // CSRF：mutating 方法从 csrf_token cookie 读取并写到 X-CSRF-Token header
+      const m = (config.method || '').toUpperCase();
+      if (m === 'POST' || m === 'PUT' || m === 'DELETE' || m === 'PATCH') {
+        const csrf = readCookie('csrf_token');
+        if (csrf) {
+          config.headers = config.headers ?? {};
+          config.headers['X-CSRF-Token'] = csrf;
+        }
       }
       return config;
     }
@@ -140,4 +150,20 @@ export function getApi(): AxiosInstance {
     _api = createApi();
   }
   return _api;
+}
+
+/**
+ * 读 cookie 值的辅助函数。
+ */
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const target = `${name}=`;
+  const parts = document.cookie ? document.cookie.split(';') : [];
+  for (const raw of parts) {
+    const c = raw.trim();
+    if (c.startsWith(target)) {
+      return decodeURIComponent(c.slice(target.length));
+    }
+  }
+  return null;
 }

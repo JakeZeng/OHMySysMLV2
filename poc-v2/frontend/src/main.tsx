@@ -8,6 +8,7 @@ import { AppRouter } from './routes';
 import { ToastProvider } from './components/ui/Toast';
 import { setOnUnauthorized } from './services/api';
 import { useAuthStore } from './stores/authStore';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './styles/index.css';
 
 // 401 时清空本地登录态并强制跳到 /login
@@ -22,6 +23,16 @@ setOnUnauthorized(() => {
   }
 });
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
 const rootEl = document.getElementById('root');
 if (!rootEl) {
   throw new Error('Root element #root not found in index.html');
@@ -29,8 +40,10 @@ if (!rootEl) {
 
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <ToastProvider>
-      <AppRouter />
-    </ToastProvider>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <AppRouter />
+      </ToastProvider>
+    </QueryClientProvider>
   </React.StrictMode>
 );

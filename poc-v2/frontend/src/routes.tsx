@@ -9,6 +9,7 @@ import { Register } from './pages/Register';
 import { ProjectList } from './pages/ProjectList';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { ModelEditor } from './pages/ModelEditor';
+import { MetamodelPage } from './pages/MetamodelPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
       { index: true, element: <ProjectList /> },
       { path: 'projects/:projectId', element: <ProjectDetail /> },
       { path: 'models/:modelId', element: <ModelEditor /> },
+      { path: 'metamodel', element: <MetamodelPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },

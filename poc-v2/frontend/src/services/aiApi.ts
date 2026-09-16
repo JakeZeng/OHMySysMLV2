@@ -136,3 +136,126 @@ function combineSignals(s1: AbortSignal, s2: AbortSignal): AbortSignal {
   s2.addEventListener('abort', onAbort, { once: true });
   return controller.signal;
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// M3: AI 模型生成（NL → SysML v2）
+// 设计稿: m3-launch-package §1.1 A1, m3-prompt-engineering.md §3
+// ────────────────────────────────────────────────────────────────────────
+
+export interface GenerateRequest {
+  prompt: string;
+  context?: string;
+  industry?: 'automotive' | 'aerospace' | 'software';
+  max_tokens?: number;
+}
+
+export interface GenerateResult {
+  code: string;
+  raw: string;
+  provider: string;
+  model: string;
+  latency_ms: number;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+export interface GenerateStreamCallbacks {
+  onChunk?: (chunk: string) => void;
+  onDone?: (code: string) => void;
+  onError?: (error: string) => void;
+}
+
+/** 非流式 AI 模型生成。 */
+export async function generateModel(req: GenerateRequest): Promise<GenerateResult> {
+  const api = getApi();
+  const { data } = await api.post<{ data: GenerateResult }>('/ai/generate', req);
+  return data.data;
+}
+
+/** 流式 AI 模型生成（SSE）。 */
+export function generateModelStream(
+  req: GenerateRequest,
+  callbacks: GenerateStreamCallbacks,
+  signal?: AbortSignal
+): AbortController {
+  const controller = new AbortController();
+  const combinedSignal = signal
+    ? combineSignals(signal, controller.signal)
+    : controller.signal;
+
+  const api = getApi();
+  const baseURL = (api.defaults?.baseURL ?? '').replace(/\/+$/, '');
+  const token = localStorage.getItem('token');
+
+  fetch(`${baseURL}/ai/generate/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+    signal: combinedSignal,
+  })
+    .then(async (resp) => {
+      if (!resp.ok) {
+        const errText = await resp.text();
+        callbacks.onError?.(`AI 生成失败 ${resp.status}: ${errText}`);
+        return;
+      }
+
+      const reader = resp.body?.getReader();
+      if (!reader) {
+        callbacks.onError?.('无法读取流式响应');
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (!data) continue;
+
+          try {
+            const parsed = JSON.parse(data) as
+              | { type: 'chunk'; content: string }
+              | { type: 'done'; code: string }
+              | { type: 'error'; message: string };
+
+            switch (parsed.type) {
+              case 'chunk':
+                callbacks.onChunk?.(parsed.content);
+                break;
+              case 'done':
+                callbacks.onDone?.(parsed.code ?? '');
+                return;
+              case 'error':
+                callbacks.onError?.(parsed.message);
+                return;
+            }
+          } catch {
+            // skip malformed JSON
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if ((err as Error).name !== 'AbortError') {
+        callbacks.onError?.((err as Error).message);
+      }
+    });
+
+  return controller;
+}

@@ -7,7 +7,7 @@ const mockSchema = `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://www.omg.org/spec/SysML/2.0/JSON",
   "definitions": {
-    "Element": {
+    "SysML::Element": {
       "type": "object",
       "description": "SysML v2 root element",
       "properties": {
@@ -16,65 +16,113 @@ const mockSchema = `{
       },
       "required": ["name"]
     },
-    "Package": {
-      "allOf": [{"$ref": "#/definitions/Namespace"}],
+    "SysML::Package": {
+      "allOf": [{"$ref": "#/definitions/SysML::Namespace"}],
       "description": "A namespace for grouping elements"
     },
-    "Namespace": {
-      "allOf": [{"$ref": "#/definitions/Element"}],
+    "SysML::LibraryPackage": {
+      "allOf": [{"$ref": "#/definitions/SysML::Namespace"}],
+      "description": "A library package"
+    },
+    "SysML::Namespace": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
       "description": "A namespace (Package, LibraryPackage)"
     },
-    "Classifier": {
-      "allOf": [{"$ref": "#/definitions/Element"}],
+    "SysML::Classifier": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
       "description": "A type that can be specialized"
     },
-    "Block": {
-      "allOf": [{"$ref": "#/definitions/Classifier"}],
+    "SysML::Block": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A physical or logical block. The most common classifier in SysML v2."
     },
-    "ItemDef": {
-      "allOf": [{"$ref": "#/definitions/Classifier"}],
+    "SysML::ItemDef": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A classifier for items (physical entities distinct from blocks)"
     },
-    "ActionDef": {
-      "allOf": [{"$ref": "#/definitions/Classifier"}],
+    "SysML::ActionDef": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A classifier for actions (behaviors)"
     },
-    "RequirementDef": {
-      "allOf": [{"$ref": "#/definitions/Classifier"}],
+    "SysML::RequirementDef": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A classifier for requirements"
     },
-    "Feature": {
-      "allOf": [{"$ref": "#/definitions/Element"}],
+    "SysML::Feature": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
       "description": "A structural or behavioral characteristic of a classifier"
     },
-    "Attribute": {
-      "allOf": [{"$ref": "#/definitions/Feature"}],
+    "SysML::Attribute": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
       "description": "A typed value feature"
     },
-    "Port": {
-      "allOf": [{"$ref": "#/definitions/Feature"}],
+    "SysML::Port": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
       "description": "An interaction point on a block"
     },
-    "Step": {
-      "allOf": [{"$ref": "#/definitions/Feature"}],
+    "SysML::Step": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
       "description": "A step within an action"
     },
-    "DataType": {
-      "allOf": [{"$ref": "#/definitions/Classifier"}],
+    "SysML::Expression": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
+      "description": "An expression feature"
+    },
+    "SysML::Reference": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
+      "description": "A reference feature"
+    },
+    "SysML::DataType": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A data type (primitive or composite)"
     },
-    "Structure": {
-      "allOf": [{"$ref": "#/definitions/DataType"}],
+    "SysML::Structure": {
+      "allOf": [{"$ref": "#/definitions/SysML::DataType"}],
       "description": "A structure data type"
     },
-    "Subclassification": {
-      "allOf": [{"$ref": "#/definitions/Relationship"}],
+    "SysML::Enumeration": {
+      "allOf": [{"$ref": "#/definitions/SysML::DataType"}],
+      "description": "An enumeration data type"
+    },
+    "SysML::Association": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
+      "description": "An association classifier"
+    },
+    "SysML::Subclassification": {
+      "allOf": [{"$ref": "#/definitions/SysML::Relationship"}],
       "description": "A specialization relationship between classifiers"
     },
-    "Relationship": {
-      "allOf": [{"$ref": "#/definitions/Element"}],
+    "SysML::Redefinition": {
+      "allOf": [{"$ref": "#/definitions/SysML::Relationship"}],
+      "description": "A redefinition relationship"
+    },
+    "SysML::Relationship": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
       "description": "Base class for all relationships"
+    },
+    "SysML::FeatureChaining": {
+      "allOf": [{"$ref": "#/definitions/SysML::Relationship"}],
+      "description": "Feature chaining relationship"
+    },
+    "SysML::TypeFeaturing": {
+      "allOf": [{"$ref": "#/definitions/SysML::Relationship"}],
+      "description": "Type featuring relationship"
+    },
+    "SysML::Subsetting": {
+      "allOf": [{"$ref": "#/definitions/SysML::Relationship"}],
+      "description": "Subsetting relationship"
+    },
+    "SysML::ItemFeature": {
+      "allOf": [{"$ref": "#/definitions/SysML::Feature"}],
+      "description": "Item feature (special case of feature)"
+    },
+    "SysML::AnnotatingElement": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
+      "description": "An element that annotates another element (e.g. comment)"
+    },
+    "SysML::Documentation": {
+      "allOf": [{"$ref": "#/definitions/SysML::Element"}],
+      "description": "Documentation comment"
     }
   }
 }`

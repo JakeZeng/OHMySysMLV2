@@ -11,6 +11,7 @@ export default defineConfig({
     // 强制 .ts 优先于 .js，避免 Vite 抓到旧 build 产物 .js
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'],
     alias: {
+      '@': path.resolve(__dirname, 'src'),
       '@parser': path.resolve(__dirname, '../parser'),
       '@validator': path.resolve(__dirname, '../validator'),
       '@transform': path.resolve(__dirname, '../transform'),

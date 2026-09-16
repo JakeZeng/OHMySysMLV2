@@ -148,11 +148,13 @@ func (c *Client) Chat(messages []ChatMessage) (string, error) {
 	return chatResp.Choices[0].Message.Content, nil
 }
 
-// StreamCallback is called for each streaming chunk.
-type StreamCallback func(chunk string, done bool)
+// ClientStreamCallback is called for each streaming chunk.
+// M2 兼容类型；M3 推荐使用 Provider 接口 + StreamCallback (3-arg)。
+type ClientStreamCallback func(chunk string, done bool)
 
 // ChatStream sends a streaming chat request and calls cb for each chunk.
-func (c *Client) ChatStream(messages []ChatMessage, cb StreamCallback) error {
+// M2 兼容方法；M3 handler 推荐使用 Provider.ChatStream。
+func (c *Client) ChatStream(messages []ChatMessage, cb ClientStreamCallback) error {
 	if c.config.APIKey == "" {
 		return fmt.Errorf("AI_API_KEY not configured")
 	}

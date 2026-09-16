@@ -9,7 +9,7 @@
  *   GET /api/v1/metamodel/search?q=...
  */
 
-import axios from 'axios';
+import { getApi } from '../services/api';
 import type {
   ListElementsResponse,
   MetaElement,
@@ -17,10 +17,7 @@ import type {
   ElementKind,
 } from './types';
 
-const api = axios.create({
-  baseURL: '/api/v1',
-  withCredentials: true,  // 与现有 modelApi.ts 一致
-});
+const api = getApi();
 
 export const metamodelApi = {
   /** 列出所有元素（按 kind 过滤可选） */

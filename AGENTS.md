@@ -73,7 +73,8 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 - **M1 complete** (`a55612f`): parser (54 tests), validator (11 error codes), React Flow canvas, Monaco editor, Go backend + SQLite
 - **M2 complete** (`36f964e`): bidirectional sync, ELK.js layout, React Flow perf, AI syntax check (Go SSE + OpenAI/DeepSeek), JSON import/export, error panel jump
-- **Next: M3** — AI model generation (NL → SysML v2) + metamodel loading + templates
+- **M3 complete** (`m3/fix-dockerfile`): AI model generation (NL → SysML v2 via OpenAI/DeepSeek/Anthropic + FallbackChain), metamodel browser (28 SysML v2 elements), 3 industry templates (automotive/aerospace/software), security hardening (CSRF + CORS whitelist + rate limit + body size limit). See `poc-v2/docs/m3-summary.md` + 11 screenshots in `poc-v2/docs/screenshots/m3/`
+- **Next: M4** — collaboration + element extension (Stereotype)
 - Tech review (`tech_review_report.md`) scored 4.4/10 — read it before scoping new work
 - Go is the locked backend language; DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for production
 - AI syntax check requires `AI_API_KEY` + `AI_PROVIDER` env vars (supports `openai` / `deepseek`)

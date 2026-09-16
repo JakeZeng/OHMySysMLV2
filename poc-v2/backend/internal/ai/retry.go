@@ -26,16 +26,19 @@ import (
 //
 // 后续：W2 D9 可叠加 Provider fallback 逻辑（rate limit 时切 OpenAI → DeepSeek）。
 func ChatWithRetry(ctx context.Context, p Provider, messages []Message, maxRetries int) (*Response, error) {
-	if maxRetries < 0 {
-		maxRetries = 0
+	if maxRetries < 1 {
+		maxRetries = 1
 	}
 
-	var lastResp *Response
-	var lastErr error
+	var (
+		lastResp  *Response
+		lastErr   error
+		totalUse  Usage
+	)
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := retryBackoff(attempt)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			backoff := retryBackoff(attempt - 1)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -51,11 +54,22 @@ func ChatWithRetry(ctx context.Context, p Provider, messages []Message, maxRetri
 		lastResp = resp
 		lastErr = err
 
+		// 累加失败请求的 Usage（API 通常仍计费）
+		if resp != nil {
+			totalUse.PromptTokens += resp.Usage.PromptTokens
+			totalUse.CompletionTokens += resp.Usage.CompletionTokens
+			totalUse.TotalTokens += resp.Usage.TotalTokens
+		}
+
 		if !shouldRetry(err) {
-			return resp, err
+			break
 		}
 	}
 
+	// 把累加的 Usage 附到最后一次响应上
+	if lastResp != nil {
+		lastResp.Usage = totalUse
+	}
 	return lastResp, lastErr
 }
 

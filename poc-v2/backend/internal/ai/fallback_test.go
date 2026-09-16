@@ -27,8 +27,9 @@ func (m *mockProvider) Name() string { return m.name }
 func (m *mockProvider) Chat(ctx context.Context, messages []Message) (*Response, error) {
 	n := atomic.AddInt32(&m.chatCalls, 1)
 	if m.chatErrByCall != nil {
-		if err, ok := m.chatErrByCall[n]; ok {
-			return nil, err
+		if err, ok := m.chatErrByCall[int(n)]; ok {
+			// 模拟真实 API：失败时仍返回带 Usage 的 Response（API 通常仍计费）
+			return m.chatResp, err
 		}
 	}
 	return m.chatResp, m.chatErr
@@ -90,7 +91,8 @@ func TestFallbackChain_SwitchOnRateLimit(t *testing.T) {
 	rateLimitErr := &ProviderError{Kind: ErrKindRateLimit, Message: "rate limit", StatusCode: 429}
 
 	p1 := &mockProvider{
-		name: "deepseek",
+		name:     "deepseek",
+		chatResp: okResp("", 20, 0), // 失败时也返回带 Usage 的响应（模拟真实 API 计费）
 		chatErrByCall: map[int]error{
 			1: rateLimitErr,
 			2: rateLimitErr,
@@ -286,9 +288,9 @@ func TestNewFallbackChain_NoProviderPanics(t *testing.T) {
 func TestFallbackChain_RetryInsideEachProvider(t *testing.T) {
 	serverErr := &ProviderError{Kind: ErrKindServer, Message: "500", StatusCode: 500}
 
-	var p1Calls int32
 	p1 := &mockProvider{
-		name: "p1",
+		name:     "p1",
+		chatResp: okResp("ok", 10, 5),
 		chatErrByCall: map[int]error{
 			1: serverErr,
 			2: serverErr,
@@ -302,8 +304,8 @@ func TestFallbackChain_RetryInsideEachProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after 2 retries, got: %v", err)
 	}
-	if atomic.LoadInt32(&p1Calls) != 3 {
-		t.Errorf("p1 should be called 3 times (2 fail + 1 success), got %d", p1Calls)
+	if atomic.LoadInt32(&p1.chatCalls) != 3 {
+		t.Errorf("p1 should be called 3 times (2 fail + 1 success), got %d", p1.chatCalls)
 	}
 	_ = resp
 }

@@ -147,7 +147,7 @@ func TestClassifyByName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyByName(tt.name)
+			got := classifyByName(tt.name, "")
 			if got != tt.want {
 				t.Errorf("classifyByName(%q) = %v, want %v", tt.name, got, tt.want)
 			}

@@ -14,13 +14,15 @@ import "fmt"
 type ErrKind int
 
 const (
-	ErrKindUnknown ErrKind = iota
-	ErrKindAuth
+	// ErrKind 显式从 0 开始，但保留 _ 占位以避免 ErrKindUnknown = 0
+	// （让测试能用 "wantErrKind == 0" 区分 success / ErrKindUnknown）
+	ErrKindAuth ErrKind = iota + 1
 	ErrKindRateLimit
 	ErrKindServer
 	ErrKindNetwork
 	ErrKindProtocol
 	ErrKindInvalidReq
+	ErrKindUnknown // 显式排在最后，值最大
 )
 
 func (k ErrKind) String() string {

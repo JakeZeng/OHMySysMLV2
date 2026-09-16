@@ -69,3 +69,78 @@ func TestBuildMessages(t *testing.T) {
 		t.Error("user message content should not be empty")
 	}
 }
+
+func TestBuildGenerateMessages(t *testing.T) {
+	req := aiGenerateReq{
+		Prompt:   "build a vehicle",
+		Industry: "automotive",
+		Context:  "package X {}",
+	}
+	messages := buildGenerateMessages(req)
+
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+	if messages[0].Role != "system" {
+		t.Errorf("expected system role, got %s", messages[0].Role)
+	}
+	if !contains(messages[1].Content, "build a vehicle") {
+		t.Error("user message should contain prompt")
+	}
+	if !contains(messages[1].Content, "Engine") {
+		t.Error("automotive industry hint should be included")
+	}
+	if !contains(messages[1].Content, "package X") {
+		t.Error("context should be included")
+	}
+}
+
+func TestExtractSysMLCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{
+			name:     "with sysml fence",
+			input:    "Here is the model:\n```sysml\npackage Foo { part def Bar {} }\n```\nDone.",
+			contains: "package Foo",
+		},
+		{
+			name:     "with plain fence",
+			input:    "```\npackage Foo { part def Bar {} }\n```",
+			contains: "package Foo",
+		},
+		{
+			name:     "no fence returns original",
+			input:    "package Foo { part def Bar {} }",
+			contains: "package Foo",
+		},
+		{
+			name:     "incomplete fence returns original",
+			input:    "```sysml\npackage Foo { part def Bar {} }",
+			contains: "package Foo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := extractSysMLCode(tt.input)
+			if !contains(out, tt.contains) {
+				t.Errorf("extractSysMLCode(%q) = %q, expected to contain %q", tt.input, out, tt.contains)
+			}
+		})
+	}
+}
+
+func contains(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

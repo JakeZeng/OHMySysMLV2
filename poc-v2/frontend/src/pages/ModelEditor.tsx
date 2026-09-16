@@ -18,6 +18,8 @@ import {
   AlertTriangle,
   Download,
   Upload,
+  Sparkles,
+  Layers,
 } from 'lucide-react';
 import SysMLEditor, { type PipelineResult, type SysMLEditorHandle } from '../editor/SysMLEditor';
 import { DiagramCanvas, type DiagramCanvasHandle } from '../canvas/DiagramCanvas';
@@ -27,6 +29,8 @@ import { useModelStore } from '../stores/modelStore';
 import { useToast } from '../components/ui/Toast';
 import { downloadJson } from '@transform/exportJson';
 import { importFromJson } from '@transform/importJson';
+import { AIGenerateModal } from '../components/modals/AIGenerateModal';
+import { TemplateChooserModal } from '../components/modals/TemplateChooserModal';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -58,6 +62,10 @@ export const ModelEditor: React.FC = () => {
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const [errorPanelExpanded, setErrorPanelExpanded] = React.useState(true);
+
+  // M3: AI 生成 + 模板选择器
+  const [showAIGenerate, setShowAIGenerate] = React.useState(false);
+  const [showTemplateChooser, setShowTemplateChooser] = React.useState(false);
 
   // 暴露 dev hook：浏览器演示脚本可直接调用 store action
   React.useEffect(() => {
@@ -168,6 +176,25 @@ export const ModelEditor: React.FC = () => {
     input.click();
   }, [setContent, showToast]);
 
+  // M3: 应用模板
+  const handleApplyTemplate = React.useCallback(
+    (templateContent: string) => {
+      setContent(templateContent);
+      showToast({ title: '模板已应用', variant: 'success' });
+    },
+    [setContent, showToast]
+  );
+
+  // M3: 插入 AI 生成结果
+  const handleInsertAIGenerated = React.useCallback(
+    (code: string) => {
+      const newContent = content.trim() ? `${content}\n${code}` : code;
+      setContent(newContent);
+      showToast({ title: 'AI 生成已插入', variant: 'success' });
+    },
+    [content, setContent, showToast]
+  );
+
   const parseErrorCount = pipeline.parseErrors.length;
   const validationErrorCount = pipeline.validationIssues.filter(
     (i) => i.severity === 'error'
@@ -212,6 +239,27 @@ export const ModelEditor: React.FC = () => {
               <Save className="h-3.5 w-3.5" /> 保存
             </>
           )}
+        </Button>
+
+        <div className="mx-1 h-5 w-px bg-gray-200" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowTemplateChooser(true)}
+          title="从模板新建"
+          data-testid="open-template-chooser"
+        >
+          <Layers className="h-3.5 w-3.5" /> 模板
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowAIGenerate(true)}
+          title="AI 生成模型"
+          data-testid="open-ai-generate"
+        >
+          <Sparkles className="h-3.5 w-3.5" /> AI 生成
         </Button>
 
         <div className="mx-1 h-5 w-px bg-gray-200" />
@@ -321,6 +369,21 @@ export const ModelEditor: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* M3: AI 生成 Modal */}
+      <AIGenerateModal
+        open={showAIGenerate}
+        onClose={() => setShowAIGenerate(false)}
+        onInsert={handleInsertAIGenerated}
+        contextContent={content}
+      />
+
+      {/* M3: 模板选择器 Modal */}
+      <TemplateChooserModal
+        open={showTemplateChooser}
+        onClose={() => setShowTemplateChooser(false)}
+        onApply={handleApplyTemplate}
+      />
     </div>
   );
 };

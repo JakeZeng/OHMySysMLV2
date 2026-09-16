@@ -248,14 +248,11 @@ func TestGetElement_EncodedQname(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
-		t.Errorf("expected 200 with URL-encoded qname, got %d", w.Code)
+		t.Errorf("expected 200 with URL-encoded qname, got %d (body: %s)", w.Code, w.Body.String())
 	}
 
 	// 验证响应
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
 	if !strings.Contains(w.Body.String(), "Element") {
 		t.Errorf("response should contain Element, got: %s", w.Body.String())
 	}
-	_ = resp
 }

@@ -90,21 +90,8 @@ func LoadFromBytes(data []byte) (*Registry, error) {
 		if len(jt.AllOf) > 0 {
 			if parent := extractRef(jt.AllOf[0]); parent != "" {
 				element.SuperType = parent
-				// 更新子类的 SubTypes（直接写，因为 Add 已反向填充）
-				// 注：这里冗余写入，幂等
-				parentEl, ok := reg.Get(parent)
-				if ok {
-					found := false
-					for _, st := range parentEl.SubTypes {
-						if st == qname {
-							found = true
-							break
-						}
-					}
-					if !found {
-						parentEl.SubTypes = append(parentEl.SubTypes, qname)
-					}
-				}
+				// 反向填充 subtypes map（Add 时 SuperType 还是空，现在补上）
+				reg.LinkSubType(parent, qname)
 			}
 		}
 
@@ -148,6 +135,10 @@ func LoadFromBytes(data []byte) (*Registry, error) {
 	}
 
 	reg.SetSource("loaded")
+
+	// 第三遍：所有 SuperType 已知后，按父类 + 名字推断 Kind
+	reg.ClassifyAll()
+
 	return reg, nil
 }
 

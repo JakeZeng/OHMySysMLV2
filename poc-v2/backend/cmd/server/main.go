@@ -1,4 +1,5 @@
-// SysML v2 MBSE 后端服务（M1 极简版）。
+// SysML v2 MBSE 后端服务。
+// 当前版本：M3（AI 增强 + 元模型 + 模板 + 安全加固）。
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/sysmlv2/mbse-backend/internal/handler"
+	"github.com/sysmlv2/mbse-backend/internal/metamodel"
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
 )
@@ -36,6 +38,15 @@ func main() {
 	defer repo.Close()
 
 	h := handler.New(repo)
+
+	// 初始化元模型 registry（M3 W1：mock schema，dev 阶段够用；M5 替换为 ptc-25-04-30 官方）
+	metaReg, err := metamodel.NewMockRegistry()
+	if err != nil {
+		log.Printf("⚠ 元模型 registry 初始化失败: %v（metamodel endpoint 将不可用）", err)
+	}
+	metaH := handler.NewMetaHandler(metaReg)
+
+	// 初始化 AI handler（M3 W1：Provider interface + fallback chain）
 	aiH := handler.NewAIHandler()
 
 	if os.Getenv("GIN_MODE") == "" {
@@ -43,8 +54,23 @@ func main() {
 	}
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(corsMiddleware())
+
+	// M3 安全加固（m3-security-checklist.md §A01-A05）：
+	//   - 1 MB 请求体大小限制（OWASP A03）
+	//   - CORS 白名单化（OWASP A05；移除 * 通配）
+	//   - CSRF token（OWASP A01）
+	//   - IP 限流（OWASP A04）
+	r.Use(middleware.BodySizeLimit(1 << 20))
+	r.Use(middleware.CORS(middleware.DefaultCORSConfig()))
+
+	// 限流器：60 req/min/IP（写操作更严：可加 rate limit per route）
+	rateLimiter := middleware.NewRateLimiter(60, time.Minute)
+	r.Use(middleware.RateLimit(rateLimiter))
+
 	r.Use(requestLogger())
+
+	// CSRF 仅作用于 mutating 方法（GET/OPTIONS 不影响）
+	r.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 
 	// 健康检查
 	r.GET("/health", h.Health)
@@ -52,7 +78,7 @@ func main() {
 	// API v1
 	v1 := r.Group("/api/v1")
 	{
-		// Auth（公开路由）
+		// Auth（公开路由：CSRF 已在 SkipPaths 中跳过）
 		v1.POST("/auth/register", h.Register)
 		v1.POST("/auth/login", h.Login)
 
@@ -66,7 +92,6 @@ func main() {
 			projects.PUT("/:id", h.UpdateProject)
 			projects.DELETE("/:id", h.DeleteProject)
 
-			// Models（嵌套路由，关联到项目）
 			projects.GET("/:id/models", h.ListModelsByProject)
 			projects.POST("/:id/models", h.CreateModelInProject)
 			projects.GET("/:id/models/:modelId", h.GetModel)
@@ -74,7 +99,6 @@ func main() {
 			projects.DELETE("/:id/models/:modelId", h.DeleteModel)
 		}
 
-		// Models（旧版平坦路由，保留兼容，也需认证）
 		models := v1.Group("/models")
 		models.Use(middleware.AuthRequired())
 		{
@@ -85,13 +109,32 @@ func main() {
 			models.DELETE("/:id", h.DeleteModel)
 		}
 
-		// AI 语法检查（也需认证）
+		// AI endpoints（受保护）
 		aiGroup := v1.Group("/ai")
 		aiGroup.Use(middleware.AuthRequired())
 		{
+			// M2 兼容：语法检查
 			aiGroup.POST("/check", aiH.CheckSyntax)
 			aiGroup.POST("/check/stream", aiH.CheckSyntaxStream)
+			// M3 新增：NL → SysML v2 生成
+			aiGroup.POST("/generate", aiH.Generate)
+			aiGroup.POST("/generate/stream", aiH.GenerateStream)
 		}
+
+		// M3 新增：元模型查询（受保护，避免暴露 schema）
+		metaGroup := v1.Group("/metamodel")
+		metaGroup.Use(middleware.AuthRequired())
+		{
+			metaGroup.GET("/elements", metaH.ListElements)
+			metaGroup.GET("/elements/:qname", metaH.GetElement)
+			metaGroup.GET("/subtypes/:qname", metaH.SubTypes)
+			metaGroup.GET("/edges/:qname", metaH.Edges)
+			metaGroup.GET("/search", metaH.Search)
+		}
+
+		// M3 新增：行业模板（公开浏览，仅元数据；Content 需要时按需 GET）
+		v1.GET("/templates", h.ListTemplates)
+		v1.GET("/templates/:id", h.GetTemplate)
 	}
 
 	srv := &http.Server{
@@ -102,6 +145,12 @@ func main() {
 
 	go func() {
 		log.Printf("SysML v2 MBSE Backend 启动在 :%s (db=%s)", port, dbPath)
+		if metaReg != nil {
+			log.Printf("  · 元模型: %d 元素已加载 (source=%s)", metaReg.Count(), metaReg.Source())
+		}
+		if aiH != nil {
+			log.Printf("  · AI: fallback chain 已配置")
+		}
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("HTTP 服务异常退出: %v", err)
 		}
@@ -119,19 +168,6 @@ func main() {
 		log.Printf("HTTP 服务关闭失败: %v", err)
 	}
 	log.Println("服务已退出")
-}
-
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	}
 }
 
 func requestLogger() gin.HandlerFunc {

@@ -18,6 +18,7 @@
     "types": ["vite/client", "node"],
     "baseUrl": ".",
     "paths": {
+      "@/*": ["src/*"],
       "@parser/*": ["../parser/*"],
       "@validator/*": ["../validator/*"],
       "@transform/*": ["../transform/*"],

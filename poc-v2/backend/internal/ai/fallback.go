@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // FallbackChain 是 Provider 链式 fallback 包装器。
@@ -74,14 +75,30 @@ func (f *FallbackChain) WithSwitchableKinds(kinds ...ErrKind) *FallbackChain {
 	return f
 }
 
+// Name 返回 fallback chain 标识（用于日志）。
+func (f *FallbackChain) Name() string {
+	if len(f.providers) == 0 {
+		return "fallback-empty"
+	}
+	names := make([]string, len(f.providers))
+	for i, p := range f.providers {
+		names[i] = p.Name()
+	}
+	return "fallback(" + strings.Join(names, "→") + ")"
+}
+
 // Chat 是 fallback 主入口。
 // 依次尝试每个 Provider；每个 Provider 内调用 ChatWithRetry。
 // 成功：返回带 ProviderName + 累加 Usage 的 Response。
 // 失败：返回最后一个 Provider 的 error。
 func (f *FallbackChain) Chat(ctx context.Context, messages []Message) (*Response, error) {
 	if len(f.providers) == 1 {
-		// 单 Provider：跳过 fallback 逻辑，直接调 retry
-		return ChatWithRetry(ctx, f.providers[0], messages, f.maxRetries)
+		// 单 Provider：跳过 fallback 逻辑，直接调 retry，但仍然覆盖 ProviderName
+		resp, err := ChatWithRetry(ctx, f.providers[0], messages, f.maxRetries)
+		if err == nil && resp != nil {
+			resp.ProviderName = f.providers[0].Name()
+		}
+		return resp, err
 	}
 
 	var (
@@ -93,7 +110,7 @@ func (f *FallbackChain) Chat(ctx context.Context, messages []Message) (*Response
 	for i, p := range f.providers {
 		resp, err := ChatWithRetry(ctx, p, messages, f.maxRetries)
 
-		if err == nil {
+		if err == nil && resp != nil {
 			// 成功：累加 Usage（含之前失败请求的），填 ProviderName
 			accumulatedUsage.PromptTokens += resp.Usage.PromptTokens
 			accumulatedUsage.CompletionTokens += resp.Usage.CompletionTokens
@@ -119,6 +136,14 @@ func (f *FallbackChain) Chat(ctx context.Context, messages []Message) (*Response
 		// 如果不是最后一个 Provider，继续循环
 		if i < len(f.providers)-1 {
 			continue
+		}
+	}
+
+	// 全部失败或 resp 全为 nil：构造一个清晰的错误返回
+	if lastErr == nil && lastResp == nil {
+		return nil, &ProviderError{
+			Kind:    ErrKindProtocol,
+			Message: "all providers returned empty response",
 		}
 	}
 

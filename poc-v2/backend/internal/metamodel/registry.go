@@ -29,34 +29,71 @@ func NewRegistry() *Registry {
 // Add 添加一个元素到 Registry。
 // Loader 内部使用；外部不应直接调用。
 // 重复 QualifiedName 会覆盖。
+//
+// Kind 推断推迟到 ClassifyAll()（因为需要 SuperType 信息）。
 func (r *Registry) Add(e *MetaElement) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// 推断 Kind（如果未设）
-	if e.Kind == KindUnknown {
-		e.Kind = classifyByName(e.Name)
-	}
-
 	r.elements[e.QualifiedName] = e
-	r.byKind[e.Kind] = append(r.byKind[e.Kind], e)
 
-	// 反向填充 SubTypes
+	// 反向填充 SubTypes（如果 SuperType 已知）
 	if e.SuperType != "" {
 		r.subtypes[e.SuperType] = append(r.subtypes[e.SuperType], e.QualifiedName)
 	}
 }
 
-// classifyByName 根据元素名推断 Kind。
-// M3 简化版：按命名约定。
-//   - "Block" / "ItemDef" / "Action" / "Requirement" → Classifier
-//   - "Attribute" / "Port" / "Step" / "Reference" → Feature
-//   - "Package" / "LibraryPackage" → Namespace
-//   - "Subclassification" / "Subsetting" → Relationship
-//   - "DataType" / "Structure" / "Association" → Type
-func classifyByName(name string) ElementKind {
+// ClassifyAll 在所有元素 + SuperType 关系建立后调用，
+// 根据 SuperType 和 Name 推断每个元素的 Kind。
+func (r *Registry) ClassifyAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, e := range r.elements {
+		if e.Kind == KindUnknown {
+			e.Kind = classifyByName(e.Name, e.SuperType)
+		}
+		r.byKind[e.Kind] = append(r.byKind[e.Kind], e)
+	}
+}
+
+// LinkSubType 在 SuperType 关系已知后，建立反向索引 parent → child。
+// Loader 内部使用；外部不应直接调用。
+func (r *Registry) LinkSubType(parentQname, childQname string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subtypes[parentQname] = append(r.subtypes[parentQname], childQname)
+}
+
+// classifyByName 根据元素名 + 父类推断 Kind。
+// 优先级：
+//   1. 父类名（更准确）：Classifier / Feature / Namespace / Relationship / DataType 子类
+//   2. 名字后缀启发式
+//   3. 默认 KindElement
+func classifyByName(name, superType string) ElementKind {
+	// 1. 按父类推断（最准）
+	if superType != "" {
+		parentName := extractLastSegment(superType)
+		switch parentName {
+		case "Classifier", "Block", "ItemDef":
+			return KindClassifier
+		case "Feature", "Attribute", "Port":
+			return KindFeature
+		case "Namespace", "Package":
+			return KindNamespace
+		case "Relationship":
+			return KindRelationship
+		case "DataType":
+			return KindType
+		}
+	}
+
+	// 2. 按命名约定启发式
 	switch {
 	case strings.HasSuffix(name, "Def"):
+		return KindClassifier
+	case name == "Block":
+		// Block 是 SysML v2 最常见的 Classifier；无 superType 时也识别为 Classifier
 		return KindClassifier
 	case name == "Attribute" || name == "Port" || name == "Step" ||
 		name == "Reference" || name == "Expression" || name == "ItemFeature":
@@ -72,6 +109,16 @@ func classifyByName(name string) ElementKind {
 	default:
 		return KindElement
 	}
+}
+
+// extractLastSegment 返回 "Foo::Bar" → "Bar"
+func extractLastSegment(qname string) string {
+	for i := len(qname) - 1; i >= 0; i-- {
+		if i+1 < len(qname) && qname[i] == ':' && qname[i+1] == ':' {
+			return qname[i+2:]
+		}
+	}
+	return qname
 }
 
 // Get 按 QualifiedName 查询元素。
