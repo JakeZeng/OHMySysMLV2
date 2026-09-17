@@ -40,6 +40,8 @@ func (h *TeamHandler) CreateTeam(c *gin.Context) {
 		serverError(c, "创建团队失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionTeamCreate, model.AuditTargetTeam, t.ID,
+		`{"name":"`+escapeJSON(req.Name)+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": t})
 }
 
@@ -212,6 +214,8 @@ func (h *TeamHandler) AddMember(c *gin.Context) {
 		serverError(c, "添加成员失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionMemberAdd, model.AuditTargetMember, teamID+"/"+user.ID,
+		`{"role":"`+req.Role+`","username":"`+escapeJSON(req.Username)+`"}`)
 	m, _ := h.repo.GetTeamMember(c, teamID, user.ID)
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
@@ -239,6 +243,8 @@ func (h *TeamHandler) UpdateMember(c *gin.Context) {
 		badRequest(c, err.Error(), nil)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionMemberRole, model.AuditTargetMember, teamID+"/"+userID,
+		`{"new_role":"`+req.Role+`"}`)
 	m, _ := h.repo.GetTeamMember(c, teamID, userID)
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
@@ -268,6 +274,7 @@ func (h *TeamHandler) DeleteMember(c *gin.Context) {
 		badRequest(c, err.Error(), nil)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionMemberDel, model.AuditTargetMember, teamID+"/"+targetUserID, "")
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 
@@ -305,6 +312,9 @@ func (h *TeamHandler) GrantProjectAccess(c *gin.Context) {
 		serverError(c, "授权失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionGrant, model.AuditTargetProjectAccess,
+		teamID+"/"+req.ProjectID,
+		`{"permission":"`+req.Permission+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"teamId":     teamID,
 		"projectId":  req.ProjectID,
@@ -355,5 +365,7 @@ func (h *TeamHandler) RevokeProjectAccess(c *gin.Context) {
 		serverError(c, "撤销失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionRevoke, model.AuditTargetProjectAccess,
+		teamID+"/"+projectID, "")
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }

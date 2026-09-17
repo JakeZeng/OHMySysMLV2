@@ -238,6 +238,26 @@ func itoa10(n int) string {
 // silence unused
 var _ = itoa10
 
+// escapeJSON 对 JSON 字符串字面量做最小化转义（" 和 \\ 与 \n），仅用于审计 metadata 内嵌。
+// 不处理控制字符；M4.5 假设 username / team name 不含控制字符。
+func escapeJSON(s string) string {
+	out := make([]byte, 0, len(s)+8)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"':
+			out = append(out, '\\', '"')
+		case '\\':
+			out = append(out, '\\', '\\')
+		case '\n':
+			out = append(out, '\\', 'n')
+		default:
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
+
 func permissionString(p Permission) string {
 	switch p {
 	case PermRead:

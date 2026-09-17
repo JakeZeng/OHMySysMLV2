@@ -213,6 +213,95 @@ func TestW2_NonOwnerCannotGrant(t *testing.T) {
 	_ = teamA
 }
 
+// TestW45_AuditTeamOps：创建团队 + 邀请成员 + 改角色 + 撤销 都产生 audit log。
+func TestW45_AuditTeamOps(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, _, _, idB := registerTwoUsers(t, r)
+
+	teamID := mustCreateTeam(t, r, tokenA, "AuditTeam", "")
+
+	// bob 必须先注册（registerTwoUsers 已注册）
+
+	// 加 bob
+	wAdd := doRequest(r, authedRequest("POST", "/api/v1/teams/"+teamID+"/members", tokenA, gin.H{
+		"username": "bob", "role": "member",
+	}))
+	if wAdd.Code != http.StatusOK {
+		t.Fatalf("add member: %d %s", wAdd.Code, wAdd.Body.String())
+	}
+
+	// 改角色为 admin
+	wRole := doRequest(r, authedRequest("PUT", "/api/v1/teams/"+teamID+"/members/"+idB, tokenA, gin.H{
+		"role": "admin",
+	}))
+	if wRole.Code != http.StatusOK {
+		t.Fatalf("update role: %d", wRole.Code)
+	}
+
+	// 删成员
+	wDel := doRequest(r, authedRequest("DELETE", "/api/v1/teams/"+teamID+"/members/"+idB, tokenA, nil))
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete member: %d", wDel.Code)
+	}
+
+	// 审计查询
+	wLogs := doRequest(r, authedRequest("GET", "/api/v1/audit-logs", tokenA, nil))
+	if wLogs.Code != http.StatusOK {
+		t.Fatalf("list logs: %d %s", wLogs.Code, wLogs.Body.String())
+	}
+	logs := parseJSON(t, wLogs.Body.Bytes())["data"].([]any)
+	if len(logs) != 4 {
+		t.Fatalf("应 4 条日志，实际 %d", len(logs))
+	}
+	want := map[string]bool{
+		"team_create": true,
+		"member_add":  true,
+		"member_role": true,
+		"member_del":  true,
+	}
+	for _, l := range logs {
+		delete(want, l.(map[string]any)["action"].(string))
+	}
+	if len(want) != 0 {
+		t.Errorf("缺少 action: %v", want)
+	}
+}
+
+// TestW45_AuditGrantRevokeAccess：team project-access grant/revoke 产生 audit。
+func TestW45_AuditGrantRevokeAccess(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, tokenB, _, idB := registerTwoUsers(t, r)
+	teamA := mustCreateTeam(t, r, tokenA, "GrantTeam", "")
+	_ = mustCreateTeam(t, r, tokenB, "BobTeam", "")
+	_ = idB
+
+	projectID := createProject(t, r, tokenA, "GrantedProj", "private")
+
+	// alice 授权 teamA 读项目
+	wGrant := doRequest(r, authedRequest("POST", "/api/v1/teams/"+teamA+"/project-access", tokenA, gin.H{
+		"projectId": projectID, "permission": "read",
+	}))
+	if wGrant.Code != http.StatusOK {
+		t.Fatalf("grant: %d %s", wGrant.Code, wGrant.Body.String())
+	}
+
+	// alice 撤销
+	wRev := doRequest(r, authedRequest("DELETE", "/api/v1/teams/"+teamA+"/project-access/"+projectID, tokenA, nil))
+	if wRev.Code != http.StatusOK {
+		t.Fatalf("revoke: %d", wRev.Code)
+	}
+
+	wLogs := doRequest(r, authedRequest("GET", "/api/v1/audit-logs", tokenA, nil))
+	logs := parseJSON(t, wLogs.Body.Bytes())["data"].([]any)
+	want := map[string]bool{"grant": true, "revoke": true}
+	for _, l := range logs {
+		delete(want, l.(map[string]any)["action"].(string))
+	}
+	if len(want) != 0 {
+		t.Errorf("缺少 grant/revoke，实际日志: %v", logs)
+	}
+}
+
 // ─── helpers ───────────────────────────────────────────────────────
 
 func mustCreateTeam(t *testing.T, r *gin.Engine, token, name, desc string) string {
