@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -206,7 +205,8 @@ func TestW3_LinkExpiration(t *testing.T) {
 	}
 }
 
-// TestW3_AnonymousCannotWrite：即使 token 是 write，公开端点只 GET 元数据，没有 write 入口。
+// TestW3_AnonymousCannotWrite：即使 token 是 write，公开端点没有 write 入口。
+// M4.5 起 content 会被公开（供 Monaco 只读渲染）；写路径仍然全部 401/403。
 func TestW3_AnonymousCannotWrite(t *testing.T) {
 	r, _ := setupTestRouter(t)
 	token, _, _, _ := registerTwoUsers(t, r)
@@ -225,27 +225,13 @@ func TestW3_AnonymousCannotWrite(t *testing.T) {
 	if wAnon.Code != http.StatusUnauthorized {
 		t.Errorf("匿名 POST 应 401，实际 %d", wAnon.Code)
 	}
-	// 公开端点只暴露 GET 项目 + GET 模型列表（不含 model 内容）；写路径不暴露
+	// 公开端点可读，但写路径不暴露
 	wShared := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
 	if wShared.Code != http.StatusOK {
 		t.Fatalf("公开 GET 应 200，实际 %d", wShared.Code)
 	}
-	d := parseJSON(t, wShared.Body.Bytes())["data"].(map[string]any)
-	// models 数组只列元数据（id/name/version），不含 content
-	models, _ := d["models"].([]any)
-	if len(models) > 0 {
-		m := models[0].(map[string]any)
-		if _, hasContent := m["content"]; hasContent {
-			t.Errorf("公开模型列表不应包含 content 字段")
-		}
-	}
-	// 序列化时检查 raw JSON 不含 content 字段（双重保险）
-	raw, _ := json.Marshal(d["models"])
-	if got := string(raw); got != "" && got != "null" && got != "[]" {
-		if containsJSONField(got, `"content":`) {
-			t.Errorf("公开 models 不应含 content：%s", got)
-		}
-	}
+	// 不再断言 content 字段缺失（M4.5 起故意暴露给 Monaco 只读渲染；
+	// 内容可读性见 TestW45_SharedProjectExposesModelContent）
 }
 
 func containsJSONField(haystack, needle string) bool {
@@ -324,5 +310,45 @@ func TestW45_LinkUnlimitedWhenNull(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("第 %d 次访问应 200（无限），实际 %d", i+1, w.Code)
 		}
+	}
+}
+
+// TestW45_SharedProjectExposesModelContent：M4.5 增量 — 公开项目视图暴露
+// model.content 字段，让前端 Monaco 只读渲染可以工作。仍无 write 入口。
+func TestW45_SharedProjectExposesModelContent(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "ReadOnlyView", "private")
+
+	// owner 在项目下创建一个模型，含 SysML 内容
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID,
+		"name":      "VehiclePkg",
+		"content":   "package Vehicle { part engine; }",
+	}))
+	if wCreate.Code != http.StatusOK {
+		t.Fatalf("create model: %d %s", wCreate.Code, wCreate.Body.String())
+	}
+
+	// 创建 read link
+	wLink := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	body := parseJSON(t, wLink.Body.Bytes())["data"].(map[string]any)
+	linkToken, _ := body["token"].(string)
+
+	// 公开访问
+	wShared := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if wShared.Code != http.StatusOK {
+		t.Fatalf("shared view: %d", wShared.Code)
+	}
+	d := parseJSON(t, wShared.Body.Bytes())["data"].(map[string]any)
+	models := d["models"].([]any)
+	if len(models) != 1 {
+		t.Fatalf("应 1 个模型，实际 %d", len(models))
+	}
+	m := models[0].(map[string]any)
+	if got, _ := m["content"].(string); got != "package Vehicle { part engine; }" {
+		t.Errorf("content 应被公开暴露供 Monaco 只读渲染，实际 %q", got)
 	}
 }

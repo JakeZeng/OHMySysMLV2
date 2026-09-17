@@ -1,8 +1,8 @@
 /**
- * 公开分享页（M4 W3）：无需登录，凭 token 查看项目只读视图。
+ * 公开分享页（M4 W3 + M4.5 增量）：无需登录，凭 token 查看项目只读视图。
  *
  *   - 头部：项目名 + 描述 + 权限徽章
- *   - 模型列表：仅元数据（name/version），不含 content
+ *   - 模型列表：点击展开 Monaco 只读视图（M4.5 增量）
  *   - 链接失效（404 / 网络错）→ 通用"链接无效或已失效"
  */
 
@@ -10,6 +10,8 @@ import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Eye,
   FileCode2,
   Loader2,
@@ -21,6 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from '../components/ui/Card';
+import SysMLEditor from '../editor/SysMLEditor';
 import {
   shareApi,
   type SharedProjectView,
@@ -32,6 +35,7 @@ export const SharedProjectPage: React.FC = () => {
   const [view, setView] = React.useState<SharedProjectView | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [openModelId, setOpenModelId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!token) {
@@ -60,7 +64,7 @@ export const SharedProjectPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-3xl px-6 py-8">
+      <div className="mx-auto max-w-4xl px-6 py-8">
         <Link
           to="/login"
           className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
@@ -127,24 +131,54 @@ export const SharedProjectPage: React.FC = () => {
               </Card>
             ) : (
               <div className="space-y-2">
-                {view.models.map((m) => (
-                  <Card key={m.id}>
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="flex items-center gap-2 text-sm">
-                          <FileCode2 className="h-4 w-4 text-gray-400" />
-                          {m.name}
-                        </CardTitle>
-                        <span className="text-xs text-gray-400">v{m.version}</span>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-xs text-gray-400">
-                        更新于 {new Date(m.updatedAt).toLocaleString()}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {view.models.map((m) => {
+                  const isOpen = openModelId === m.id;
+                  return (
+                    <Card key={m.id}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenModelId(isOpen ? null : m.id)}
+                        className="block w-full text-left"
+                        aria-expanded={isOpen}
+                        data-testid="shared-model-row"
+                      >
+                        <CardHeader>
+                          <div className="flex items-center justify-between">
+                            <CardTitle className="flex items-center gap-2 text-sm">
+                              {isOpen ? (
+                                <ChevronDown className="h-4 w-4 text-gray-400" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-gray-400" />
+                              )}
+                              <FileCode2 className="h-4 w-4 text-gray-400" />
+                              {m.name}
+                            </CardTitle>
+                            <span className="text-xs text-gray-400">
+                              v{m.version}
+                            </span>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-xs text-gray-400">
+                            更新于 {new Date(m.updatedAt).toLocaleString()}
+                          </div>
+                        </CardContent>
+                      </button>
+                      {isOpen && (
+                        <div
+                          className="border-t border-gray-100"
+                          data-testid="shared-model-viewer"
+                        >
+                          <SysMLEditor
+                            value={m.content ?? ''}
+                            readOnly
+                            height={360}
+                          />
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </>

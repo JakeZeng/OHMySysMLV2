@@ -57,6 +57,8 @@ export interface SharedProjectView {
     name: string;
     version: number;
     updatedAt: string;
+    /** M4.5 补充：暴露 content 供 Monaco 只读渲染；权限仍受 share-link 限制 */
+    content: string;
   }>;
   permission: 'read' | 'write' | 'none';
 }

@@ -191,8 +191,12 @@ func (h *ShareHandler) RevokeLink(c *gin.Context) {
 
 // ─── 公开端点 /api/v1/shared/:token ──────────────────────────────────
 
-// GetSharedProject 公开端点：持 token 获取项目只读视图（+ model 列表只读）。
-// 任何失效情况一律返回 404 + 通用 message（不区分 not-found/revoked/expired）。
+// GetSharedProject 公开端点：持 token 获取项目只读视图（+ model 列表 + model.content）。
+// 任何失效情况一律返回 404 + 通用 message（不区分 not-found/revoked/expired/max_views）。
+//
+// 暴露 model.content 是 M4.5 增量：让 SharedProjectPage 用 Monaco 只读渲染。
+// 仍只暴露 GET：anonymous 永远不能写；write 权限的 link 仅意味着内容可见，
+// 仍无 POST/PUT/DELETE 入口。
 func (h *ShareHandler) GetSharedProject(c *gin.Context) {
 	token := c.Param("token")
 	res, err := resolveShareToken(h.repo, token)
