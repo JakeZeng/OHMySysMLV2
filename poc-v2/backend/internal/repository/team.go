@@ -284,11 +284,13 @@ func (r *SQLiteRepository) GrantTeamProjectAccess(ctx context.Context, teamID, p
 	return err
 }
 
-// ListTeamProjectAccess 列出团队的所有项目授权。
+// ListTeamProjectAccess 列出团队的所有项目授权（附带项目名 + 可见性，便于前端展示）。
 func (r *SQLiteRepository) ListTeamProjectAccess(ctx context.Context, teamID string) ([]*model.TeamProjectAccess, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT team_id, project_id, permission, granted_by, granted_at
-		 FROM team_project_access WHERE team_id = ? ORDER BY granted_at DESC`,
+		`SELECT tpa.team_id, tpa.project_id, p.name, p.visibility, tpa.permission, tpa.granted_by, tpa.granted_at
+		 FROM team_project_access tpa
+		 JOIN projects p ON p.id = tpa.project_id
+		 WHERE tpa.team_id = ? ORDER BY tpa.granted_at DESC`,
 		teamID,
 	)
 	if err != nil {
@@ -298,7 +300,10 @@ func (r *SQLiteRepository) ListTeamProjectAccess(ctx context.Context, teamID str
 	var out []*model.TeamProjectAccess
 	for rows.Next() {
 		var a model.TeamProjectAccess
-		if err := rows.Scan(&a.TeamID, &a.ProjectID, &a.Permission, &a.GrantedBy, &a.GrantedAt); err != nil {
+		if err := rows.Scan(
+			&a.TeamID, &a.ProjectID, &a.ProjectName, &a.ProjectVisibility,
+			&a.Permission, &a.GrantedBy, &a.GrantedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, &a)

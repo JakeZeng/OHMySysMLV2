@@ -32,6 +32,8 @@ export interface TeamProjectAccess {
   permission: TeamProjectPermission;
   grantedBy: string;
   grantedAt: string;
+  projectName?: string;
+  projectVisibility?: 'private' | 'team' | 'public';
 }
 
 export interface CreateTeamRequest {

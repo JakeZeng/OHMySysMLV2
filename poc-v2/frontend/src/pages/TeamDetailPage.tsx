@@ -319,14 +319,36 @@ export const TeamDetailPage: React.FC = () => {
                         key={a.projectId}
                         className="flex items-center justify-between rounded-md border border-gray-100 px-3 py-2 text-sm"
                       >
-                        <Link
-                          to={`/projects/${a.projectId}`}
-                          className="font-mono text-xs text-brand-600 hover:underline"
-                        >
-                          {a.projectId}
-                        </Link>
-                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                          {a.permission}
+                        <div className="min-w-0 flex-1">
+                          <Link
+                            to={`/projects/${a.projectId}`}
+                            className="block truncate text-sm font-medium text-gray-900 hover:text-brand-600"
+                            data-testid="access-project-name"
+                          >
+                            {a.projectName || a.projectId}
+                          </Link>
+                          <div className="mt-0.5 truncate font-mono text-[10px] text-gray-400">
+                            {a.projectId}
+                          </div>
+                        </div>
+                        <span className="ml-3 inline-flex items-center gap-2">
+                          {a.projectVisibility && (
+                            <span
+                              className={
+                                'rounded-full border px-1.5 py-0.5 text-xs ' +
+                                (a.projectVisibility === 'private'
+                                  ? 'border-gray-200 bg-gray-50 text-gray-600'
+                                  : a.projectVisibility === 'team'
+                                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                    : 'border-green-200 bg-green-50 text-green-700')
+                              }
+                            >
+                              {a.projectVisibility}
+                            </span>
+                          )}
+                          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            {a.permission}
+                          </span>
                         </span>
                       </li>
                     ))}

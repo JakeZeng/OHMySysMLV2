@@ -48,6 +48,9 @@ type TeamProjectAccess struct {
 	Permission string    `json:"permission"`
 	GrantedBy  string    `json:"grantedBy"`
 	GrantedAt  time.Time `json:"grantedAt"`
+	// 派生字段：项目名 + 可见性（JOIN projects 表填充，便于前端展示）。
+	ProjectName       string `json:"projectName,omitempty"`
+	ProjectVisibility string `json:"projectVisibility,omitempty"`
 }
 
 // IsValidRole 判断字符串是否为合法角色。
