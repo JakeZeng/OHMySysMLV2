@@ -259,6 +259,7 @@ func hashToken(token string) string {
 
 // AnonymousAccessResult 是 /shared/:token 公开端点的解析结果。
 type AnonymousAccessResult struct {
+	LinkID     string // 用于统计 view_count
 	ProjectID  string
 	Permission Permission
 }
@@ -270,16 +271,17 @@ func resolveShareToken(repo *repository.SQLiteRepository, token string) (Anonymo
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
 	var (
+		linkID    string
 		projectID string
 		permStr   string
 		expiresAt sql.NullTime
 		revokedAt sql.NullTime
 	)
 	err := repo.DB().QueryRow(
-		`SELECT project_id, permission, expires_at, revoked_at
+		`SELECT id, project_id, permission, expires_at, revoked_at
          FROM share_links WHERE token_hash = ?`,
 		hashToken(token),
-	).Scan(&projectID, &permStr, &expiresAt, &revokedAt)
+	).Scan(&linkID, &projectID, &permStr, &expiresAt, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
@@ -293,6 +295,7 @@ func resolveShareToken(repo *repository.SQLiteRepository, token string) (Anonymo
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
 	return AnonymousAccessResult{
+		LinkID:     linkID,
 		ProjectID:  projectID,
 		Permission: permLevel(permStr),
 	}, nil

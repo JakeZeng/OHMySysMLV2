@@ -141,9 +141,20 @@ CREATE TABLE IF NOT EXISTS share_links (
 );
 CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 `
-	_, err := r.db.Exec(ddl)
-	if err != nil {
+	if _, err := r.db.Exec(ddl); err != nil {
 		return fmt.Errorf("初始化 schema 失败: %w", err)
+	}
+	// M4.5 增量：share_links 加 view_count + last_viewed_at 列（用于防滥用统计）。
+	// SQLite ALTER TABLE ADD COLUMN 不可逆；旧库上"duplicate column"错误需忽略。
+	if _, err := r.db.Exec(
+		`ALTER TABLE share_links ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0`,
+	); err != nil {
+		// 兼容历史 DB：列已存在时忽略
+	}
+	if _, err := r.db.Exec(
+		`ALTER TABLE share_links ADD COLUMN last_viewed_at TIMESTAMP`,
+	); err != nil {
+		// 忽略
 	}
 	return nil
 }

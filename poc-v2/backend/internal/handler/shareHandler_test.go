@@ -57,6 +57,51 @@ func TestW3_DirectShareCRUD(t *testing.T) {
 	}
 }
 
+// TestW3_LinkViewCountIncrement：每次访问 /shared/:token 应 +1。
+func TestW3_LinkViewCountIncrement(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "ViewCount", "private")
+
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	body := parseJSON(t, wCreate.Body.Bytes())["data"].(map[string]any)
+	linkID := body["link"].(map[string]any)["id"].(string)
+	linkToken, _ := body["token"].(string)
+
+	// 第一次访问
+	w1 := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first visit: %d", w1.Code)
+	}
+	// 第二次
+	w2 := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second visit: %d", w2.Code)
+	}
+	// 第三次
+	w3 := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if w3.Code != http.StatusOK {
+		t.Fatalf("third visit: %d", w3.Code)
+	}
+	_ = linkID
+
+	// 列表应反映 view_count=3
+	wList := doRequest(r, authedRequest("GET", "/api/v1/projects/"+projectID+"/links", token, nil))
+	links := parseJSON(t, wList.Body.Bytes())["data"].([]any)
+	if len(links) != 1 {
+		t.Fatalf("应 1 条链接，实际 %d", len(links))
+	}
+	got := links[0].(map[string]any)["viewCount"]
+	if vc, ok := got.(float64); !ok || vc != 3 {
+		t.Errorf("viewCount 应 3，实际 %v", got)
+	}
+	if links[0].(map[string]any)["lastViewedAt"] == nil {
+		t.Error("lastViewedAt 应非空")
+	}
+}
+
 // TestW3_LinkCreateAndAccess：生成 link → 公开端点拿到项目。
 func TestW3_LinkCreateAndAccess(t *testing.T) {
 	r, _ := setupTestRouter(t)

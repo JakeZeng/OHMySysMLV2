@@ -121,7 +121,7 @@ func (r *SQLiteRepository) NewShareLink(
 // ListProjectShareLinks 列出项目的所有链接（不含明文 token，只返回 hash 前 8 字符 + 元数据）。
 func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID string) ([]*model.ShareLink, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at
+		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at
 		 FROM share_links WHERE project_id = ? ORDER BY created_at DESC`,
 		projectID,
 	)
@@ -135,6 +135,7 @@ func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID 
 		if err := rows.Scan(
 			&sl.ID, &sl.ProjectID, &sl.Permission, &sl.CreatedBy,
 			&sl.CreatedAt, &sl.ExpiresAt, &sl.RevokedAt,
+			&sl.ViewCount, &sl.LastViewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -147,7 +148,7 @@ func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID 
 func (r *SQLiteRepository) LookupShareLinkByToken(ctx context.Context, token string) (*model.ShareLink, error) {
 	hash := HashShareToken(token)
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at
+		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at
 		 FROM share_links WHERE token_hash = ?`,
 		hash,
 	)
@@ -155,6 +156,7 @@ func (r *SQLiteRepository) LookupShareLinkByToken(ctx context.Context, token str
 	if err := row.Scan(
 		&sl.ID, &sl.ProjectID, &sl.Permission, &sl.CreatedBy,
 		&sl.CreatedAt, &sl.ExpiresAt, &sl.RevokedAt,
+		&sl.ViewCount, &sl.LastViewedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -170,6 +172,17 @@ func (r *SQLiteRepository) LookupShareLinkByToken(ctx context.Context, token str
 		return nil, ErrNotFound
 	}
 	return &sl, nil
+}
+
+// IncrementShareLinkView 记录一次访问（每次 GetSharedProject 命中即 +1）。
+// 公开端点是只读视图，统计写入属于预期副作用；写入失败不阻塞响应。
+func (r *SQLiteRepository) IncrementShareLinkView(ctx context.Context, linkID string) error {
+	now := time.Now().UTC()
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE share_links SET view_count = view_count + 1, last_viewed_at = ? WHERE id = ?`,
+		now, linkID,
+	)
+	return err
 }
 
 // RevokeShareLink 撤销一条链接。

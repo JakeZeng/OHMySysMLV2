@@ -184,6 +184,11 @@ func (h *ShareHandler) GetSharedProject(c *gin.Context) {
 		serverError(c, "解析链接失败", err)
 		return
 	}
+	// 计数（best-effort，失败不阻塞响应）
+	if err := h.repo.IncrementShareLinkView(c, res.LinkID); err != nil {
+		// 仅日志，不影响主流程
+		c.Header("X-Share-View-Error", "1")
+	}
 	project, err := h.repo.GetProject(c, res.ProjectID)
 	if err != nil {
 		notFound(c, "链接无效或已失效")

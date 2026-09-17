@@ -31,6 +31,8 @@ export interface ShareLink {
   createdAt: string;
   expiresAt?: string | null;
   revokedAt?: string | null;
+  viewCount: number;
+  lastViewedAt?: string | null;
 }
 
 export interface CreateLinkResponse {

@@ -16,14 +16,16 @@ type ProjectShare struct {
 
 // ShareLink 链接分享（不含明文 token，只存 hash）。
 type ShareLink struct {
-	ID         string     `json:"id"`
-	ProjectID  string     `json:"projectId"`
-	TokenHash  string     `json:"-"` // 不导出
-	Permission string     `json:"permission"`
-	CreatedBy  string     `json:"createdBy"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
-	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	ID           string     `json:"id"`
+	ProjectID    string     `json:"projectId"`
+	TokenHash    string     `json:"-"` // 不导出
+	Permission   string     `json:"permission"`
+	CreatedBy    string     `json:"createdBy"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
+	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
+	ViewCount    int        `json:"viewCount"`
+	LastViewedAt *time.Time `json:"lastViewedAt,omitempty"`
 }
 
 // IsValidLinkPermission 链接只允许 read/write（不允许 admin —— 匿名权限失控风险）。

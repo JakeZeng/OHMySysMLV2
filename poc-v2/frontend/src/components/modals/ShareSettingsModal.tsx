@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { Copy, Loader2, Trash2, Link2, UserPlus } from 'lucide-react';
+import { Copy, Loader2, Trash2, Link2, UserPlus, Eye } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -411,16 +411,30 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
                         {l.revokedAt && ' · 已撤销'}
                       </span>
                     </div>
-                    {!l.revokedAt && (
-                      <button
-                        type="button"
-                        onClick={() => handleRevokeLink(l.id)}
-                        className="text-gray-400 hover:text-red-600"
-                        aria-label="撤销链接"
+                    <div className="flex items-center gap-3">
+                      <span
+                        className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600"
+                        title={
+                          l.lastViewedAt
+                            ? `最后访问：${new Date(l.lastViewedAt).toLocaleString()}`
+                            : '尚未访问'
+                        }
+                        data-testid="link-view-count"
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
+                        <Eye className="h-3 w-3" />
+                        {l.viewCount ?? 0}
+                      </span>
+                      {!l.revokedAt && (
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeLink(l.id)}
+                          className="text-gray-400 hover:text-red-600"
+                          aria-label="撤销链接"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
