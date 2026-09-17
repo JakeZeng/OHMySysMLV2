@@ -1,11 +1,26 @@
 # M4 团队空间 + 模型分享 — 交付总结
 
-> 三阶段交付：W1（授权基础）→ W2（团队空间）→ W3（模型分享）。
+> 三阶段交付：W1（授权基础）→ W2（团队空间）→ W3（模型分享）+ M4.5 增量。
 > 所有阶段按计划完成，无范围裁剪。
 
 ---
 
 ## 交付清单
+
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1`）
+
+| 项 | 内容 |
+|----|------|
+| 用户搜索端点 | `GET /api/v1/users/search?q=&limit=`，250ms debounce 自动解析 username → userId |
+| 项目可见性 UI 切换 | ProjectDetail 加 radio 切换 private/team/public |
+| share-link 用量统计 | ViewCount + LastViewedAt；列表显示访问次数 + tooltip |
+| CSRF 严格模式 | `StrictCSRFConfig()` + `CSRF_STRICT=true` env 切换 |
+| Team project-access UI | TeamDetail 加"授权项目"按钮 + modal + revoke 按钮 |
+| Team access 显示项目名 | JOIN projects 显示项目名 + 可见性徽章（替换 raw UUID） |
+| 审计日志 backend | audit_logs 表 + GET /api/v1/audit-logs（actor / target 过滤） |
+| 审计日志 frontend | AuditLogPage（filter UI + 时间倒序列表 + 颜色编码） |
+| 审计日志覆盖范围 | share / unshare / link_create / link_revoke / team_create / member_add / member_role / member_del / grant / revoke |
+| Share-link maxViews | `MaxViews *int`；超限后链接自动 404（与 revoked / expired uniform 响应） |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -111,18 +126,18 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 - 邮件邀请、SMS 通知
 - 实时协同（CRDT，timeline §2.5 明确不做）
 - WebSocket 推送（轮询替代）
-- 项目可见性 UI 切换（后端字段已就位，UI 留 M4.5+）
 - 版本粒度的分享（M5）
-- 用户搜索（直分享需要 userId；当前 username 解析未对接，留 M4.5+）
-- 审计日志
-- Link rotation、link 限额
+- 密码哈希升级（sha256+salt → bcrypt）
+- 真实 migration runner
+- 公开页 Monaco 只读渲染（需要 backend 暴露 model.content + frontend Monaco 集成，留 M5+）
 
 ---
 
-## 后续优化建议（M4.5+）
+## 后续优化建议（M5+）
 
-1. **用户搜索端点**：让 `AddShare` 走 `username → userId` 自动解析；当前 ShareSettingsModal 的"添加"按钮暂时 disabled
-2. **项目可见性 UI 切换**：后端字段已就位，前端只需在 ProjectDetail 加一个下拉
-3. **share-link 用量统计**：列出 links 时附带 viewCount（防滥用）
-4. **公开页 Monaco 只读渲染**：当前只列模型元数据，可加只读 view
-5. **CSRF 严格模式上线**：production 部署时把 dev 兼容模式关闭
+1. **公开页 Monaco 只读渲染**：当前只列模型元数据，需要后端暴露 model.content（可能加 nonce 限制）+ 前端 Monaco editor readonly 集成
+2. **share-link rotation API**：主动轮换 token 而非撤销重建（保留审计连续性）
+3. **审计范围扩展**：覆盖 project CRUD + model CRUD + auth（login / logout）
+4. **审计前端实时性**：当前手动刷新；可加 polling（30s）
+5. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
+6. **audit-log 角色过滤**：当前 owner 看所有（受 token 范围限），生产应按 role 收紧
