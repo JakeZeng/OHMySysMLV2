@@ -182,6 +182,42 @@ func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*m
 	return &u, nil
 }
 
+// SearchUsers 按 username 或 email 前缀模糊匹配，最多返回 limit 条（默认 10，上限 50）。
+// 用于"邀请成员 / 分享给用户"等场景下解析 username → userId。
+// 排除 password_hash 字段，对外仅暴露 username/email/id。
+func (r *SQLiteRepository) SearchUsers(ctx context.Context, query string, limit int) ([]*model.User, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if query == "" {
+		return nil, nil
+	}
+	pattern := query + "%"
+	const q = `SELECT id, username, email, password_hash, created_at
+              FROM users
+              WHERE username LIKE ? OR email LIKE ?
+              ORDER BY username
+              LIMIT ?`
+	rows, err := r.db.QueryContext(ctx, q, pattern, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ─── Projects ────────────────────────────────────────────────────────
 
 func (r *SQLiteRepository) CreateProject(ctx context.Context, p *model.Project) error {

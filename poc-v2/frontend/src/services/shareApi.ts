@@ -124,3 +124,22 @@ export function buildShareUrl(token: string): string {
   if (typeof window === 'undefined') return `/shared/${token}`;
   return `${window.location.origin}/shared/${token}`;
 }
+
+/** 用户搜索（M4 W3 补充） */
+export interface UserSearchResult {
+  id: string;
+  username: string;
+  email: string;
+  createdAt: string;
+}
+
+export async function searchUsers(
+  query: string,
+  limit = 10,
+): Promise<UserSearchResult[]> {
+  const api = getApi();
+  const { data } = await api.get<{ users: UserSearchResult[] }>('/users/search', {
+    params: { q: query, limit },
+  });
+  return data?.users ?? [];
+}

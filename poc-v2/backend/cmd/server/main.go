@@ -40,6 +40,7 @@ func main() {
 	h := handler.New(repo)
 	teamH := handler.NewTeamHandler(repo)
 	shareH := handler.NewShareHandler(repo)
+	userH := handler.NewUserHandler(repo)
 
 	// 初始化元模型 registry（M3 W1：mock schema，dev 阶段够用；M5 替换为 ptc-25-04-30 官方）
 	metaReg, err := metamodel.NewMockRegistry()
@@ -173,6 +174,13 @@ func main() {
 			teams.GET("/:id/project-access", teamH.ListProjectAccess)
 			teams.POST("/:id/project-access", teamH.GrantProjectAccess)
 			teams.DELETE("/:id/project-access/:projectId", teamH.RevokeProjectAccess)
+		}
+
+		// M4 W3 补充：用户搜索（受保护），用于分享/邀请场景解析 username → userId
+		usersGroup := v1.Group("/users")
+		usersGroup.Use(middleware.AuthRequired())
+		{
+			usersGroup.GET("/search", userH.SearchUsers)
 		}
 	}
 

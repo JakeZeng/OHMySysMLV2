@@ -33,6 +33,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	h := New(repo)
 	teamH := NewTeamHandler(repo)
 	shareH := NewShareHandler(repo)
+	userH := NewUserHandler(repo) //nolint
 	r := gin.New()
 
 	r.GET("/health", h.Health)
@@ -96,6 +97,12 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		teams.GET("/:id/project-access", teamH.ListProjectAccess)
 		teams.POST("/:id/project-access", teamH.GrantProjectAccess)
 		teams.DELETE("/:id/project-access/:projectId", teamH.RevokeProjectAccess)
+	}
+
+	users := v1.Group("/users")
+	users.Use(middleware.AuthRequired())
+	{
+		users.GET("/search", userH.SearchUsers)
 	}
 
 	return r, repo

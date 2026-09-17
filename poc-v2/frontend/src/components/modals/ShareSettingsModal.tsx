@@ -11,10 +11,12 @@ import { useToast } from '../ui/Toast';
 import {
   shareApi,
   buildShareUrl,
+  searchUsers,
   type ProjectShare,
   type ShareLink,
   type SharePermission,
   type LinkPermission,
+  type UserSearchResult,
 } from '../../services/shareApi';
 
 interface ShareSettingsModalProps {
@@ -38,6 +40,10 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
   const [newUsername, setNewUsername] = React.useState('');
   const [newPermission, setNewPermission] = React.useState<SharePermission>('read');
   const [adding, setAdding] = React.useState(false);
+
+  // 用户搜索结果（M4 W3 补充：username → userId 自动解析）
+  const [searchResults, setSearchResults] = React.useState<UserSearchResult[]>([]);
+  const [searching, setSearching] = React.useState(false);
 
   // 链接输入
   const [linkPermission, setLinkPermission] =
@@ -74,15 +80,48 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
     }
   }, [open, load]);
 
-  const handleAddShare = async () => {
-    if (!newUsername.trim()) return;
+  // 用户搜索：输入 ≥ 1 字符触发，250ms debounce
+  React.useEffect(() => {
+    const q = newUsername.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      searchUsers(q, 8)
+        .then(setSearchResults)
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [newUsername]);
+
+  const handleAddShare = async (user: UserSearchResult) => {
     setAdding(true);
     try {
-      // 当前 API 需要 userId（不是 username）；这里留 TODO 接 user-search。
-      // 临时策略：让后端按 username 解析（后续 endpoint 升级）。当前 throw 以提示。
+      await shareApi.addShare(projectId, user.id, newPermission);
+      // 乐观更新本地
+      const optimistic: ProjectShare = {
+        projectId,
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        permission: newPermission,
+        grantedBy: '',
+        grantedAt: new Date().toISOString(),
+      };
+      setShares((prev) => [...prev.filter((s) => s.userId !== user.id), optimistic]);
+      setNewUsername('');
+      setSearchResults([]);
       showToast({
-        title: '需要先按用户名解析为 userId',
-        description: '当前 API 接收 userId；M4.5 接 user 搜索后可用。',
+        title: `${user.username} 已添加（${newPermission}）`,
+        variant: 'success',
+      });
+    } catch (e) {
+      showToast({
+        title: '添加失败',
+        description: (e as Error).message,
         variant: 'error',
       });
     } finally {
@@ -176,16 +215,52 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
             </h3>
 
             <div className="mb-3 flex items-end gap-2">
-              <div className="flex-1">
+              <div className="relative flex-1">
                 <label className="block text-xs font-medium text-gray-700">
-                  用户名
+                  用户名 / 邮箱
                 </label>
                 <Input
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
-                  placeholder="例如：bob"
-                  disabled
+                  placeholder="输入至少 1 个字符以搜索…"
                 />
+                {newUsername.trim() && (searching || searchResults.length > 0) && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-40 overflow-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                    {searching && (
+                      <li className="px-3 py-2 text-xs text-gray-500">
+                        <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> 搜索中…
+                      </li>
+                    )}
+                    {!searching &&
+                      searchResults.map((u) => (
+                        <li key={u.id}>
+                          <button
+                            type="button"
+                            onClick={() => handleAddShare(u)}
+                            disabled={adding}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            <span>
+                              <span className="font-medium text-gray-900">
+                                {u.username}
+                              </span>
+                              <span className="ml-2 text-xs text-gray-500">
+                                {u.email}
+                              </span>
+                            </span>
+                            <span className="text-xs text-brand-600">
+                              选择 →
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    {!searching && searchResults.length === 0 && (
+                      <li className="px-3 py-2 text-xs text-gray-500">
+                        无匹配用户
+                      </li>
+                    )}
+                  </ul>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700">
@@ -203,9 +278,6 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
                   <option value="admin">admin</option>
                 </select>
               </div>
-              <Button onClick={handleAddShare} disabled size="sm">
-                {adding ? '添加中…' : '添加'}
-              </Button>
             </div>
 
             {shares.length === 0 ? (
