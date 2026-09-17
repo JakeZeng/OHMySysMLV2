@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e`）
 
 | 项 | 内容 |
 |----|------|
@@ -21,6 +21,7 @@
 | 审计日志 frontend | AuditLogPage（filter UI + 时间倒序列表 + 颜色编码） |
 | 审计日志覆盖范围 | share / unshare / link_create / link_revoke / team_create / member_add / member_role / member_del / grant / revoke |
 | Share-link maxViews | `MaxViews *int`；超限后链接自动 404（与 revoked / expired uniform 响应） |
+| 公开页 Monaco 只读渲染 | SharedProjectPage 点模型行展开 SysMLEditor(readOnly=true) |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -129,15 +130,14 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 - 版本粒度的分享（M5）
 - 密码哈希升级（sha256+salt → bcrypt）
 - 真实 migration runner
-- 公开页 Monaco 只读渲染（需要 backend 暴露 model.content + frontend Monaco 集成，留 M5+）
 
 ---
 
 ## 后续优化建议（M5+）
 
-1. **公开页 Monaco 只读渲染**：当前只列模型元数据，需要后端暴露 model.content（可能加 nonce 限制）+ 前端 Monaco editor readonly 集成
-2. **share-link rotation API**：主动轮换 token 而非撤销重建（保留审计连续性）
-3. **审计范围扩展**：覆盖 project CRUD + model CRUD + auth（login / logout）
-4. **审计前端实时性**：当前手动刷新；可加 polling（30s）
-5. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
-6. **audit-log 角色过滤**：当前 owner 看所有（受 token 范围限），生产应按 role 收紧
+1. **share-link rotation API**：主动轮换 token 而非撤销重建（保留审计连续性）
+2. **审计范围扩展**：覆盖 project CRUD + model CRUD + auth（login / logout）
+3. **审计前端实时性**：当前手动刷新；可加 polling（30s）
+4. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
+5. **audit-log 角色过滤**：当前 owner 看所有（受 token 范围限），生产应按 role 收紧
+6. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
