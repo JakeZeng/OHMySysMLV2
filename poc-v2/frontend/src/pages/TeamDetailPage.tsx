@@ -169,6 +169,27 @@ export const TeamDetailPage: React.FC = () => {
     }
   };
 
+  const handleRevokeAccess = async (projectId: string, projectName?: string) => {
+    const label = projectName || projectId;
+    if (
+      !window.confirm(
+        `确认撤销团队对项目「${label}」的访问权限？团队成员将立即失去访问。`,
+      )
+    )
+      return;
+    try {
+      await teamApi.revokeProjectAccess(teamId, projectId);
+      await fetchProjectAccess(teamId);
+      showToast({ title: `已撤销「${label}」的团队访问`, variant: 'success' });
+    } catch (e) {
+      showToast({
+        title: '撤销失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  };
+
   return (
     <div className="h-full overflow-auto bg-gray-50 p-6">
       <div className="mx-auto max-w-5xl">
@@ -364,6 +385,17 @@ export const TeamDetailPage: React.FC = () => {
                           <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
                             {a.permission}
                           </span>
+                          {canManageMembers && (
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeAccess(a.projectId, a.projectName)}
+                              className="text-gray-400 hover:text-red-600"
+                              aria-label="撤销项目授权"
+                              data-testid="revoke-access"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </span>
                       </li>
                     ))}
