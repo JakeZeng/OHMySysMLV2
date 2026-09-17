@@ -26,6 +26,7 @@ type ShareLink struct {
 	RevokedAt    *time.Time `json:"revokedAt,omitempty"`
 	ViewCount    int        `json:"viewCount"`
 	LastViewedAt *time.Time `json:"lastViewedAt,omitempty"`
+	MaxViews     *int       `json:"maxViews,omitempty"` // nil = 无限
 }
 
 // IsValidLinkPermission 链接只允许 read/write（不允许 admin —— 匿名权限失控风险）。

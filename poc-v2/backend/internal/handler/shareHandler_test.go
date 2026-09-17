@@ -256,3 +256,73 @@ func containsJSONField(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestW45_LinkMaxViews：maxViews=N 时，第 N+1 次访问应 404（uniform 失效）。
+func TestW45_LinkMaxViews(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "MaxViews", "private")
+
+	max := 2
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+		"maxViews":   max,
+	}))
+	if wCreate.Code != http.StatusOK {
+		t.Fatalf("create link: %d %s", wCreate.Code, wCreate.Body.String())
+	}
+	body := parseJSON(t, wCreate.Body.Bytes())["data"].(map[string]any)
+	linkID := body["link"].(map[string]any)["id"].(string)
+	linkToken, _ := body["token"].(string)
+
+	// maxViews=2：前 2 次访问应成功
+	for i := 1; i <= max; i++ {
+		w := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("第 %d 次访问应 200，实际 %d", i, w.Code)
+		}
+	}
+
+	// 第 3 次应 404（与 revoked/expired 一致 uniform 响应）
+	wAfter := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if wAfter.Code != http.StatusNotFound {
+		t.Errorf("达到 max_views 后应 404，实际 %d", wAfter.Code)
+	}
+	_ = linkID
+}
+
+// TestW45_LinkMaxViewsRejectNegative：负数 maxViews 应 400。
+func TestW45_LinkMaxViewsRejectNegative(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "BadMax", "private")
+
+	w := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+		"maxViews":   -1,
+	}))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("负数 maxViews 应 400，实际 %d", w.Code)
+	}
+}
+
+// TestW45_LinkUnlimitedWhenNull：maxViews=null 或缺省 → 不限次。
+func TestW45_LinkUnlimitedWhenNull(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "Unlimited", "private")
+
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	body := parseJSON(t, wCreate.Body.Bytes())["data"].(map[string]any)
+	linkToken, _ := body["token"].(string)
+
+	// 访问 5 次都应成功
+	for i := 0; i < 5; i++ {
+		w := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("第 %d 次访问应 200（无限），实际 %d", i+1, w.Code)
+		}
+	}
+}

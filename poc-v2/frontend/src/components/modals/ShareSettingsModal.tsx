@@ -49,6 +49,7 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
   const [linkPermission, setLinkPermission] =
     React.useState<LinkPermission>('read');
   const [expiresInHours, setExpiresInHours] = React.useState<number>(0);
+  const [maxViews, setMaxViews] = React.useState<number | ''>(''); // '' = 无限
   const [creatingLink, setCreatingLink] = React.useState(false);
   const [newToken, setNewToken] = React.useState<string | null>(null);
 
@@ -146,10 +147,12 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
   const handleCreateLink = async () => {
     setCreatingLink(true);
     try {
+      const mv = typeof maxViews === 'number' && maxViews > 0 ? maxViews : null;
       const r = await shareApi.createLink(
         projectId,
         linkPermission,
         expiresInHours,
+        mv,
       );
       setNewToken(r.token);
       setLinks((prev) => [r.link, ...prev]);
@@ -354,6 +357,23 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
                   className="w-32"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">
+                  访问次数上限（留空=无限）
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={maxViews}
+                  placeholder="无限"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') setMaxViews('');
+                    else setMaxViews(parseInt(v, 10));
+                  }}
+                  className="w-32"
+                />
+              </div>
               <Button
                 onClick={handleCreateLink}
                 disabled={creatingLink}
@@ -408,6 +428,9 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
                         {l.expiresAt
                           ? `过期：${new Date(l.expiresAt).toLocaleString()}`
                           : '永不过期'}
+                        {l.maxViews != null && l.maxViews > 0
+                          ? ` · 上限 ${l.maxViews} 次`
+                          : ' · 无限次'}
                         {l.revokedAt && ' · 已撤销'}
                       </span>
                     </div>

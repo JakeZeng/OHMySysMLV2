@@ -111,6 +111,8 @@ type createLinkReq struct {
 	Permission string `json:"permission" binding:"required,oneof=read write"`
 	// ExpiresInHours 可选；不传/0 表示不过期
 	ExpiresInHours int `json:"expiresInHours"`
+	// MaxViews 可选；nil/0 表示无限次访问；>0 表示达到上限后链接自动失效
+	MaxViews *int `json:"maxViews"`
 }
 
 func (h *ShareHandler) CreateLink(c *gin.Context) {
@@ -124,19 +126,27 @@ func (h *ShareHandler) CreateLink(c *gin.Context) {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
+	if req.MaxViews != nil && *req.MaxViews < 0 {
+		badRequest(c, "maxViews 必须为正数或留空", nil)
+		return
+	}
 	var expiresAt *time.Time
 	if req.ExpiresInHours > 0 {
 		t := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
 		expiresAt = &t
 	}
-	sl, token, err := h.repo.NewShareLink(c, projectID, req.Permission, currentUserID, expiresAt)
+	sl, token, err := h.repo.NewShareLink(c, projectID, req.Permission, currentUserID, expiresAt, req.MaxViews)
 	if err != nil {
 		serverError(c, "创建链接失败", err)
 		return
 	}
+	maxViewsJSON := "null"
+	if req.MaxViews != nil {
+		maxViewsJSON = itoa10(*req.MaxViews)
+	}
 	writeAudit(c, h.repo, model.AuditActionLinkCreate, model.AuditTargetLink,
 		sl.ID,
-		`{"permission":"`+req.Permission+`","expires_in_hours":`+itoa10(req.ExpiresInHours)+`}`)
+		`{"permission":"`+req.Permission+`","expires_in_hours":`+itoa10(req.ExpiresInHours)+`,"max_views":`+maxViewsJSON+`}`)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"link":    sl,
 		"token":   token,

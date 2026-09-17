@@ -156,6 +156,11 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 	); err != nil {
 		// 忽略
 	}
+	if _, err := r.db.Exec(
+		`ALTER TABLE share_links ADD COLUMN max_views INTEGER`,
+	); err != nil {
+		// 兼容历史 DB：列已存在时忽略
+	}
 
 	// M4.5 增量：审计日志表。
 	if _, err := r.db.Exec(

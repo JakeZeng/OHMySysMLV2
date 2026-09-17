@@ -33,6 +33,8 @@ export interface ShareLink {
   revokedAt?: string | null;
   viewCount: number;
   lastViewedAt?: string | null;
+  /** null/undefined = 无限次；>0 = 达到上限后链接自动失效 */
+  maxViews?: number | null;
 }
 
 export interface CreateLinkResponse {
@@ -92,12 +94,16 @@ export const shareApi = {
     projectId: string,
     permission: LinkPermission,
     expiresInHours = 0,
+    maxViews?: number | null,
   ): Promise<CreateLinkResponse> {
     const api = getApi();
-    const { data } = await api.post<CreateLinkResponse>(`/projects/${projectId}/links`, {
-      permission,
-      expiresInHours,
-    });
+    const body: {
+      permission: LinkPermission;
+      expiresInHours: number;
+      maxViews?: number | null;
+    } = { permission, expiresInHours };
+    if (maxViews != null && maxViews > 0) body.maxViews = maxViews;
+    const { data } = await api.post<CreateLinkResponse>(`/projects/${projectId}/links`, body);
     return data;
   },
 

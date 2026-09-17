@@ -80,13 +80,19 @@ func (r *SQLiteRepository) RevokeProjectShare(ctx context.Context, projectID, us
 
 // NewShareLink 创建一条分享链接；返回 ShareLink（含明文 token + 完整 URL base 由调用方拼接）。
 // 仅创建时返回一次明文 token —— DB 只存 hash。
+//
+// maxViews: nil 或 0 表示无限；>0 表示达到上限后链接自动失效。
 func (r *SQLiteRepository) NewShareLink(
 	ctx context.Context,
 	projectID, permission, createdBy string,
 	expiresAt *time.Time,
+	maxViews *int,
 ) (*model.ShareLink, string, error) {
 	if permission != "read" && permission != "write" {
 		return nil, "", errors.New("链接权限只允许 read 或 write")
+	}
+	if maxViews != nil && *maxViews < 0 {
+		return nil, "", errors.New("maxViews 必须为正数或 null")
 	}
 
 	// 生成 16 字节随机 token → base64url（22 字符）
@@ -106,11 +112,12 @@ func (r *SQLiteRepository) NewShareLink(
 		CreatedBy:  createdBy,
 		CreatedAt:  now,
 		ExpiresAt:  expiresAt,
+		MaxViews:   maxViews,
 	}
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO share_links (id, project_id, token_hash, permission, created_by, created_at, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sl.ID, sl.ProjectID, sl.TokenHash, sl.Permission, sl.CreatedBy, sl.CreatedAt, sl.ExpiresAt,
+		`INSERT INTO share_links (id, project_id, token_hash, permission, created_by, created_at, expires_at, max_views)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sl.ID, sl.ProjectID, sl.TokenHash, sl.Permission, sl.CreatedBy, sl.CreatedAt, sl.ExpiresAt, sl.MaxViews,
 	)
 	if err != nil {
 		return nil, "", err
@@ -121,7 +128,7 @@ func (r *SQLiteRepository) NewShareLink(
 // ListProjectShareLinks 列出项目的所有链接（不含明文 token，只返回 hash 前 8 字符 + 元数据）。
 func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID string) ([]*model.ShareLink, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at
+		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at, max_views
 		 FROM share_links WHERE project_id = ? ORDER BY created_at DESC`,
 		projectID,
 	)
@@ -135,7 +142,7 @@ func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID 
 		if err := rows.Scan(
 			&sl.ID, &sl.ProjectID, &sl.Permission, &sl.CreatedBy,
 			&sl.CreatedAt, &sl.ExpiresAt, &sl.RevokedAt,
-			&sl.ViewCount, &sl.LastViewedAt,
+			&sl.ViewCount, &sl.LastViewedAt, &sl.MaxViews,
 		); err != nil {
 			return nil, err
 		}
@@ -144,11 +151,11 @@ func (r *SQLiteRepository) ListProjectShareLinks(ctx context.Context, projectID 
 	return out, rows.Err()
 }
 
-// LookupShareLinkByToken 用明文 token 查一条有效（未撤销且未过期）的链接；返回 nil 即视为不存在/失效。
+// LookupShareLinkByToken 用明文 token 查一条有效（未撤销且未过期且未超 max_views）的链接；返回 nil 即视为不存在/失效。
 func (r *SQLiteRepository) LookupShareLinkByToken(ctx context.Context, token string) (*model.ShareLink, error) {
 	hash := HashShareToken(token)
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at
+		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at, max_views
 		 FROM share_links WHERE token_hash = ?`,
 		hash,
 	)
@@ -156,19 +163,22 @@ func (r *SQLiteRepository) LookupShareLinkByToken(ctx context.Context, token str
 	if err := row.Scan(
 		&sl.ID, &sl.ProjectID, &sl.Permission, &sl.CreatedBy,
 		&sl.CreatedAt, &sl.ExpiresAt, &sl.RevokedAt,
-		&sl.ViewCount, &sl.LastViewedAt,
+		&sl.ViewCount, &sl.LastViewedAt, &sl.MaxViews,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	// 校验：revoked? expired?
+	// 校验：revoked? expired? max_views 超限？
 	now := time.Now().UTC()
 	if sl.RevokedAt != nil {
 		return nil, ErrNotFound
 	}
 	if sl.ExpiresAt != nil && sl.ExpiresAt.Before(now) {
+		return nil, ErrNotFound
+	}
+	if sl.MaxViews != nil && sl.ViewCount >= *sl.MaxViews {
 		return nil, ErrNotFound
 	}
 	return &sl, nil
