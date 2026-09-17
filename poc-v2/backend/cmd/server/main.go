@@ -39,6 +39,7 @@ func main() {
 
 	h := handler.New(repo)
 	teamH := handler.NewTeamHandler(repo)
+	shareH := handler.NewShareHandler(repo)
 
 	// 初始化元模型 registry（M3 W1：mock schema，dev 阶段够用；M5 替换为 ptc-25-04-30 官方）
 	metaReg, err := metamodel.NewMockRegistry()
@@ -98,6 +99,15 @@ func main() {
 			projects.GET("/:id/models/:modelId", h.GetModel)
 			projects.PUT("/:id/models/:modelId", h.UpdateModel)
 			projects.DELETE("/:id/models/:modelId", h.DeleteModel)
+
+			// M4 W3：项目级分享（owner 才能管）
+			projects.POST("/:id/shares", shareH.AddShare)
+			projects.GET("/:id/shares", shareH.ListShares)
+			projects.DELETE("/:id/shares/:userId", shareH.RemoveShare)
+
+			projects.POST("/:id/links", shareH.CreateLink)
+			projects.GET("/:id/links", shareH.ListLinks)
+			projects.DELETE("/:id/links/:linkId", shareH.RevokeLink)
 		}
 
 		models := v1.Group("/models")
@@ -136,6 +146,14 @@ func main() {
 		// M3 新增：行业模板（公开浏览，仅元数据；Content 需要时按需 GET）
 		v1.GET("/templates", h.ListTemplates)
 		v1.GET("/templates/:id", h.GetTemplate)
+
+		// M4 W3：公开端点（不走 AuthRequired；用独立限流器更严）
+		sharedLimiter := middleware.NewRateLimiter(20, time.Minute)
+		shared := v1.Group("/shared")
+		shared.Use(middleware.RateLimit(sharedLimiter))
+		{
+			shared.GET("/:token", shareH.GetSharedProject)
+		}
 
 		// M4 W2：团队 + 成员 + 项目授权（受保护）
 		teams := v1.Group("/teams")

@@ -51,6 +51,11 @@ func DefaultCSRFConfig() CSRFConfig {
 			// M4 W2：团队管理（与 /projects 同理由：JWT + CORS 已提供跨域保护）
 			"/api/v1/teams",
 			"/api/v1/teams/*",
+			// M4 W3：项目分享管理（shares/links）+ 公开 /shared/:token
+			"/api/v1/projects",
+			"/api/v1/projects/*",
+			"/api/v1/shared",
+			"/api/v1/shared/*",
 		},
 		MaxAge: 24 * time.Hour,
 	}

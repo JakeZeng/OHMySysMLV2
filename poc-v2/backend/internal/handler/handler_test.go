@@ -32,6 +32,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 
 	h := New(repo)
 	teamH := NewTeamHandler(repo)
+	shareH := NewShareHandler(repo)
 	r := gin.New()
 
 	r.GET("/health", h.Health)
@@ -54,7 +55,19 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		projects.GET("/:id/models/:modelId", h.GetModel)
 		projects.PUT("/:id/models/:modelId", h.UpdateModel)
 		projects.DELETE("/:id/models/:modelId", h.DeleteModel)
+
+		// M4 W3：项目级分享（owner 才能管）
+		projects.POST("/:id/shares", shareH.AddShare)
+		projects.GET("/:id/shares", shareH.ListShares)
+		projects.DELETE("/:id/shares/:userId", shareH.RemoveShare)
+
+		projects.POST("/:id/links", shareH.CreateLink)
+		projects.GET("/:id/links", shareH.ListLinks)
+		projects.DELETE("/:id/links/:linkId", shareH.RevokeLink)
 	}
+
+	// M4 W3：公开端点 /shared/:token（不走 AuthRequired）
+	v1.GET("/shared/:token", shareH.GetSharedProject)
 
 	models := v1.Group("/models")
 	models.Use(middleware.AuthRequired())

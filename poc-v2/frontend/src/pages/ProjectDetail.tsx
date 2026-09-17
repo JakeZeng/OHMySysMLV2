@@ -10,6 +10,7 @@ import {
   FileCode2,
   Loader2,
   Trash2,
+  Share2,
 } from 'lucide-react';
 import {
   Card,
@@ -29,6 +30,7 @@ import {
 } from '../services/modelApi';
 import { useToast } from '../components/ui/Toast';
 import { VisibilityBadge } from '../components/VisibilityBadge';
+import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
 
 const DEFAULT_MODEL_BODY = `package MyModel {
   part def Vehicle {
@@ -59,6 +61,7 @@ export const ProjectDetail: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
+  const [showShare, setShowShare] = React.useState(false);
   const [name, setName] = React.useState('');
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
@@ -177,14 +180,25 @@ export const ProjectDetail: React.FC = () => {
           </div>
           <div className="flex gap-2">
             {isOwner && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDeleteProject}
-                disabled={!current}
-              >
-                <Trash2 className="h-3.5 w-3.5" /> 删除项目
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowShare(true)}
+                  disabled={!current}
+                  data-testid="open-share-settings"
+                >
+                  <Share2 className="h-3.5 w-3.5" /> 分享设置
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDeleteProject}
+                  disabled={!current}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> 删除项目
+                </Button>
+              </>
             )}
             <Button
               onClick={() => setShowCreate(true)}
@@ -304,6 +318,14 @@ export const ProjectDetail: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {current && (
+        <ShareSettingsModal
+          open={showShare}
+          onOpenChange={setShowShare}
+          projectId={current.id}
+        />
+      )}
     </div>
   );
 };

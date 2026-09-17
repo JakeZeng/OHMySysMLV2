@@ -12,6 +12,7 @@ import { ModelEditor } from './pages/ModelEditor';
 import { MetamodelPage } from './pages/MetamodelPage';
 import { TeamsPage } from './pages/TeamsPage';
 import { TeamDetailPage } from './pages/TeamDetailPage';
+import { SharedProjectPage } from './pages/SharedProjectPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -19,6 +20,7 @@ import { RequireAuth } from './components/auth/RequireAuth';
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   { path: '/register', element: <Register /> },
+  { path: '/shared/:token', element: <SharedProjectPage /> },
   {
     path: '/',
     element: (
