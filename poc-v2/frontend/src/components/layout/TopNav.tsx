@@ -3,9 +3,9 @@
  */
 
 import * as React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, User as UserIcon, Settings } from 'lucide-react';
+import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { cn } from '../../lib/utils';
 
@@ -35,6 +35,49 @@ export const TopNav: React.FC = () => {
         </div>
         <span>SysML v2 MBSE</span>
       </Link>
+
+      <nav className="ml-6 flex items-center gap-1">
+        <NavLink
+          to="/"
+          end
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <FolderKanban className="h-4 w-4" /> 项目
+        </NavLink>
+        <NavLink
+          to="/teams"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <Users className="h-4 w-4" /> 团队
+        </NavLink>
+        <NavLink
+          to="/metamodel"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <BookOpen className="h-4 w-4" /> 元模型
+        </NavLink>
+      </nav>
 
       <div className="flex items-center gap-3">
         <span className="text-xs text-gray-500">

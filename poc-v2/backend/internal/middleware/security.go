@@ -48,6 +48,9 @@ func DefaultCSRFConfig() CSRFConfig {
 			"/api/v1/metamodel/*",
 			"/api/v1/templates",
 			"/api/v1/templates/*",
+			// M4 W2：团队管理（与 /projects 同理由：JWT + CORS 已提供跨域保护）
+			"/api/v1/teams",
+			"/api/v1/teams/*",
 		},
 		MaxAge: 24 * time.Hour,
 	}

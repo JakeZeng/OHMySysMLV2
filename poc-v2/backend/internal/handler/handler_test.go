@@ -31,6 +31,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	t.Cleanup(func() { repo.Close() })
 
 	h := New(repo)
+	teamH := NewTeamHandler(repo)
 	r := gin.New()
 
 	r.GET("/health", h.Health)
@@ -63,6 +64,25 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		models.GET("/:id", h.GetModel)
 		models.PUT("/:id", h.UpdateModel)
 		models.DELETE("/:id", h.DeleteModel)
+	}
+
+	teams := v1.Group("/teams")
+	teams.Use(middleware.AuthRequired())
+	{
+		teams.POST("", teamH.CreateTeam)
+		teams.GET("", teamH.ListTeams)
+		teams.GET("/:id", teamH.GetTeam)
+		teams.PUT("/:id", teamH.UpdateTeam)
+		teams.DELETE("/:id", teamH.DeleteTeam)
+
+		teams.GET("/:id/members", teamH.ListMembers)
+		teams.POST("/:id/members", teamH.AddMember)
+		teams.PUT("/:id/members/:userId", teamH.UpdateMember)
+		teams.DELETE("/:id/members/:userId", teamH.DeleteMember)
+
+		teams.GET("/:id/project-access", teamH.ListProjectAccess)
+		teams.POST("/:id/project-access", teamH.GrantProjectAccess)
+		teams.DELETE("/:id/project-access/:projectId", teamH.RevokeProjectAccess)
 	}
 
 	return r, repo

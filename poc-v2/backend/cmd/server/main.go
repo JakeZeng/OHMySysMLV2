@@ -38,6 +38,7 @@ func main() {
 	defer repo.Close()
 
 	h := handler.New(repo)
+	teamH := handler.NewTeamHandler(repo)
 
 	// 初始化元模型 registry（M3 W1：mock schema，dev 阶段够用；M5 替换为 ptc-25-04-30 官方）
 	metaReg, err := metamodel.NewMockRegistry()
@@ -135,6 +136,26 @@ func main() {
 		// M3 新增：行业模板（公开浏览，仅元数据；Content 需要时按需 GET）
 		v1.GET("/templates", h.ListTemplates)
 		v1.GET("/templates/:id", h.GetTemplate)
+
+		// M4 W2：团队 + 成员 + 项目授权（受保护）
+		teams := v1.Group("/teams")
+		teams.Use(middleware.AuthRequired())
+		{
+			teams.POST("", teamH.CreateTeam)
+			teams.GET("", teamH.ListTeams)
+			teams.GET("/:id", teamH.GetTeam)
+			teams.PUT("/:id", teamH.UpdateTeam)
+			teams.DELETE("/:id", teamH.DeleteTeam)
+
+			teams.GET("/:id/members", teamH.ListMembers)
+			teams.POST("/:id/members", teamH.AddMember)
+			teams.PUT("/:id/members/:userId", teamH.UpdateMember)
+			teams.DELETE("/:id/members/:userId", teamH.DeleteMember)
+
+			teams.GET("/:id/project-access", teamH.ListProjectAccess)
+			teams.POST("/:id/project-access", teamH.GrantProjectAccess)
+			teams.DELETE("/:id/project-access/:projectId", teamH.RevokeProjectAccess)
+		}
 	}
 
 	srv := &http.Server{
