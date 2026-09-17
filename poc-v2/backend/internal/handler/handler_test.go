@@ -33,7 +33,8 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	h := New(repo)
 	teamH := NewTeamHandler(repo)
 	shareH := NewShareHandler(repo)
-	userH := NewUserHandler(repo) //nolint
+	userH := NewUserHandler(repo)
+	auditH := NewAuditHandler(repo)
 	r := gin.New()
 
 	r.GET("/health", h.Health)
@@ -103,6 +104,12 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	users.Use(middleware.AuthRequired())
 	{
 		users.GET("/search", userH.SearchUsers)
+	}
+
+	audit := v1.Group("/audit-logs")
+	audit.Use(middleware.AuthRequired())
+	{
+		audit.GET("", auditH.ListAuditLogs)
 	}
 
 	return r, repo

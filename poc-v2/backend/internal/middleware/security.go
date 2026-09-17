@@ -63,6 +63,9 @@ func DefaultCSRFConfig() CSRFConfig {
 			// M4 W3 补充：用户搜索
 			"/api/v1/users",
 			"/api/v1/users/*",
+			// M4.5 补充：审计日志
+			"/api/v1/audit-logs",
+			"/api/v1/audit-logs/*",
 		},
 		MaxAge: 24 * time.Hour,
 	}

@@ -41,6 +41,7 @@ func main() {
 	teamH := handler.NewTeamHandler(repo)
 	shareH := handler.NewShareHandler(repo)
 	userH := handler.NewUserHandler(repo)
+	auditH := handler.NewAuditHandler(repo)
 
 	// 初始化元模型 registry（M3 W1：mock schema，dev 阶段够用；M5 替换为 ptc-25-04-30 官方）
 	metaReg, err := metamodel.NewMockRegistry()
@@ -187,6 +188,13 @@ func main() {
 		usersGroup.Use(middleware.AuthRequired())
 		{
 			usersGroup.GET("/search", userH.SearchUsers)
+		}
+
+		// M4.5 补充：审计日志查询（受保护）
+		auditGroup := v1.Group("/audit-logs")
+		auditGroup.Use(middleware.AuthRequired())
+		{
+			auditGroup.GET("", auditH.ListAuditLogs)
 		}
 	}
 

@@ -13,6 +13,7 @@ import { MetamodelPage } from './pages/MetamodelPage';
 import { TeamsPage } from './pages/TeamsPage';
 import { TeamDetailPage } from './pages/TeamDetailPage';
 import { SharedProjectPage } from './pages/SharedProjectPage';
+import { AuditLogPage } from './pages/AuditLogPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: 'metamodel', element: <MetamodelPage /> },
       { path: 'teams', element: <TeamsPage /> },
       { path: 'teams/:teamId', element: <TeamDetailPage /> },
+      { path: 'audit', element: <AuditLogPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },

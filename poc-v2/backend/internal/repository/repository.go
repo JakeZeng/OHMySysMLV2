@@ -156,6 +156,33 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 	); err != nil {
 		// 忽略
 	}
+
+	// M4.5 增量：审计日志表。
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id          TEXT PRIMARY KEY,
+			actor_id    TEXT,
+			action      TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id   TEXT NOT NULL,
+			metadata    TEXT NOT NULL DEFAULT '',
+			ip          TEXT NOT NULL DEFAULT '',
+			user_agent  TEXT NOT NULL DEFAULT '',
+			created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 audit_logs 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_id, created_at DESC)`,
+	); err != nil {
+		return fmt.Errorf("创建 audit_logs actor 索引失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs(target_type, target_id, created_at DESC)`,
+	); err != nil {
+		return fmt.Errorf("创建 audit_logs target 索引失败: %w", err)
+	}
 	return nil
 }
 

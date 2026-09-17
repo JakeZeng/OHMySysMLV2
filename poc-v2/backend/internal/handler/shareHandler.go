@@ -60,6 +60,9 @@ func (h *ShareHandler) AddShare(c *gin.Context) {
 		serverError(c, "分享失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionShare, model.AuditTargetShare,
+		projectID+"/"+req.UserID,
+		`{"permission":"`+req.Permission+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"projectId":  projectID,
 		"userId":     req.UserID,
@@ -97,6 +100,8 @@ func (h *ShareHandler) RemoveShare(c *gin.Context) {
 		serverError(c, "撤销失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionUnshare, model.AuditTargetShare,
+		projectID+"/"+userID, "")
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 
@@ -129,6 +134,9 @@ func (h *ShareHandler) CreateLink(c *gin.Context) {
 		serverError(c, "创建链接失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionLinkCreate, model.AuditTargetLink,
+		sl.ID,
+		`{"permission":"`+req.Permission+`","expires_in_hours":`+itoa10(req.ExpiresInHours)+`}`)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"link":    sl,
 		"token":   token,
@@ -166,6 +174,8 @@ func (h *ShareHandler) RevokeLink(c *gin.Context) {
 		serverError(c, "撤销失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionLinkRevoke, model.AuditTargetLink,
+		linkID, "")
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 

@@ -5,7 +5,7 @@
 import * as React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen } from 'lucide-react';
+import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { cn } from '../../lib/utils';
 
@@ -76,6 +76,19 @@ export const TopNav: React.FC = () => {
           }
         >
           <BookOpen className="h-4 w-4" /> 元模型
+        </NavLink>
+        <NavLink
+          to="/audit"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <ScrollText className="h-4 w-4" /> 审计
         </NavLink>
       </nav>
 
