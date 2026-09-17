@@ -50,6 +50,11 @@ test-results/
 .env
 .env.local
 .env.*.local
+# Deploy secrets (deploy/.env.production)
+deploy/.env.production
+deploy/.env.production.*
+# Deploy state (rollback marker; local-only)
+deploy/.state/
 
 # OS / editor
 .DS_Store

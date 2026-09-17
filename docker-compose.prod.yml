@@ -1,0 +1,122 @@
+# SysML v2 MBSE — 生产部署 compose
+#
+# 与 docker-compose.yml（dev）的差异：
+#   - 用预构建的镜像 tag，不用 build: 上下文
+#   - 加 resource limits（防 OOM）
+#   - 加 logging driver + rotation（防磁盘被日志撑爆）
+#   - 用 env_file 注入 secrets（不入 git）
+#   - 加 restart policy + read_only 不可变 FS
+#   - SQLite 数据走 named volume（容器内 /data，由 backend-data 卷管理）
+#
+# 用法：
+#   1. cp deploy/.env.production.example deploy/.env.production
+#   2. 编辑 deploy/.env.production：填 AI_API_KEY / JWT_SECRET 等
+#   3. docker compose -f docker-compose.prod.yml --env-file deploy/.env.production up -d
+#   4. docker compose -f docker-compose.prod.yml ps     # 验证 health=healthy
+#
+# 回滚：
+#   IMAGE_TAG=<old-tag> docker compose -f docker-compose.prod.yml --env-file deploy/.env.production up -d
+#
+# 数据备份：
+#   deploy/backup.sh          # 创建 deploy/backups/sysmlv2-<ts>.db
+#   deploy/backup.sh list     # 列出已有备份
+
+name: sysmlv2-mbse-prod
+
+services:
+  backend:
+    # 生产用预构建镜像；本地构建请先 cd poc-v2/backend && docker build -t sysmlv2-mbse/backend:<tag> .
+    image: ${BACKEND_IMAGE:-sysmlv2-mbse/backend:${IMAGE_TAG:-latest}}
+    container_name: sysmlv2-backend
+    restart: unless-stopped
+    # 只读根文件系统 + tmpfs 给需要写的少数路径（Gin 写 PID / log 缓冲）
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /run:size=8m
+    # 数据卷以 rw 挂载（read_only 与 volume 不冲突：read_only 指 root FS，volume 是 bind-mount 形式）
+    volumes:
+      - backend-data:/data
+      - ./deploy/backups:/backups:ro    # 备份脚本能从容器内读；可去掉 :ro 让备份直接写回
+    env_file:
+      - path: ./deploy/.env.production
+        required: true
+    environment:
+      # 显式覆盖 env_file 中允许被 compose 注入的值（env_file 优先级低）
+      PORT: "8080"
+      DB_PATH: /data/sysmlv2.db
+      GIN_MODE: release
+    healthcheck:
+      # 配套：poc-v2/backend/Dockerfile 是 alpine，含 wget。
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # 资源限制：M3 测得 backend idle ~30MB RSS，峰值 ~120MB（AI 流式）
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+        tag: "sysmlv2-backend"
+    networks:
+      - app-net
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-sysmlv2-mbse/frontend:${IMAGE_TAG:-latest}}
+    container_name: sysmlv2-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # 生产只暴露 80；如需 HTTPS 走外部反代（Caddy/Nginx Proxy Manager）
+      - "${FRONTEND_PORT:-80}:80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m
+      - /var/run:size=4m
+      - /tmp:size=16m
+    environment:
+      BACKEND_URL: http://backend:8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "sysmlv2-frontend"
+    networks:
+      - app-net
+
+volumes:
+  backend-data:
+    name: sysmlv2-backend-data-prod
+    driver: local
+
+networks:
+  app-net:
+    name: sysmlv2-app-net-prod
+    driver: bridge
