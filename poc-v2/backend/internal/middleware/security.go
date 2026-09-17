@@ -23,9 +23,13 @@ type CSRFConfig struct {
 	HeaderName  string        // 期望的 header 名（默认 "X-CSRF-Token"）
 	SkipPaths   []string      // 跳过 CSRF 校验的路径（如 /auth/login）
 	MaxAge      time.Duration // cookie 有效期
+	// Strict 为 true 时只放过真正公开的端点（health / login / register / shared/:token）；
+	// 任何 /api/v1/* 受保护 API 都需要带 X-CSRF-Token header。
+	// Strict 为 false（默认，dev 模式）维持原有 broad skip list — JWT + CORS 已能拦截跨域。
+	Strict bool
 }
 
-// DefaultCSRFConfig 返回默认配置。
+// DefaultCSRFConfig 返回默认配置（dev 兼容模式）。
 func DefaultCSRFConfig() CSRFConfig {
 	return CSRFConfig{
 		TokenLength: 32,
@@ -61,6 +65,35 @@ func DefaultCSRFConfig() CSRFConfig {
 			"/api/v1/users/*",
 		},
 		MaxAge: 24 * time.Hour,
+	}
+}
+
+// StrictCSRFConfig 返回生产严格模式配置。
+//
+// 与 DefaultCSRFConfig 相比，跳过列表只保留真正公开的端点：
+//   - /health
+//   - /api/v1/auth/login、/api/v1/auth/register
+//   - /api/v1/shared/*（公开访问，无 JWT 自然也无 CSRF cookie）
+//   - /api/v1/templates/*（公开浏览）
+//
+// 受保护 API（projects / models / teams / shares / users / ai / metamodel）
+// 必须携带 X-CSRF-Token header 才能完成 mutating 请求。
+func StrictCSRFConfig() CSRFConfig {
+	return CSRFConfig{
+		TokenLength: 32,
+		CookieName:  "csrf_token",
+		HeaderName:  "X-CSRF-Token",
+		SkipPaths: []string{
+			"/health",
+			"/api/v1/auth/login",
+			"/api/v1/auth/register",
+			"/api/v1/shared",
+			"/api/v1/shared/*",
+			"/api/v1/templates",
+			"/api/v1/templates/*",
+		},
+		MaxAge: 24 * time.Hour,
+		Strict: true,
 	}
 }
 

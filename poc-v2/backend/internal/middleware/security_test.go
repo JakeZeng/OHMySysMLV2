@@ -193,6 +193,71 @@ func TestCSRF_AllowsWithMatchingToken(t *testing.T) {
 	}
 }
 
+// TestCSRF_StrictRejectsProjectPOST：StrictCSRFConfig 应拒绝不带 token 的 /api/v1/projects POST。
+func TestCSRF_StrictRejectsProjectPOST(t *testing.T) {
+	cfg := StrictCSRFConfig()
+	r := gin.New()
+	r.Use(CSRF(cfg))
+	r.POST("/api/v1/projects", func(c *gin.Context) {
+		c.String(200, "ok")
+	})
+
+	// 不带任何 cookie + header
+	req := httptest.NewRequest("POST", "/api/v1/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Errorf("Strict 模式下无 token POST 应 403，实际 %d", w.Code)
+	}
+}
+
+// TestCSRF_StrictAllowsLoginRegisterShared：Strict 模式下 login/register/shared 仍放行。
+func TestCSRF_StrictAllowsLoginRegisterShared(t *testing.T) {
+	cfg := StrictCSRFConfig()
+	r := gin.New()
+	r.Use(CSRF(cfg))
+	r.POST("/api/v1/auth/login", func(c *gin.Context) { c.String(200, "ok") })
+	r.POST("/api/v1/auth/register", func(c *gin.Context) { c.String(200, "ok") })
+	r.GET("/api/v1/shared/abc123", func(c *gin.Context) { c.String(200, "ok") })
+
+	for _, path := range []string{
+		"/api/v1/auth/login",
+		"/api/v1/auth/register",
+	} {
+		req := httptest.NewRequest("POST", path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Errorf("Strict 模式 %s 应放行，实际 %d", path, w.Code)
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/shared/abc123", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("Strict 模式 shared 应放行，实际 %d", w.Code)
+	}
+}
+
+// TestCSRF_DefaultPermitsProjectsPOST：dev 模式（Default）对 /api/v1/projects POST 放行
+// （依赖 JWT + CORS 提供跨域保护；测试 StrictCSRFConfig 与 DefaultCSRFConfig 的差别）。
+func TestCSRF_DefaultPermitsProjectsPOST(t *testing.T) {
+	cfg := DefaultCSRFConfig()
+	r := gin.New()
+	r.Use(CSRF(cfg))
+	r.POST("/api/v1/projects", func(c *gin.Context) {
+		c.String(200, "ok")
+	})
+
+	req := httptest.NewRequest("POST", "/api/v1/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("Default 模式 projects POST 应放行（dev 兼容），实际 %d", w.Code)
+	}
+}
+
 func TestBodySizeLimit(t *testing.T) {
 	r := gin.New()
 	r.Use(BodySizeLimit(100))

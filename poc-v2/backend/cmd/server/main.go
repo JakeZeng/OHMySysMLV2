@@ -72,8 +72,14 @@ func main() {
 
 	r.Use(requestLogger())
 
-	// CSRF 仅作用于 mutating 方法（GET/OPTIONS 不影响）
-	r.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
+	// CSRF 仅作用于 mutating 方法（GET/OPTIONS 不影响）。
+	// 严格模式通过 CSRF_STRICT=true 切换（生产推荐；dev 默认兼容）。
+	csrfCfg := middleware.DefaultCSRFConfig()
+	if os.Getenv("CSRF_STRICT") == "true" {
+		csrfCfg = middleware.StrictCSRFConfig()
+		log.Println("CSRF: STRICT 模式启用 — 受保护 API 需 X-CSRF-Token header")
+	}
+	r.Use(middleware.CSRF(csrfCfg))
 
 	// 健康检查
 	r.GET("/health", h.Health)
