@@ -16,6 +16,7 @@ import {
   Crown,
   Users,
   Loader2,
+  FolderTree,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
@@ -30,6 +31,7 @@ import { useTeamStore } from '../stores/teamStore';
 import { teamApi, type TeamMember, type TeamRole } from '../services/teamApi';
 import { useToast } from '../components/ui/Toast';
 import { InviteMemberModal } from '../components/modals/InviteMemberModal';
+import { GrantTeamAccessModal } from '../components/modals/GrantTeamAccessModal';
 
 const ROLE_LABEL: Record<TeamRole, string> = {
   owner: 'Owner',
@@ -60,6 +62,7 @@ export const TeamDetailPage: React.FC = () => {
 
   const [loading, setLoading] = React.useState(true);
   const [showInvite, setShowInvite] = React.useState(false);
+  const [showGrant, setShowGrant] = React.useState(false);
   const [showEdit, setShowEdit] = React.useState(false);
   const [editName, setEditName] = React.useState('');
   const [editDesc, setEditDesc] = React.useState('');
@@ -300,12 +303,24 @@ export const TeamDetailPage: React.FC = () => {
             {/* 项目授权卡片 */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-gray-400" /> 项目授权
-                  <span className="text-xs font-normal text-gray-400">
-                    ({projectAccess.length})
-                  </span>
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-gray-400" /> 项目授权
+                    <span className="text-xs font-normal text-gray-400">
+                      ({projectAccess.length})
+                    </span>
+                  </CardTitle>
+                  {canManageMembers && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setShowGrant(true)}
+                      data-testid="open-grant-access"
+                    >
+                      <FolderTree className="h-3.5 w-3.5" /> 授权项目
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 {projectAccess.length === 0 ? (
@@ -367,6 +382,13 @@ export const TeamDetailPage: React.FC = () => {
         onOpenChange={setShowInvite}
         teamId={teamId}
         onAdded={() => fetchMembers(teamId)}
+      />
+
+      <GrantTeamAccessModal
+        open={showGrant}
+        onOpenChange={setShowGrant}
+        teamId={teamId}
+        onGranted={() => fetchProjectAccess(teamId)}
       />
 
       <Modal
