@@ -11,6 +11,7 @@ import {
   Loader2,
   Trash2,
   Share2,
+  Settings,
 } from 'lucide-react';
 import {
   Card,
@@ -31,6 +32,7 @@ import {
 import { useToast } from '../components/ui/Toast';
 import { VisibilityBadge } from '../components/VisibilityBadge';
 import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
+import { ProjectSettingsModal } from '../components/modals/ProjectSettingsModal';
 
 const DEFAULT_MODEL_BODY = `package MyModel {
   part def Vehicle {
@@ -62,6 +64,7 @@ export const ProjectDetail: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
   const [showShare, setShowShare] = React.useState(false);
+  const [showSettings, setShowSettings] = React.useState(false);
   const [name, setName] = React.useState('');
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
@@ -181,6 +184,15 @@ export const ProjectDetail: React.FC = () => {
           <div className="flex gap-2">
             {isOwner && (
               <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowSettings(true)}
+                  disabled={!current}
+                  data-testid="open-project-settings"
+                >
+                  <Settings className="h-3.5 w-3.5" /> 设置
+                </Button>
                 <Button
                   variant="secondary"
                   size="sm"
@@ -324,6 +336,14 @@ export const ProjectDetail: React.FC = () => {
           open={showShare}
           onOpenChange={setShowShare}
           projectId={current.id}
+        />
+      )}
+
+      {current && (
+        <ProjectSettingsModal
+          open={showSettings}
+          onOpenChange={setShowSettings}
+          project={current}
         />
       )}
     </div>
