@@ -12,12 +12,23 @@ type User struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+// ProjectVisibility 项目可见性（M4 W1 引入）。
+//   private: 仅 owner + 显式分享者可访问
+//   team:    owner + 任何团队成员 + 显式分享者可访问
+//   public:  持有有效 share_link token 即可读
+const (
+	VisibilityPrivate = "private"
+	VisibilityTeam    = "team"
+	VisibilityPublic  = "public"
+)
+
 // Project 表示用户的一个项目。
 type Project struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	OwnerID     string    `json:"ownerId"`
+	Visibility  string    `json:"visibility"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }

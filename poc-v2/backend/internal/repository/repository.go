@@ -24,6 +24,10 @@ type SQLiteRepository struct {
 	db *sql.DB
 }
 
+// DB 返回底层 *sql.DB，给 handler/authz.go 等需要直接查 SQL 的位置使用。
+// M4 引入：跨切面授权（userHeldPermission 等）需要直接 UNION，保留这一入口。
+func (r *SQLiteRepository) DB() *sql.DB { return r.db }
+
 // New 打开或创建 SQLite 数据库，初始化全部 schema。
 func New(path string) (*SQLiteRepository, error) {
 	db, err := sql.Open("sqlite", path)
@@ -34,6 +38,13 @@ func New(path string) (*SQLiteRepository, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
+	// M4：启用外键约束，让 ON DELETE CASCADE 真正生效。
+	// modernc.org/sqlite 默认 PRAGMA foreign_keys=OFF。
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("启用外键失败: %w", err)
+	}
+
 	repo := &SQLiteRepository{db: db}
 	if err := repo.initSchema(); err != nil {
 		_ = db.Close()
@@ -43,6 +54,9 @@ func New(path string) (*SQLiteRepository, error) {
 }
 
 func (r *SQLiteRepository) initSchema() error {
+	// Schema source of truth: migrations/001_init.up.sql（users/projects/models）
+	// 与 migrations/002_team_space.up.sql（teams/team_members/team_project_access/project_shares/share_links）。
+	// 修改此处请同步更新对应 .sql 文件；M6 引入真 migration runner。
 	const ddl = `
 CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,
@@ -58,6 +72,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     owner_id    TEXT NOT NULL,
+    visibility  TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private', 'team', 'public')),
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -74,6 +89,57 @@ CREATE TABLE IF NOT EXISTS models (
 );
 CREATE INDEX IF NOT EXISTS idx_models_project ON models(project_id);
 CREATE INDEX IF NOT EXISTS idx_models_updated ON models(updated_at DESC);
+
+-- M4 W1: 团队空间 + 模型分享 表结构
+CREATE TABLE IF NOT EXISTS teams (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    team_id   TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'admin', 'member')),
+    joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (team_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+CREATE TABLE IF NOT EXISTS team_project_access (
+    team_id     TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    permission  TEXT NOT NULL CHECK(permission IN ('read', 'write', 'admin')),
+    granted_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    granted_by  TEXT NOT NULL REFERENCES users(id),
+    PRIMARY KEY (team_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_team_project_access_project ON team_project_access(project_id);
+
+CREATE TABLE IF NOT EXISTS project_shares (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL CHECK(permission IN ('read', 'write', 'admin')),
+    granted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    granted_by TEXT NOT NULL REFERENCES users(id),
+    PRIMARY KEY (project_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_shares_user ON project_shares(user_id);
+
+CREATE TABLE IF NOT EXISTS share_links (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    permission TEXT NOT NULL CHECK(permission IN ('read', 'write')),
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    revoked_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 `
 	_, err := r.db.Exec(ddl)
 	if err != nil {
@@ -119,18 +185,21 @@ func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*m
 // ─── Projects ────────────────────────────────────────────────────────
 
 func (r *SQLiteRepository) CreateProject(ctx context.Context, p *model.Project) error {
-	const q = `INSERT INTO projects (id, name, description, owner_id, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, q, p.ID, p.Name, p.Description, p.OwnerID, p.CreatedAt, p.UpdatedAt)
+	const q = `INSERT INTO projects (id, name, description, owner_id, visibility, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`
+	if p.Visibility == "" {
+		p.Visibility = model.VisibilityPrivate
+	}
+	_, err := r.db.ExecContext(ctx, q, p.ID, p.Name, p.Description, p.OwnerID, p.Visibility, p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (r *SQLiteRepository) GetProject(ctx context.Context, id string) (*model.Project, error) {
-	const q = `SELECT id, name, description, owner_id, created_at, updated_at
+	const q = `SELECT id, name, description, owner_id, visibility, created_at, updated_at
               FROM projects WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, q, id)
 	var p model.Project
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.Visibility, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -140,7 +209,7 @@ func (r *SQLiteRepository) GetProject(ctx context.Context, id string) (*model.Pr
 }
 
 func (r *SQLiteRepository) ListProjectsByUser(ctx context.Context, ownerID string) ([]*model.Project, error) {
-	const q = `SELECT id, name, description, owner_id, created_at, updated_at
+	const q = `SELECT id, name, description, owner_id, visibility, created_at, updated_at
               FROM projects WHERE owner_id = ? ORDER BY updated_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, ownerID)
 	if err != nil {
@@ -151,7 +220,44 @@ func (r *SQLiteRepository) ListProjectsByUser(ctx context.Context, ownerID strin
 	out := make([]*model.Project, 0)
 	for rows.Next() {
 		var p model.Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.Visibility, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// ListAccessibleProjects 列出 userID 可访问的所有项目（owner/team/direct share）。
+// M4 W1 引入：替代 ListProjectsByUser 的纯 owner 过滤。
+func (r *SQLiteRepository) ListAccessibleProjects(ctx context.Context, userID string) ([]*model.Project, error) {
+	// UNION 自动去重（DISTINCT 行为）；按 updated_at DESC 排序。
+	// 三路来源：
+	//   1. owner 自己的项目
+	//   2. 通过 team_project_access 间接获得的项目（用户所在的团队）
+	//   3. 通过 project_shares 直接被分享的项目
+	const q = `
+SELECT id, name, description, owner_id, visibility, created_at, updated_at FROM projects
+ WHERE owner_id = ?
+UNION
+SELECT p.id, p.name, p.description, p.owner_id, p.visibility, p.created_at, p.updated_at FROM projects p
+ JOIN team_project_access tpa ON tpa.project_id = p.id
+ JOIN team_members tm ON tm.team_id = tpa.team_id
+ WHERE tm.user_id = ?
+UNION
+SELECT p.id, p.name, p.description, p.owner_id, p.visibility, p.created_at, p.updated_at FROM projects p
+ JOIN project_shares ps ON ps.project_id = p.id
+ WHERE ps.user_id = ?
+ ORDER BY updated_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, userID, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.Project, 0)
+	for rows.Next() {
+		var p model.Project
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.Visibility, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
@@ -160,9 +266,9 @@ func (r *SQLiteRepository) ListProjectsByUser(ctx context.Context, ownerID strin
 }
 
 func (r *SQLiteRepository) UpdateProject(ctx context.Context, p *model.Project) error {
-	const q = `UPDATE projects SET name = ?, description = ?, updated_at = ?
+	const q = `UPDATE projects SET name = ?, description = ?, visibility = ?, updated_at = ?
               WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, q, p.Name, p.Description, p.UpdatedAt, p.ID)
+	_, err := r.db.ExecContext(ctx, q, p.Name, p.Description, p.Visibility, p.UpdatedAt, p.ID)
 	return err
 }
 

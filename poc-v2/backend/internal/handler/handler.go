@@ -2,7 +2,6 @@
 package handler
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -144,11 +143,12 @@ func (h *Handler) Login(c *gin.Context) {
 type createProjectReq struct {
 	Name        string `json:"name" binding:"required,min=1,max=100"`
 	Description string `json:"description"`
+	Visibility  string `json:"visibility"` // M4：private|team|public（创建时可设；默认 private）
 }
 
 func (h *Handler) ListProjects(c *gin.Context) {
 	userID := c.GetString("user_id")
-	projects, err := h.repo.ListProjectsByUser(c, userID)
+	projects, err := h.repo.ListAccessibleProjects(c, userID)
 	if err != nil {
 		serverError(c, "列出项目失败", err)
 		return
@@ -163,11 +163,23 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
+	// visibility 校验：只接受合法枚举；非法值返回 400
+	visibility := model.VisibilityPrivate
+	if req.Visibility != "" {
+		switch req.Visibility {
+		case model.VisibilityPrivate, model.VisibilityTeam, model.VisibilityPublic:
+			visibility = req.Visibility
+		default:
+			badRequest(c, "visibility 必须是 private|team|public", nil)
+			return
+		}
+	}
 	p := &model.Project{
 		ID:          uuid.NewString(),
 		Name:        req.Name,
 		Description: req.Description,
 		OwnerID:     userID,
+		Visibility:  visibility,
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
@@ -180,13 +192,8 @@ func (h *Handler) CreateProject(c *gin.Context) {
 
 func (h *Handler) GetProject(c *gin.Context) {
 	id := c.Param("id")
-	p, err := h.repo.GetProject(c, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, repository.ErrNotFound) {
-			notFound(c, "项目不存在")
-			return
-		}
-		serverError(c, "获取项目失败", err)
+	p, _, err := loadAccessibleProject(c, h.repo, id, PermRead)
+	if err != nil || p == nil {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -194,18 +201,29 @@ func (h *Handler) GetProject(c *gin.Context) {
 
 func (h *Handler) UpdateProject(c *gin.Context) {
 	id := c.Param("id")
+	p, _, err := loadAccessibleProject(c, h.repo, id, PermWrite)
+	if err != nil || p == nil {
+		return
+	}
 	var req createProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
-	p, err := h.repo.GetProject(c, id)
-	if err != nil {
-		notFound(c, "项目不存在")
-		return
-	}
 	p.Name = req.Name
 	p.Description = req.Description
+	if req.Visibility != "" && (req.Visibility == model.VisibilityPrivate ||
+		req.Visibility == model.VisibilityTeam || req.Visibility == model.VisibilityPublic) {
+		// visibility 变更需要 admin；这里只放行 owner（loadAccessibleProject 已用 PermWrite 校验，
+		// 但 visibility 是 admin 级别能力 — 用 held 二次校验）
+		if c.GetString("user_id") != p.OwnerID {
+			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
+				"code": "E_FORBIDDEN", "message": "仅项目所有者可修改可见性",
+			}})
+			return
+		}
+		p.Visibility = req.Visibility
+	}
 	p.UpdatedAt = time.Now().UTC()
 	if err := h.repo.UpdateProject(c, p); err != nil {
 		serverError(c, "更新项目失败", err)
@@ -216,11 +234,12 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 
 func (h *Handler) DeleteProject(c *gin.Context) {
 	id := c.Param("id")
+	// 删除需要 admin 权限（事实上只有 owner 持有 admin）。
+	p, _, err := loadAccessibleProject(c, h.repo, id, PermAdmin)
+	if err != nil || p == nil {
+		return
+	}
 	if err := h.repo.DeleteProject(c, id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			notFound(c, "项目不存在")
-			return
-		}
 		serverError(c, "删除项目失败", err)
 		return
 	}
@@ -247,6 +266,9 @@ func (h *Handler) ListModels(c *gin.Context) {
 		badRequest(c, "projectId 必填", nil)
 		return
 	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermRead); err != nil || !ok {
+		return
+	}
 	models, err := h.repo.ListModelsByProject(c, projectID)
 	if err != nil {
 		serverError(c, "列出模型失败", err)
@@ -263,6 +285,9 @@ func (h *Handler) CreateModel(c *gin.Context) {
 	}
 	if req.ProjectID == "" {
 		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, req.ProjectID, PermWrite); err != nil || !ok {
 		return
 	}
 	m := &model.Model{
@@ -291,13 +316,8 @@ func modelID(c *gin.Context) string {
 
 func (h *Handler) GetModel(c *gin.Context) {
 	id := modelID(c)
-	m, err := h.repo.GetModel(c, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, repository.ErrNotFound) {
-			notFound(c, "模型不存在")
-			return
-		}
-		serverError(c, "获取模型失败", err)
+	m, _, _, err := loadAccessibleModel(c, h.repo, id, PermRead)
+	if err != nil || m == nil {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": m})
@@ -305,14 +325,13 @@ func (h *Handler) GetModel(c *gin.Context) {
 
 func (h *Handler) UpdateModel(c *gin.Context) {
 	id := modelID(c)
+	m, _, _, err := loadAccessibleModel(c, h.repo, id, PermWrite)
+	if err != nil || m == nil {
+		return
+	}
 	var req updateModelReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "请求参数无效", err.Error())
-		return
-	}
-	m, err := h.repo.GetModel(c, id)
-	if err != nil {
-		notFound(c, "模型不存在")
 		return
 	}
 	m.Name = req.Name
@@ -337,11 +356,12 @@ func (h *Handler) UpdateModel(c *gin.Context) {
 
 func (h *Handler) DeleteModel(c *gin.Context) {
 	id := modelID(c)
+	m, _, _, err := loadAccessibleModel(c, h.repo, id, PermWrite)
+	if err != nil || m == nil {
+		// m == nil 表示权限不足或不存在，loadAccessibleModel 已写响应
+		return
+	}
 	if err := h.repo.DeleteModel(c, id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			notFound(c, "模型不存在")
-			return
-		}
 		serverError(c, "删除模型失败", err)
 		return
 	}
@@ -350,11 +370,14 @@ func (h *Handler) DeleteModel(c *gin.Context) {
 
 // ─── 嵌套路由 wrappers（支持 /projects/:projectId/models）───────────────
 
-// ListModelsByProject 从 URL 提取项目 ID，转发给 ListModels。
+// ListModelsByProject 从 URL 提取项目 ID，验证权限后列模型。
 func (h *Handler) ListModelsByProject(c *gin.Context) {
 	projectID := c.Param("id")
 	if projectID == "" {
 		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermRead); err != nil || !ok {
 		return
 	}
 	models, err := h.repo.ListModelsByProject(c, projectID)
@@ -365,11 +388,14 @@ func (h *Handler) ListModelsByProject(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": models})
 }
 
-// CreateModelInProject 从 URL 提取项目 ID，注入请求体后创建模型。
+// CreateModelInProject 从 URL 提取项目 ID，验证权限后创建模型。
 func (h *Handler) CreateModelInProject(c *gin.Context) {
 	projectID := c.Param("id")
 	if projectID == "" {
 		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
 		return
 	}
 	var req createModelReq

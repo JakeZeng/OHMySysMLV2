@@ -21,12 +21,14 @@ import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { useProjectStore } from '../stores/projectStore';
+import { useAuthStore } from '../stores/authStore';
 import {
   modelApi,
   type ModelListItem,
   type ModelRecord,
 } from '../services/modelApi';
 import { useToast } from '../components/ui/Toast';
+import { VisibilityBadge } from '../components/VisibilityBadge';
 
 const DEFAULT_MODEL_BODY = `package MyModel {
   part def Vehicle {
@@ -44,6 +46,14 @@ export const ProjectDetail: React.FC = () => {
   const fetchOne = useProjectStore((s) => s.fetchOne);
   const removeProject = useProjectStore((s) => s.remove);
   const setCurrent = useProjectStore((s) => s.setCurrent);
+  const user = useAuthStore((s) => s.user);
+
+  const isOwner =
+    current !== null && user !== null && current.ownerId === user.id;
+  // M4 W1 后端已接 authz：非 owner 不能 delete（loadAccessibleProject admin 校验）
+  // 但 updateProject 调用方需 PermWrite（owner 或团队 write） — 暂用 isOwner 控制可见性
+  const canWrite = isOwner; // W2/W3 接入团队写权限后切换为真值
+  const roleLabel = isOwner ? 'Owner' : '成员';
 
   const [models, setModels] = React.useState<ModelListItem[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -129,26 +139,58 @@ export const ProjectDetail: React.FC = () => {
         </Link>
 
         <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900">
-              {current?.name ?? '加载中…'}
-            </h1>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-2xl font-semibold text-gray-900">
+                {current?.name ?? '加载中…'}
+              </h1>
+              {current && (
+                <>
+                  <VisibilityBadge visibility={current.visibility} />
+                  <span
+                    data-testid="role-badge"
+                    className={
+                      'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ' +
+                      (isOwner
+                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                        : 'border-blue-200 bg-blue-50 text-blue-700')
+                    }
+                  >
+                    {roleLabel}
+                  </span>
+                </>
+              )}
+            </div>
             {current?.description && (
               <p className="mt-1 text-sm text-gray-500">
                 {current.description}
               </p>
             )}
+            {!isOwner && current && (
+              <p
+                className="mt-2 text-xs text-gray-400"
+                data-testid="readonly-hint"
+              >
+                你以 <b>{roleLabel}</b> 身份访问该项目。删除/可见性变更仅 owner 可操作。
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
+            {isOwner && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDeleteProject}
+                disabled={!current}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> 删除项目
+              </Button>
+            )}
             <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleDeleteProject}
-              disabled={!current}
+              onClick={() => setShowCreate(true)}
+              disabled={!canWrite || !current}
+              title={canWrite ? '' : '当前权限不足以创建模型'}
             >
-              <Trash2 className="h-3.5 w-3.5" /> 删除项目
-            </Button>
-            <Button onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" /> 新建模型
             </Button>
           </div>

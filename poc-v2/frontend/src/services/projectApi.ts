@@ -4,11 +4,14 @@
 
 import { getApi } from './api';
 
+export type ProjectVisibility = 'private' | 'team' | 'public';
+
 export interface Project {
   id: string;
   name: string;
   description: string;
   ownerId: string;
+  visibility: ProjectVisibility;
   createdAt: string;
   updatedAt: string;
   modelCount?: number;
@@ -17,11 +20,13 @@ export interface Project {
 export interface CreateProjectRequest {
   name: string;
   description?: string;
+  visibility?: ProjectVisibility;
 }
 
 export interface UpdateProjectRequest {
   name?: string;
   description?: string;
+  visibility?: ProjectVisibility;
 }
 
 export const projectApi = {

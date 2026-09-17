@@ -30,8 +30,9 @@ if ! command -v go &> /dev/null; then
 fi
 
 # Build + 运行
-go build -o sysmlv2-backend.exe ./cmd/server
-./sysmlv2-backend.exe &
+# 不用 `go build -o *.exe` —— Windows SmartScreen 会拦截未签名 exe，
+# 没人点"仍要运行"。改用 `go run` 直接跑源码（M4 起统一）。
+go run ./cmd/server &
 BACKEND_PID=$!
 echo "  Backend PID=$BACKEND_PID, 监听 :8080"
 
