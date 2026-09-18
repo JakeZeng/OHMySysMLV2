@@ -17,6 +17,7 @@ import {
   Users,
   Loader2,
   FolderTree,
+  Activity,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
@@ -28,6 +29,7 @@ import {
   CardTitle,
 } from '../components/ui/Card';
 import { useTeamStore } from '../stores/teamStore';
+import { auditApi, type AuditLog } from '../services/auditApi';
 import { teamApi, type TeamMember, type TeamRole } from '../services/teamApi';
 import { useToast } from '../components/ui/Toast';
 import { InviteMemberModal } from '../components/modals/InviteMemberModal';
@@ -62,6 +64,12 @@ export const TeamDetailPage: React.FC = () => {
 
   const [loading, setLoading] = React.useState(true);
   const [showInvite, setShowInvite] = React.useState(false);
+
+  // M4.5 增量：团队活动标签
+  type Tab = 'members' | 'projects' | 'activity';
+  const [tab, setTab] = React.useState<Tab>('members');
+  const [activity, setActivity] = React.useState<AuditLog[]>([]);
+  const [activityLoading, setActivityLoading] = React.useState(false);
   const [showGrant, setShowGrant] = React.useState(false);
   const [showEdit, setShowEdit] = React.useState(false);
   const [editName, setEditName] = React.useState('');
@@ -97,9 +105,37 @@ export const TeamDetailPage: React.FC = () => {
     }
   }, [currentTeam]);
 
+  // M4.5 增量：切到"活动"标签时拉审计日志
+  React.useEffect(() => {
+    if (tab !== 'activity' || !teamId) return;
+    let cancelled = false;
+    setActivityLoading(true);
+    auditApi
+      .list({ teamId, limit: 50 })
+      .then((data) => {
+        if (!cancelled) setActivity(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setActivityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, teamId]);
+
   const myRole: TeamRole | undefined = currentTeam?.myRole;
   const canManageMembers = myRole === 'owner' || myRole === 'admin';
   const canEditTeam = canManageMembers;
+
+  // M4.5 增量：团队统计
+  const teamStats = React.useMemo(
+    () => ({
+      members: members.length,
+      projects: projectAccess.length,
+    }),
+    [members, projectAccess],
+  );
   const canDeleteTeam = myRole === 'owner';
 
   const handleRemoveMember = async (m: TeamMember) => {
@@ -225,6 +261,9 @@ export const TeamDetailPage: React.FC = () => {
                 {currentTeam.description && (
                   <p className="mt-1 text-sm text-gray-500">{currentTeam.description}</p>
                 )}
+                <p className="mt-1 text-xs text-gray-400">
+                  {teamStats.members} 名成员 · {teamStats.projects} 个项目授权
+                </p>
               </div>
               <div className="flex gap-2">
                 {canEditTeam && (
@@ -240,7 +279,48 @@ export const TeamDetailPage: React.FC = () => {
               </div>
             </div>
 
+            {/* 标签切换 */}
+            <div className="mb-4 flex gap-1 border-b border-gray-200">
+              <button
+                type="button"
+                onClick={() => setTab('members')}
+                className={
+                  'border-b-2 px-3 py-1.5 text-sm transition ' +
+                  (tab === 'members'
+                    ? 'border-brand-500 text-brand-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700')
+                }
+              >
+                <Users className="mr-1 inline h-3.5 w-3.5" /> 成员
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('projects')}
+                className={
+                  'border-b-2 px-3 py-1.5 text-sm transition ' +
+                  (tab === 'projects'
+                    ? 'border-brand-500 text-brand-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700')
+                }
+              >
+                <FolderTree className="mr-1 inline h-3.5 w-3.5" /> 项目授权
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('activity')}
+                className={
+                  'border-b-2 px-3 py-1.5 text-sm transition ' +
+                  (tab === 'activity'
+                    ? 'border-brand-500 text-brand-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700')
+                }
+              >
+                <Activity className="mr-1 inline h-3.5 w-3.5" /> 活动
+              </button>
+            </div>
+
             {/* 成员卡片 */}
+            {tab === 'members' && (
             <Card className="mb-6">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -320,8 +400,10 @@ export const TeamDetailPage: React.FC = () => {
                 </ul>
               </CardContent>
             </Card>
+            )}
 
             {/* 项目授权卡片 */}
+            {tab === 'projects' && (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -403,6 +485,49 @@ export const TeamDetailPage: React.FC = () => {
                 )}
               </CardContent>
             </Card>
+            )}
+
+            {/* 活动标签 */}
+            {tab === 'activity' && (
+              activityLoading ? (
+                <div className="flex items-center justify-center py-12 text-sm text-gray-500">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
+                </div>
+              ) : activity.length === 0 ? (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-10 text-center">
+                    <Activity className="mb-2 h-8 w-8 text-gray-400" />
+                    <p className="text-sm text-gray-500">该团队暂无活动记录</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <ul className="divide-y divide-gray-100">
+                    {activity.map((l) => (
+                      <li key={l.id} className="px-4 py-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
+                              {l.action}
+                            </span>
+                            <span className="text-xs text-gray-500">{l.targetType}</span>
+                            <code className="truncate rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
+                              {l.targetId}
+                            </code>
+                          </div>
+                          <time className="text-xs text-gray-400">
+                            {new Date(l.createdAt).toLocaleString()}
+                          </time>
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          actor: <code className="font-mono">{l.actorId || '—'}</code>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              )
+            )}
           </>
         ) : (
           <p className="text-sm text-red-600">团队不存在或无访问权限</p>
