@@ -163,6 +163,35 @@ export const ModelEditor: React.FC = () => {
     };
   }, [content, modelId, saving, loading, saveModel]);
 
+  // M4.5 增量：离开页面时若有未保存变更则提醒。
+  // saved 仅在成功保存后短暂 true（2s 后回 false），所以用"内容是否与加载时不同"做脏检测。
+  const lastSavedContent = React.useRef<string>('');
+  React.useEffect(() => {
+    // 模型加载完成后记录"已保存"基准
+    if (!loading && modelId && content) {
+      lastSavedContent.current = content;
+    }
+  }, [loading, modelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 保存成功时更新基准
+  React.useEffect(() => {
+    if (saved) {
+      lastSavedContent.current = content;
+    }
+  }, [saved, content]);
+
+  // beforeunload：内容与基准不同时才拦截
+  React.useEffect(() => {
+    const dirty = content !== lastSavedContent.current && !!modelId && !!content;
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [content, modelId]);
+
   // 导出 JSON
   const handleExportJson = React.useCallback(() => {
     try {
