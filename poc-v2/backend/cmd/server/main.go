@@ -245,6 +245,13 @@ func main() {
 			importGroup.POST("/papyrus", h.ImportPapyrus)
 			importGroup.POST("/capella", h.ImportCapella)
 		}
+
+		// M7：设计文档生成（受保护）
+		reportsGroup := v1.Group("/reports")
+		reportsGroup.Use(middleware.AuthRequired())
+		{
+			reportsGroup.POST("/generate", h.GenerateReport)
+		}
 	}
 
 	srv := &http.Server{
