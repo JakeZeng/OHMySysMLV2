@@ -55,6 +55,11 @@
 | 项目面包屑 | ModelEditor 返回按钮显示项目名而非"返回" |
 | 登录页提示 | 注册页下方显示"首个注册用户自动管理员" |
 | 模型版本历史 | model_versions 表 + API + ModelEditor 底部抽屉面板（版本列表 + 内容预览 + 恢复） |
+| 版本 diff 对比 | Monaco DiffEditor 内联 diff（"对比当前"按钮切换预览/差异模式） |
+| 模型描述字段 | models.description 列 + ModelEditor 工具栏输入 + ProjectDetail 卡片显示 |
+| 模型搜索 | ProjectDetail 模型列表搜索栏（>3 个模型时出现） |
+| 模型计数 | ProjectDetail 头部显示"N 个模型" |
+| 项目描述编辑 | 内联编辑表单同时支持名称 + 描述修改 |
 | 归档清理前端 UI | AuditLogPage "归档清理" 按钮 → Modal 选天数（min 7） → 打开即 dry-run 预览影响行数 → 确认后调用并刷新列表 |
 | audit_logs created_at 索引 | 加速归档清理 + 无过滤列表查询（避免全表扫描） |
 | admin 角色 | `users.is_admin` 列；首个注册用户自动 admin；`ArchiveAuditLogs` 仅 admin 可调用 |
