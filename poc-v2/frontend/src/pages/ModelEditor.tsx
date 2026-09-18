@@ -148,6 +148,21 @@ export const ModelEditor: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, loading]);
 
+  // M4.5 增量：自动保存 — 内容变更后 5 秒无操作自动保存
+  const autoSaveRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    if (!content || !modelId || saving || loading) return;
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => {
+      void saveModel().catch(() => {
+        // 静默失败（Ctrl+S 手动保存时会显示 toast）
+      });
+    }, 5000);
+    return () => {
+      if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    };
+  }, [content, modelId, saving, loading, saveModel]);
+
   // 导出 JSON
   const handleExportJson = React.useCallback(() => {
     try {
