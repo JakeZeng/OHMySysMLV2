@@ -497,6 +497,24 @@ export const ModelEditor: React.FC = () => {
     showToast({ title: '图表已导出', variant: 'success' });
   }, [name, showToast]);
 
+  // 导出图表为 SVG
+  const handleDownloadSVG = React.useCallback(async () => {
+    const blob = await diagramRef.current?.exportSvg();
+    if (!blob) {
+      showToast({ title: '导出 SVG 失败', variant: 'error' });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name || 'diagram'}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast({ title: 'SVG 已导出', variant: 'success' });
+  }, [name, showToast]);
+
   // M4.5 增量：记录上次保存时间
   const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
   React.useEffect(() => {
@@ -667,6 +685,16 @@ export const ModelEditor: React.FC = () => {
           data-testid="export-diagram-png"
         >
           <Download className="h-3.5 w-3.5" /> 图表
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDownloadSVG}
+          disabled={loading}
+          title="导出图表 SVG"
+          data-testid="export-diagram-svg"
+        >
+          <Download className="h-3.5 w-3.5" /> SVG
         </Button>
         <Button
           variant="ghost"

@@ -333,6 +333,8 @@ export interface DiagramCanvasHandle {
   focusNode(nodeId: string): void;
   /** M4.5 增量：导出画布为 PNG blob */
   exportPng(): Promise<Blob | null>;
+  /** 导出画布为 SVG blob */
+  exportSvg(): Promise<Blob | null>;
 }
 
 // ─── 组件 ─────────────────────────────────────────────────────────────
@@ -378,6 +380,21 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
           backgroundColor: '#f9fafb',
           quality: 0.95,
         });
+        const res = await fetch(dataUrl);
+        return res.blob();
+      } catch {
+        return null;
+      }
+    },
+    async exportSvg(): Promise<Blob | null> {
+      const rfElement = document.querySelector('.react-flow') as HTMLElement | null;
+      if (!rfElement) return null;
+      try {
+        const { toSvg } = await import('html-to-image');
+        const dataUrl = await toSvg(rfElement, {
+          backgroundColor: '#f9fafb',
+        });
+        // data:image/svg+xml;base64,... 或 data:image/svg+xml;utf8,...
         const res = await fetch(dataUrl);
         return res.blob();
       } catch {
