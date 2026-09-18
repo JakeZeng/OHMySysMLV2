@@ -6,16 +6,18 @@
  */
 
 import * as React from 'react';
-import { History, Loader2, RotateCcw } from 'lucide-react';
+import { History, Loader2, RotateCcw, GitCompare } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { relativeTime } from '../lib/relativeTime';
 import type { ModelVersion } from '../services/modelApi';
+import { ModelDiffView } from './ModelDiffView';
 
 interface VersionHistoryPanelProps {
   versions: ModelVersion[];
   loading: boolean;
   onRestore?: (version: ModelVersion) => void;
   currentVersion: number;
+  currentContent?: string;
 }
 
 export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
@@ -23,8 +25,10 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
   loading,
   onRestore,
   currentVersion,
+  currentContent,
 }) => {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [showDiff, setShowDiff] = React.useState(false);
   const selected = versions.find((v) => v.id === selectedId) ?? null;
 
   if (loading) {
@@ -90,20 +94,43 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
               <span className="text-sm font-medium text-gray-700">
                 v{selected.version} 预览
               </span>
-              {onRestore && selected.version !== currentVersion && (
-                <button
-                  type="button"
-                  onClick={() => onRestore(selected)}
-                  className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
-                  data-testid={`restore-version-${selected.version}`}
-                >
-                  <RotateCcw className="h-3 w-3" /> 恢复此版本
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {currentContent && selected.version !== currentVersion && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDiff((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                    data-testid={`diff-version-${selected.version}`}
+                  >
+                    <GitCompare className="h-3 w-3" />{' '}
+                    {showDiff ? '查看内容' : '对比当前'}
+                  </button>
+                )}
+                {onRestore && selected.version !== currentVersion && (
+                  <button
+                    type="button"
+                    onClick={() => onRestore(selected)}
+                    className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                    data-testid={`restore-version-${selected.version}`}
+                  >
+                    <RotateCcw className="h-3 w-3" /> 恢复此版本
+                  </button>
+                )}
+              </div>
             </div>
-            <pre className="overflow-auto rounded border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-800">
-              {selected.content}
-            </pre>
+            {showDiff && currentContent ? (
+              <ModelDiffView
+                original={selected.content}
+                modified={currentContent}
+                originalLabel={`v${selected.version}`}
+                modifiedLabel={`v${currentVersion} (当前)`}
+                height={300}
+              />
+            ) : (
+              <pre className="overflow-auto rounded border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-800">
+                {selected.content}
+              </pre>
+            )}
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-gray-400">

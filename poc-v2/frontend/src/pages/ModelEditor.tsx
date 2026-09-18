@@ -588,6 +588,7 @@ export const ModelEditor: React.FC = () => {
             versions={versionHistory}
             loading={versionHistoryLoading}
             currentVersion={version}
+            currentContent={content}
             onRestore={(v) => {
               setContent(v.content);
               showToast({
