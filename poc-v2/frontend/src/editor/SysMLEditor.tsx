@@ -80,7 +80,7 @@ const SYSML_KEYWORDS = [
 const SYSML_TYPE_KEYWORDS = [
   'attribute', 'connection', 'def', 'item', 'package', 'part', 'port',
   'requirement', 'state', 'machine', 'action', 'flow', 'transition',
-  'activity', 'constraint', 'trace',
+  'activity', 'constraint', 'trace', 'enum', 'comment',
 ];
 
 const language: Monaco.languages.IMonarchLanguage = {
@@ -233,6 +233,30 @@ function registerSysMLLanguage(monacoInstance: typeof Monaco) {
           insertText: 'import ${1:PackageName}::*;',
           insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           documentation: '导入语句',
+          range,
+        },
+        {
+          label: 'enum def',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'enum def ${1:Name} {\n  ${2:Value1};\n  ${3:Value2};\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '枚举定义',
+          range,
+        },
+        {
+          label: 'comment',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'comment ${1:注释内容} about ${2:元素名};',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '注释块',
+          range,
+        },
+        {
+          label: 'satisfy',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'satisfy ${1:Target} by ${2:Requirement};',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '满足追溯',
           range,
         },
         // 常用类型
