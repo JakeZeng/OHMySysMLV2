@@ -341,6 +341,18 @@ export const ModelEditor: React.FC = () => {
     return `${lines} 行 · ${chars} 字符 · ${sizeStr}`;
   }, [content]);
 
+  // M4.5 增量：复制内容到剪贴板
+  const [copied, setCopied] = React.useState(false);
+  const handleCopyContent = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // silent
+    }
+  }, [content]);
+
   // M4.5 增量：记录上次保存时间
   const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
   React.useEffect(() => {
@@ -480,6 +492,15 @@ export const ModelEditor: React.FC = () => {
 
         <div className="flex-1" />
 
+        <button
+          type="button"
+          onClick={handleCopyContent}
+          className="rounded px-1.5 py-0.5 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+          title="复制全部内容"
+          data-testid="copy-content"
+        >
+          {copied ? '已复制' : '复制'}
+        </button>
         <span className="text-xs text-gray-400" data-testid="content-stats">
           {contentStats}
         </span>
