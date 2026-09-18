@@ -39,6 +39,7 @@ import { VersionHistoryPanel } from '../components/VersionHistoryPanel';
 import { Breadcrumb } from '../components/Breadcrumb';
 import { modelApi, type ModelVersion } from '../services/modelApi';
 import { CommentsPanel } from '../components/CommentsPanel';
+import { PresenceIndicator } from '../components/PresenceIndicator';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -614,6 +615,7 @@ export const ModelEditor: React.FC = () => {
             v{version}
           </span>
         )}
+        {modelId && <PresenceIndicator modelId={modelId} />}
         <Button
           size="sm"
           onClick={handleSave}

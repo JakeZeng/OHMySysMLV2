@@ -298,6 +298,15 @@ func main() {
 		{
 			codegenGroup.POST("/generate", h.GenerateCode)
 		}
+
+		// 实时协同 — 在线状态（受保护）
+		presenceGroup := v1.Group("/presence")
+		presenceGroup.Use(middleware.AuthRequired())
+		{
+			presenceGroup.POST("/heartbeat", h.Heartbeat)
+			presenceGroup.GET("/:modelId", h.GetPresence)
+			presenceGroup.DELETE("/:modelId", h.LeavePresence)
+		}
 	}
 
 	srv := &http.Server{
