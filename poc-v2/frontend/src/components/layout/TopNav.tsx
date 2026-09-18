@@ -8,6 +8,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { cn } from '../../lib/utils';
+import { GlobalSearch } from '../GlobalSearch';
 
 export const TopNav: React.FC = () => {
   const user = useAuthStore((s) => s.user);
@@ -93,6 +94,7 @@ export const TopNav: React.FC = () => {
       </nav>
 
       <div className="flex items-center gap-3">
+        <GlobalSearch />
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500">
             {user ? user.email : '未登录'}
