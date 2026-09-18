@@ -140,6 +140,16 @@ export const TopNav: React.FC = () => {
               )}
               <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
               <DropdownMenu.Item
+                onSelect={() => navigate('/profile')}
+                className={cn(
+                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
+                  'text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100'
+                )}
+              >
+                <UserIcon className="h-4 w-4" />
+                个人资料
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
                 className={cn(
                   'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
                   'text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100'
