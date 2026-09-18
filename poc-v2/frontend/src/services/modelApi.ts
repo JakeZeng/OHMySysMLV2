@@ -13,6 +13,7 @@ export interface ModelListItem {
   id: string;
   projectId: string;
   name: string;
+  description?: string;
   version: number;
   createdAt: string;
   updatedAt: string;

@@ -508,6 +508,11 @@ export const ProjectDetail: React.FC = () => {
                       </div>
                     </CardHeader>
                     <CardContent>
+                      {m.description && (
+                        <p className="mb-1 line-clamp-1 text-xs text-gray-500">
+                          {m.description}
+                        </p>
+                      )}
                       <div className="text-xs text-gray-400">
                         创建于 {relativeTime(m.createdAt)} · 更新于{' '}
                         {relativeTime(m.updatedAt)}
