@@ -22,6 +22,7 @@ import { APIKeysPage } from './pages/APIKeysPage';
 import { ImportPage } from './pages/ImportPage';
 import { ReportPage } from './pages/ReportPage';
 import { PluginsPage } from './pages/PluginsPage';
+import { SubscriptionPage } from './pages/SubscriptionPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -53,6 +54,7 @@ export const router = createBrowserRouter([
       { path: 'import', element: <ImportPage /> },
       { path: 'reports', element: <ReportPage /> },
       { path: 'plugins', element: <PluginsPage /> },
+      { path: 'subscription', element: <SubscriptionPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },

@@ -262,6 +262,15 @@ func main() {
 			pluginsGroup.DELETE("/:id", h.DeletePlugin)
 			pluginsGroup.POST("/:id/toggle", h.TogglePlugin)
 		}
+
+		// M8：订阅管理（受保护）
+		subGroup := v1.Group("/subscription")
+		subGroup.Use(middleware.AuthRequired())
+		{
+			subGroup.GET("/plans", h.GetPlans)
+			subGroup.GET("", h.GetSubscription)
+			subGroup.POST("/upgrade", h.UpgradeSubscription)
+		}
 	}
 
 	srv := &http.Server{
