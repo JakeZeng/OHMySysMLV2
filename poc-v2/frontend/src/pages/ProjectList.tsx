@@ -22,6 +22,7 @@ import { Input, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { VisibilityBadge } from '../components/VisibilityBadge';
 import { relativeTime } from '../lib/relativeTime';
+import { ProjectCardSkeleton } from '../components/ui/Skeleton';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { useToast } from '../components/ui/Toast';
@@ -274,8 +275,10 @@ export const ProjectList: React.FC = () => {
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-500">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <ProjectCardSkeleton key={i} />
+            ))}
           </div>
         ) : totalCount === 0 ? (
           <Card>
