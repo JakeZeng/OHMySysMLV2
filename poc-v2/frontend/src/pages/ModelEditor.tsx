@@ -434,6 +434,24 @@ export const ModelEditor: React.FC = () => {
     }
   }, [content]);
 
+  // M4.5 增量：下载图表 PNG
+  const handleDownloadDiagram = React.useCallback(async () => {
+    const blob = await diagramRef.current?.exportPng();
+    if (!blob) {
+      showToast({ title: '导出图表失败', variant: 'error' });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name || 'diagram'}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast({ title: '图表已导出', variant: 'success' });
+  }, [name, showToast]);
+
   // M4.5 增量：记录上次保存时间
   const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
   React.useEffect(() => {
@@ -594,6 +612,16 @@ export const ModelEditor: React.FC = () => {
           data-testid="export-sysml"
         >
           <Download className="h-3.5 w-3.5" /> .sysml
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDownloadDiagram}
+          disabled={loading}
+          title="导出图表 PNG"
+          data-testid="export-diagram-png"
+        >
+          <Download className="h-3.5 w-3.5" /> 图表
         </Button>
         <Button
           variant="ghost"
