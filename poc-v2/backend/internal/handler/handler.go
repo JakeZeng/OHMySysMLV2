@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -406,7 +407,7 @@ func (h *Handler) ListModelVersions(c *gin.Context) {
 		return
 	}
 	// 验证模型存在且当前用户有 read 权限
-	_, _, lerr := loadAccessibleModel(c, h.repo, modelID, PermRead)
+	_, _, _, lerr := loadAccessibleModel(c, h.repo, modelID, PermRead)
 	if lerr != nil {
 		return
 	}

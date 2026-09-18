@@ -94,7 +94,7 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 	format := c.DefaultQuery("format", "csv")
 	if format != "csv" && format != "json" {
-		badRequest(c, "format 仅支持 csv / json")
+		badRequest(c, "format 仅支持 csv / json", nil)
 		return
 	}
 

@@ -27,6 +27,13 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
 
+# GOPROXY 用国内镜像（GOPROXY 默认 proxy.golang.org 在大陆环境不可达）。
+# goproxy.cn 是七牛运营的官方镜像；aliyun 是另一个。
+# 用 build-arg 注入；默认指向 goproxy.cn，本地构建可 `docker build
+# --build-arg GOPROXY=https://goproxy.io,direct .` 覆盖。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY} GOSUMDB=off
+
 # 先复制 go.mod/go.sum 以利用 Docker layer 缓存
 COPY go.mod go.sum ./
 RUN go mod download

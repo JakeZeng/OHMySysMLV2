@@ -37,8 +37,23 @@ RUN npm ci --no-audit --no-fund
 # 复制前端源码
 COPY frontend/ ./
 
-# 复制 parser 目录（含 parser.generated.ts，是 vite alias @parser 的源）
-COPY parser/ ../parser/
+# 复制同级工具目录（vite.config.ts 用 @parser / @validator / @transform / @ast alias）
+# WORKDIR=/build，alias `../parser` 解析为 /parser/。
+COPY parser/      ../parser/
+COPY validator/   ../validator/
+COPY transform/   ../transform/
+COPY ast/         ../ast/
+
+# elkjs 不在 frontend/package.json 里（只在根 poc-v2/package.json 里），
+# 但 transform/layoutEngine.ts 直接 import 'elkjs/lib/elk.bundled.js'。
+# 解决：在每个可能解析 elkjs 的源目录里放一份 node_modules 符号链接，
+# 让 Node 的 node_modules 向上查找能找到包。
+# 局限：elkjs 自己也依赖一些包；用 npm install --prefix 完整克隆：
+RUN for d in parser validator transform ast; do \
+      mkdir -p /${d}/node_modules && \
+      cp -r /build/node_modules/. /${d}/node_modules/ 2>/dev/null || \
+        ln -s /build/node_modules /${d}/node_modules; \
+    done
 
 # Vite build：产物在 /build/dist/
 RUN npm run build

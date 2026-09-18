@@ -41,9 +41,8 @@ make deploy          # 拉取远端镜像 + 部署
 
 **Windows PowerShell**（等价命令）：
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy/init.ps1    # 需手动创建
-Copy-Item deploy\.env.production.example deploy\.env.production
-# 编辑 .env.production
+powershell -ExecutionPolicy Bypass -File deploy/init.ps1   # 已存在，会自动生成 JWT secret
+# 编辑 deploy\.env.production 填入 AI_API_KEY / CORS_ALLOWED_ORIGINS
 .\deploy\deploy.ps1 -Build
 ```
 

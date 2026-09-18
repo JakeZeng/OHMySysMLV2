@@ -12,6 +12,11 @@ export default defineConfig({
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'],
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      // 工具目录（parser/ validator/ transform/ ast/）是 poc-v2/ 的同级子目录。
+      // Docker build 时 WORKDIR=/build，alias `../parser` 解析为 /parser/，
+      // 与 Dockerfile 的 `COPY parser/ ../parser/` 一致。
+      // 本地 dev（npm run dev）从 poc-v2/frontend/ 跑，`../parser` 解析为
+      // poc-v2/parser/，与原来一致 → 不用动 host 任何东西。
       '@parser': path.resolve(__dirname, '../parser'),
       '@validator': path.resolve(__dirname, '../validator'),
       '@transform': path.resolve(__dirname, '../transform'),

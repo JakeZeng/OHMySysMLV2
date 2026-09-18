@@ -11,6 +11,10 @@
 # 数据：
 #   backend-data (volume) → /data/sysmlv2.db
 #
+# 便利入口（推荐）：
+#   ./docker-dev.sh up --build         # bash / Git Bash
+#   .\docker-dev.ps1 up -Build         # Windows PowerShell
+#
 # M1 备注：DB 仍为 SQLite（modernc.org 纯 Go，无需 CGO）。
 #         迁移到 PostgreSQL 在 M2-M3 阶段完成（见 timeline_v2.md §2.3）。
 
@@ -30,36 +34,42 @@ services:
       GIN_MODE: release
     volumes:
       - backend-data:/data
+    # alpine 自带 wget → 用 GET /health（Gin 注册的路由）做存活探针
     healthcheck:
-      # 旧版 ["CMD", "/app/server", "-version"] 不可用：
-      # 1) main.go 没有 -version flag（程序启动后立即 listen，这个
-      #    flag 永远不会 return）
-      # 2) 即便有，/app/server 默认 8080 端口已 listen，-version 路径
-      #    也走不到 healthcheck
-      # 改用 wget 主动 GET /health（Gin 注册的路由）。
-      # 配套：backend Dockerfile 换 alpine 才有 wget（distroless 没有）。
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+    networks:
+      - app-net
 
   frontend:
     build:
-      context: ./poc-v2/frontend
-      dockerfile: Dockerfile
+      # 关键：context 必须是 poc-v2/，因为 Dockerfile 里写的是
+      # `COPY frontend/...` 和 `COPY parser/...`，假设 build context 含 frontend/ 和 parser/ 两兄弟目录
+      context: ./poc-v2
+      dockerfile: frontend/Dockerfile
     image: sysmlv2-mbse/frontend:dev
     container_name: sysmlv2-frontend
     restart: unless-stopped
+    # 启动顺序：等 backend healthcheck 通过（Docker Compose v3.4+ 语法）
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:80"
-    environment:
-      # 前端运行时无需环境变量；nginx 通过内部 DNS 访问 backend
-      BACKEND_URL: http://backend:8080
+    # 反代目标在 nginx.conf 里写死 http://backend:8080，
+    # 不要再传 BACKEND_URL 环境变量（前端构建时也没读，纯误导）
+    networks:
+      - app-net
 
 volumes:
   backend-data:
     driver: local
     name: sysmlv2-backend-data
+
+networks:
+  app-net:
+    name: sysmlv2-app-net
+    driver: bridge

@@ -1,0 +1,70 @@
+# Root .dockerignore — 适用于以仓库根为 build context 的镜像
+# 当前用法：poc-v2/frontend/Dockerfile 用 poc-v2/ 作 context，但 COPY ../parser/ 会
+# 触发 layer 内对仓库根的访问，所以这个文件放根能排除 frontend build 时的噪音。
+
+# VCS / 编辑器
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# 工具链与依赖
+node_modules
+.tools
+.pnpm-store
+.npm
+
+# 构建产物
+dist
+build
+.vite
+.vite-optimizer-cache
+.vite-deps
+*.tsbuildinfo
+.tsbuild
+
+# 数据库 / 运行时
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+coverage.html
+coverage.out
+.nyc_output
+.coverage
+
+# 日志
+*.log
+*.err
+*.out
+*.err.log
+*.out.log
+.smoke.ts
+.poc-tests*.log
+
+# 环境变量（不要把 secrets 拷进镜像）
+.env
+.env.local
+.env.*.local
+deploy/.env.production
+deploy/.env.production.*
+deploy/.state
+
+# 文档与脚本（不进镜像层，节省空间）
+poc-v2/docs
+poc-v2/reports
+poc-v2/scripts
+poc-v2/tests
+poc-v2/examples
+poc-v2/prompts
+poc-v2/samples
+poc-v2/node_modules
+poc-v2/dist
+
+# 旧版（已废弃）
+poc.deprecated.bak
