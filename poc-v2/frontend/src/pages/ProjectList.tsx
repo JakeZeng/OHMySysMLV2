@@ -9,7 +9,7 @@
 
 import * as React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, FolderKanban, Loader2, Search } from 'lucide-react';
+import { Plus, FolderKanban, Loader2, Search, Star } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -93,9 +93,26 @@ export const ProjectList: React.FC = () => {
     React.useState<ProjectVisibility>('private');
   const [creating, setCreating] = React.useState(false);
 
-  // M4.5 增量：项目列表搜索过滤 + 排序
+  // M4.5 增量：项目列表搜索过滤 + 排序 + 收藏
   const [search, setSearch] = React.useState('');
   const [sortBy, setSortBy] = React.useState<'updated' | 'name'>('updated');
+  const [favorites, setFavorites] = React.useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('project_favorites');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleFavorite = React.useCallback((id: string) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem('project_favorites', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     void fetchProjects().catch((e: Error) => {
@@ -243,7 +260,26 @@ export const ProjectList: React.FC = () => {
                         <Card className="h-full transition hover:border-brand-300 hover:shadow">
                           <CardHeader>
                             <div className="flex items-start justify-between gap-2">
-                              <CardTitle className="truncate">
+                              <CardTitle className="flex items-center gap-1.5 truncate">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    toggleFavorite(p.id);
+                                  }}
+                                  className="shrink-0"
+                                  data-testid={`favorite-${p.id}`}
+                                >
+                                  <Star
+                                    className={
+                                      'h-3.5 w-3.5 ' +
+                                      (favorites.has(p.id)
+                                        ? 'fill-amber-400 text-amber-400'
+                                        : 'text-gray-300 hover:text-amber-400')
+                                    }
+                                  />
+                                </button>
                                 {p.name}
                               </CardTitle>
                               <VisibilityBadge visibility={p.visibility} />
