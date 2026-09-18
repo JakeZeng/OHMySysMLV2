@@ -21,6 +21,10 @@ import type {
   Connection,
   ImportStatement,
   NamespaceMember,
+  StateMachine,
+  Activity,
+  Requirement,
+  ConstraintBlock,
 } from '../ast/model';
 
 // ─── 公共入口 ──────────────────────────────────────────────────────────
@@ -35,6 +39,26 @@ export function serialize(model: SysMLModel): string {
   // 顶层 connect（不在任何 package 内）
   for (const conn of model.connections) {
     serializeConnection(conn, 0, lines);
+  }
+
+  // M5: 顶层状态机
+  for (const sm of model.stateMachines) {
+    serializeStateMachine(sm, 0, lines);
+  }
+
+  // M5: 顶层活动
+  for (const act of model.activities) {
+    serializeActivity(act, 0, lines);
+  }
+
+  // M5: 顶层需求
+  for (const req of model.requirements) {
+    serializeRequirement(req, 0, lines);
+  }
+
+  // M5: 顶层约束块
+  for (const cb of model.constraintBlocks) {
+    serializeConstraintBlock(cb, 0, lines);
   }
 
   return lines.join('\n') + '\n';
@@ -71,6 +95,13 @@ function serializePackage(pkg: Package, indent: number, out: string[]): void {
         break;
       case 'package':
         // 嵌套包单独处理
+        break;
+      case 'stateMachine':
+      case 'activity':
+      case 'requirement':
+      case 'constraintBlock':
+      case 'trace':
+        // M5 元素单独处理
         break;
     }
   }
@@ -114,6 +145,24 @@ function serializePackage(pkg: Package, indent: number, out: string[]): void {
   // 5. connections
   for (const conn of connections) {
     serializeConnection(conn, indent + 1, out);
+  }
+
+  // 6. M5 elements
+  for (const m of pkg.members) {
+    switch (m.kind) {
+      case 'stateMachine':
+        serializeStateMachine(m, indent + 1, out);
+        break;
+      case 'activity':
+        serializeActivity(m, indent + 1, out);
+        break;
+      case 'requirement':
+        serializeRequirement(m, indent + 1, out);
+        break;
+      case 'constraintBlock':
+        serializeConstraintBlock(m, indent + 1, out);
+        break;
+    }
   }
 
   out.push(`${pad}}`);
@@ -234,4 +283,59 @@ function serializeConnection(conn: Connection, indent: number, out: string[]): v
   out.push(
     `${pad}${name}connect ${conn.source.partName}.${conn.source.portName} to ${conn.target.partName}.${conn.target.portName};`
   );
+}
+
+// ─── M5: State Machine ──────────────────────────────────────────────
+
+function serializeStateMachine(sm: StateMachine, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  out.push(`${pad}state machine ${sm.name} {`);
+  for (const s of sm.states) {
+    const initial = s.isInitial ? 'initial ' : '';
+    const final = s.isFinal ? 'final ' : '';
+    out.push(`${pad}  ${initial}${final}state ${s.name};`);
+  }
+  for (const t of sm.transitions) {
+    const trigger = t.trigger ? `[${t.trigger}]` : '';
+    const guard = t.guard ? `[guard=${t.guard}]` : '';
+    out.push(`${pad}  transition ${t.source} to ${t.target} ${trigger}${guard};`);
+  }
+  out.push(`${pad}}`);
+}
+
+// ─── M5: Activity ───────────────────────────────────────────────────
+
+function serializeActivity(act: Activity, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  out.push(`${pad}activity ${act.name} {`);
+  for (const a of act.actions) {
+    const initial = a.isInitial ? 'initial ' : '';
+    const final = a.isFinal ? 'final ' : '';
+    out.push(`${pad}  ${initial}${final}action ${a.name};`);
+  }
+  for (const f of act.flows) {
+    const guard = f.guard ? `[${f.guard}]` : '';
+    out.push(`${pad}  flow ${f.source} to ${f.target} ${guard};`);
+  }
+  out.push(`${pad}}`);
+}
+
+// ─── M5: Requirement ────────────────────────────────────────────────
+
+function serializeRequirement(req: Requirement, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  const reqId = req.reqId ? `(${req.reqId})` : '';
+  const text = req.text ? `{${req.text}}` : '';
+  out.push(`${pad}requirement def ${req.name} ${reqId} ${text};`);
+}
+
+// ─── M5: Constraint Block ───────────────────────────────────────────
+
+function serializeConstraintBlock(cb: ConstraintBlock, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  out.push(`${pad}constraint def ${cb.name} {`);
+  for (const p of cb.parameters) {
+    out.push(`${pad}  attribute ${p.name} : ${p.typeRef};`);
+  }
+  out.push(`${pad}}`);
 }

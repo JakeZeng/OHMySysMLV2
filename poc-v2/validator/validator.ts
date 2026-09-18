@@ -34,6 +34,10 @@ import type {
   PortUsage,
   SourceLocation,
   SysMLModel,
+  StateMachine,
+  Activity,
+  Requirement,
+  ConstraintBlock,
 } from '../ast/model';
 
 // ─── 错误模型 ──────────────────────────────────────────────────────────
@@ -51,7 +55,16 @@ export type ValidationIssueCode =
   | 'E110_EMPTY_PACKAGE'
   | 'E111_INVALID_BUILTIN_TYPE'
   | 'E112_IMPORT_TARGET_NOT_FOUND'
-  | 'E113_INHERITED_PORT_NOT_FOUND';
+  | 'E113_INHERITED_PORT_NOT_FOUND'
+  // M5: 行为视图
+  | 'E201_SM_MULTIPLE_INITIAL'
+  | 'E202_SM_TRANSITION_STATE_NOT_FOUND'
+  | 'E203_ACT_MULTIPLE_INITIAL'
+  | 'E204_ACT_FLOW_ACTION_NOT_FOUND'
+  // M5: 需求视图
+  | 'E205_TRACE_TARGET_NOT_FOUND'
+  // M5: 参数视图
+  | 'E206_CONSTRAINT_PARAM_TYPE_NOT_FOUND';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -151,6 +164,24 @@ export function validate(model: SysMLModel): ValidationResult {
   }
   for (const pkg of model.packages) {
     collectConnections(pkg, scope, issues);
+  }
+
+  // M5: 第五遍 — 验证状态机、活动、需求、约束块
+  for (const sm of model.stateMachines) {
+    validateStateMachine(sm, issues);
+  }
+  for (const act of model.activities) {
+    validateActivity(act, issues);
+  }
+  for (const trace of model.traceLinks) {
+    validateTraceLink(trace, scope, issues);
+  }
+  for (const cb of model.constraintBlocks) {
+    validateConstraintBlock(cb, scope, issues);
+  }
+  // 递归遍历 package 内的 M5 元素
+  for (const pkg of model.packages) {
+    collectM5Elements(pkg, scope, issues);
   }
 
   return {
@@ -265,6 +296,15 @@ function collectFromPackage(
       case 'attributeUsage':
         // 用法不需要在作用域内单独登记
         break;
+      case 'stateMachine':
+      case 'activity':
+      case 'requirement':
+      case 'constraintBlock':
+        // M5: 不需要在符号表中登记，单独验证
+        break;
+      case 'trace':
+        // M5: 追溯链接单独验证
+        break;
     }
   }
 }
@@ -278,6 +318,11 @@ function memberName(m: NamespaceMember): string {
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
+    case 'stateMachine': return m.name;
+    case 'activity': return m.name;
+    case 'requirement': return m.name;
+    case 'trace': return '';             // 不参与成员名拼接
+    case 'constraintBlock': return m.name;
   }
 }
 
@@ -821,4 +866,152 @@ function directionCompatible(a: string, b: string): boolean {
   if (a === 'out' && b === 'in') return true;
   // 同向不兼容
   return false;
+}
+
+// ─── M5: 状态机验证 ─────────────────────────────────────────────────
+
+function validateStateMachine(sm: StateMachine, issues: ValidationIssue[]): void {
+  // E201: 初始态唯一性
+  const initialStates = sm.states.filter(s => s.isInitial);
+  if (initialStates.length > 1) {
+    for (let i = 1; i < initialStates.length; i++) {
+      issues.push({
+        code: 'E201_SM_MULTIPLE_INITIAL',
+        message: `状态机 \`${sm.name}\` 有多个初始态`,
+        location: initialStates[i].location,
+        severity: 'error',
+        relatedLocations: [initialStates[0].location],
+      });
+    }
+  }
+
+  // E202: 转换引用的状态必须存在
+  const stateNames = new Set(sm.states.map(s => s.name));
+  for (const t of sm.transitions) {
+    if (!stateNames.has(t.source)) {
+      issues.push({
+        code: 'E202_SM_TRANSITION_STATE_NOT_FOUND',
+        message: `转换引用的状态 \`${t.source}\` 在状态机 \`${sm.name}\` 中未定义`,
+        location: t.location,
+        severity: 'error',
+      });
+    }
+    if (!stateNames.has(t.target)) {
+      issues.push({
+        code: 'E202_SM_TRANSITION_STATE_NOT_FOUND',
+        message: `转换引用的状态 \`${t.target}\` 在状态机 \`${sm.name}\` 中未定义`,
+        location: t.location,
+        severity: 'error',
+      });
+    }
+  }
+}
+
+// ─── M5: 活动验证 ───────────────────────────────────────────────────
+
+function validateActivity(act: Activity, issues: ValidationIssue[]): void {
+  // E203: 初始态唯一性
+  const initialActions = act.actions.filter(a => a.isInitial);
+  if (initialActions.length > 1) {
+    for (let i = 1; i < initialActions.length; i++) {
+      issues.push({
+        code: 'E203_ACT_MULTIPLE_INITIAL',
+        message: `活动 \`${act.name}\` 有多个初始动作`,
+        location: initialActions[i].location,
+        severity: 'error',
+        relatedLocations: [initialActions[0].location],
+      });
+    }
+  }
+
+  // E204: 控制流引用的动作必须存在
+  const actionNames = new Set(act.actions.map(a => a.name));
+  for (const f of act.flows) {
+    if (!actionNames.has(f.source)) {
+      issues.push({
+        code: 'E204_ACT_FLOW_ACTION_NOT_FOUND',
+        message: `控制流引用的动作 \`${f.source}\` 在活动 \`${act.name}\` 中未定义`,
+        location: f.location,
+        severity: 'error',
+      });
+    }
+    if (!actionNames.has(f.target)) {
+      issues.push({
+        code: 'E204_ACT_FLOW_ACTION_NOT_FOUND',
+        message: `控制流引用的动作 \`${f.target}\` 在活动 \`${act.name}\` 中未定义`,
+        location: f.location,
+        severity: 'error',
+      });
+    }
+  }
+}
+
+// ─── M5: 追溯链接验证 ──────────────────────────────────────────────
+
+function validateTraceLink(
+  trace: { source: string; target: string; location: SourceLocation },
+  scope: Scope,
+  issues: ValidationIssue[]
+): void {
+  // E205: 追溯目标必须存在（在 partDefs / partUsages 中查找）
+  const targetSym = lookupPartByName(scope, trace.target);
+  if (!targetSym) {
+    issues.push({
+      code: 'E205_TRACE_TARGET_NOT_FOUND',
+      message: `追溯目标 \`${trace.target}\` 未定义`,
+      location: trace.location,
+      severity: 'error',
+    });
+  }
+}
+
+// ─── M5: 约束块验证 ────────────────────────────────────────────────
+
+function validateConstraintBlock(
+  cb: ConstraintBlock,
+  scope: Scope,
+  issues: ValidationIssue[]
+): void {
+  // E206: 约束参数类型必须存在
+  for (const param of cb.parameters) {
+    if (!BUILTIN_TYPES.has(param.typeRef)) {
+      const typeSym = scope.partDefs.get(param.typeRef) ?? scope.portDefs.get(param.typeRef);
+      if (!typeSym) {
+        issues.push({
+          code: 'E206_CONSTRAINT_PARAM_TYPE_NOT_FOUND',
+          message: `约束块 \`${cb.name}\` 的参数 \`${param.name}\` 类型 \`${param.typeRef}\` 未定义`,
+          location: param.location,
+          severity: 'error',
+        });
+      }
+    }
+  }
+}
+
+// ─── M5: 递归收集 package 内的 M5 元素 ─────────────────────────────
+
+function collectM5Elements(
+  pkg: Package,
+  scope: Scope,
+  issues: ValidationIssue[]
+): void {
+  for (const m of pkg.members) {
+    switch (m.kind) {
+      case 'stateMachine':
+        validateStateMachine(m, issues);
+        break;
+      case 'activity':
+        validateActivity(m, issues);
+        break;
+      case 'trace':
+        validateTraceLink(m, scope, issues);
+        break;
+      case 'constraintBlock':
+        validateConstraintBlock(m, scope, issues);
+        break;
+      case 'package':
+        collectM5Elements(m, scope, issues);
+        break;
+    }
+  }
 }

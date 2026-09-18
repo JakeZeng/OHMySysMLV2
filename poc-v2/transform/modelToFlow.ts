@@ -23,6 +23,10 @@ import type {
   PortDefinition,
   PortUsage,
   SysMLModel,
+  StateMachine,
+  Activity,
+  Requirement,
+  ConstraintBlock,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
@@ -71,16 +75,25 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   const portDefs: PortDefinition[] = [];
   const partUsages: PartUsage[] = [];
   const connections: Connection[] = [];
+  const stateMachines: StateMachine[] = [];
+  const activities: Activity[] = [];
+  const requirements: Requirement[] = [];
+  const constraintBlocks: ConstraintBlock[] = [];
+
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, partUsages, connections);
+    collectMembers(pkg, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   connections.push(...model.connections);
+  stateMachines.push(...model.stateMachines);
+  activities.push(...model.activities);
+  requirements.push(...model.requirements);
+  constraintBlocks.push(...model.constraintBlocks);
 
   // 2. name → nodeId
   const nameToPartId = new Map<string, string>();
   const partToPortIds = new Map<string, Map<string, string>>();
 
-  // 3. 节点构造
+  // 3. 节点构造（结构视图）
   for (const pd of partDefs) {
     const id = `pd:${pd.id}`;
     nameToPartId.set(pd.name, id);
@@ -98,7 +111,69 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
     nodes.push(makePortDefNode(id, portDef));
   }
 
-  // 4. 边
+  // 3b. 节点构造（M5 状态机）
+  for (const sm of stateMachines) {
+    const stateNameToId = new Map<string, string>();
+    for (const s of sm.states) {
+      const id = `state:${s.id}`;
+      stateNameToId.set(s.name, id);
+      nodes.push(makeStateNode(id, s.name, !!s.isInitial, !!s.isFinal));
+    }
+    for (const t of sm.transitions) {
+      const srcId = stateNameToId.get(t.source);
+      const tgtId = stateNameToId.get(t.target);
+      if (srcId && tgtId) {
+        edges.push({
+          id: `edge:${t.id}`,
+          source: srcId,
+          target: tgtId,
+          type: 'smoothstep',
+          label: [t.trigger, t.guard ? `[${t.guard}]` : ''].filter(Boolean).join(' '),
+          animated: false,
+          style: { stroke: '#722ed1', strokeWidth: 2 },
+        });
+      }
+    }
+  }
+
+  // 3c. 节点构造（M5 活动）
+  for (const act of activities) {
+    const actionNameToId = new Map<string, string>();
+    for (const a of act.actions) {
+      const id = `action:${a.id}`;
+      actionNameToId.set(a.name, id);
+      nodes.push(makeActionNode(id, a.name, !!a.isInitial, !!a.isFinal));
+    }
+    for (const f of act.flows) {
+      const srcId = actionNameToId.get(f.source);
+      const tgtId = actionNameToId.get(f.target);
+      if (srcId && tgtId) {
+        edges.push({
+          id: `edge:${f.id}`,
+          source: srcId,
+          target: tgtId,
+          type: 'straight',
+          label: f.guard ? `[${f.guard}]` : undefined,
+          animated: true,
+          style: { stroke: '#13c2c2', strokeWidth: 2, strokeDasharray: '6 3' },
+        });
+      }
+    }
+  }
+
+  // 3d. 节点构造（M5 需求）
+  for (const req of requirements) {
+    const id = `req:${req.id}`;
+    nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text));
+  }
+
+  // 3e. 节点构造（M5 约束块）
+  for (const cb of constraintBlocks) {
+    const id = `cb:${cb.id}`;
+    nodes.push(makeConstraintBlockNode(id, cb.name, cb.constraint));
+  }
+
+  // 4. 边（结构视图的 connect）
   for (const conn of connections) {
     const edge = makeEdge(conn, nameToPartId, partToPortIds);
     if (edge) edges.push(edge);
@@ -292,7 +367,11 @@ function collectMembers(
   partDefs: PartDefinition[],
   portDefs: PortDefinition[],
   partUsages: PartUsage[],
-  connections: Connection[]
+  connections: Connection[],
+  stateMachines?: StateMachine[],
+  activities?: Activity[],
+  requirements?: Requirement[],
+  constraintBlocks?: ConstraintBlock[]
 ): void {
   for (const m of pkg.members) {
     switch (m.kind) {
@@ -306,11 +385,80 @@ function collectMembers(
         partUsages.push(m);
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, partUsages, connections);
+        collectMembers(m, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
         break;
       case 'connection':
         connections.push(m);
         break;
+      case 'stateMachine':
+        stateMachines?.push(m);
+        break;
+      case 'activity':
+        activities?.push(m);
+        break;
+      case 'requirement':
+        requirements?.push(m);
+        break;
+      case 'constraintBlock':
+        constraintBlocks?.push(m);
+        break;
     }
   }
+}
+
+// ─── M5: 状态机构造 ────────────────────────────────────────────────
+
+function makeStateNode(id: string, name: string, isInitial: boolean, isFinal: boolean): Node {
+  return {
+    id,
+    type: 'sysmlState',
+    position: { x: 0, y: 0 },
+    data: {
+      label: name,
+      kind: 'stateDef',
+      isInitial,
+      isFinal,
+    },
+  };
+}
+
+function makeActionNode(id: string, name: string, isInitial: boolean, isFinal: boolean): Node {
+  return {
+    id,
+    type: 'sysmlAction',
+    position: { x: 0, y: 0 },
+    data: {
+      label: name,
+      kind: 'actionDef',
+      isInitial,
+      isFinal,
+    },
+  };
+}
+
+function makeRequirementNode(id: string, name: string, reqId?: string, text?: string): Node {
+  return {
+    id,
+    type: 'sysmlRequirement',
+    position: { x: 0, y: 0 },
+    data: {
+      label: name,
+      kind: 'requirement',
+      reqId,
+      text,
+    },
+  };
+}
+
+function makeConstraintBlockNode(id: string, name: string, constraint?: string): Node {
+  return {
+    id,
+    type: 'sysmlConstraint',
+    position: { x: 0, y: 0 },
+    data: {
+      label: name,
+      kind: 'constraintBlock',
+      constraint,
+    },
+  };
 }

@@ -80,16 +80,31 @@ File
     {
       const packages = [];
       const connections = [];
+      const stateMachines = [];
+      const activities = [];
+      const requirements = [];
+      const traceLinks = [];
+      const constraintBlocks = [];
       for (const pair of items) {
         const it = pair[1];
         if (it.kind === 'package') packages.push(it);
         else if (it.kind === 'connection') connections.push(it);
+        else if (it.kind === 'stateMachine') stateMachines.push(it);
+        else if (it.kind === 'activity') activities.push(it);
+        else if (it.kind === 'requirement') requirements.push(it);
+        else if (it.kind === 'trace') traceLinks.push(it);
+        else if (it.kind === 'constraintBlock') constraintBlocks.push(it);
       }
-      return { packages, connections };
+      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks };
     }
 
 NamespaceOrTopLevel
   = Package
+  / StateMachine
+  / Activity
+  / RequirementDef
+  / ConstraintBlockDef
+  / TraceStatement
   / ConnectStatement
 
 // ─── Package ───────────────────────────────────────────────────────────
@@ -122,6 +137,11 @@ PackageMember
   / PartUsage
   / PortUsage
   / Attribute
+  / StateMachine
+  / Activity
+  / RequirementDef
+  / ConstraintBlockDef
+  / TraceStatement
   / ConnectStatement
 
 ImportStatement
@@ -275,6 +295,188 @@ ImplicitFeatureWithDir
 
 DefaultValue
   = WS "=" WS vchars:(!(";" / WS) .)+ { return vchars.map(x => x[1]).join('').trim(); }
+
+// ─── State Machine（M5 行为视图）───────────────────────────────────────
+
+StateMachine
+  = "state" WS "machine" WS name:Identifier OPEN _ members:(_ StateMachineMember)* CLOSE
+    {
+      const states = [];
+      const transitions = [];
+      for (const pair of members) {
+        const m = pair[1];
+        if (m.kind === 'stateDef') states.push(m);
+        else if (m.kind === 'transition') transitions.push(m);
+      }
+      return {
+        kind: 'stateMachine',
+        id: nextId('sm'),
+        name,
+        states,
+        transitions,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+StateMachineMember
+  = StateDef
+  / TransitionStatement
+
+StateDef
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "state" WS name:Identifier _ ";"
+    {
+      return {
+        kind: 'stateDef',
+        id: nextId('state'),
+        name,
+        isInitial: !!isInitial,
+        isFinal: !!isFinal,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+TransitionStatement
+  = "transition" WS src:Identifier WS "to" WS tgt:Identifier trigger:TransitionTrigger? guard:TransitionGuard? _ ";"
+    {
+      return {
+        kind: 'transition',
+        id: nextId('trans'),
+        source: src,
+        target: tgt,
+        trigger: trigger || undefined,
+        guard: guard || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+TransitionTrigger
+  = WS "[" WS t:$(!"]" .)+ WS "]" { return t.trim(); }
+
+TransitionGuard
+  = WS "[" WS "guard" WS "=" WS g:$(!"]" .)+ WS "]" { return g.trim(); }
+
+// ─── Activity（M5 行为视图）────────────────────────────────────────────
+
+Activity
+  = "activity" WS name:Identifier OPEN _ members:(_ ActivityMember)* CLOSE
+    {
+      const actions = [];
+      const flows = [];
+      for (const pair of members) {
+        const m = pair[1];
+        if (m.kind === 'actionDef') actions.push(m);
+        else if (m.kind === 'controlFlow') flows.push(m);
+      }
+      return {
+        kind: 'activity',
+        id: nextId('act'),
+        name,
+        actions,
+        flows,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+ActivityMember
+  = ActionDef
+  / FlowStatement
+
+ActionDef
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS name:Identifier _ ";"
+    {
+      return {
+        kind: 'actionDef',
+        id: nextId('action'),
+        name,
+        isInitial: !!isInitial,
+        isFinal: !!isFinal,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+FlowStatement
+  = "flow" WS src:Identifier WS "to" WS tgt:Identifier guard:FlowGuard? _ ";"
+    {
+      return {
+        kind: 'controlFlow',
+        id: nextId('flow'),
+        source: src,
+        target: tgt,
+        guard: guard || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+FlowGuard
+  = WS "[" WS g:$(!"]" .)+ WS "]" { return g.trim(); }
+
+// ─── Requirement（M5 需求视图）─────────────────────────────────────────
+
+RequirementDef
+  = "requirement" WS "def" WS name:Identifier reqId:ReqId? text:ReqText? _ ";"
+    {
+      return {
+        kind: 'requirement',
+        id: nextId('req'),
+        name,
+        reqId: reqId || undefined,
+        text: text || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+ReqId
+  = WS "(" WS id:$(!")" .)+ WS ")" { return id.trim(); }
+
+ReqText
+  = WS "{" WS t:$(!"}" .)+ WS "}" { return t.trim(); }
+
+// ─── Trace Statement（M5 需求追溯）────────────────────────────────────
+
+TraceStatement
+  = relation:TraceRel WS src:Identifier WS "by" WS tgt:QualifiedName _ ";"
+    {
+      return {
+        kind: 'trace',
+        id: nextId('trace'),
+        source: src,
+        target: tgt,
+        relation,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+TraceRel
+  = "satisfy"  { return 'satisfy'; }
+  / "verify"   { return 'verify'; }
+  / "refine"   { return 'refine'; }
+  / "allocate" { return 'allocate'; }
+
+// ─── Constraint Block（M5 参数视图）────────────────────────────────────
+
+ConstraintBlockDef
+  = "constraint" WS "def" WS name:Identifier OPEN _ params:(_ ConstraintParam)* CLOSE
+    {
+      return {
+        kind: 'constraintBlock',
+        id: nextId('cb'),
+        name,
+        parameters: params.map(p => p[1]),
+        location: locationOf(location().start.offset),
+      };
+    }
+
+ConstraintParam
+  = "attribute" WS name:Identifier WS ":" WS typeRef:QualifiedName _ ";"
+    {
+      return {
+        kind: 'constraintParam',
+        id: nextId('cp'),
+        name,
+        typeRef,
+        location: locationOf(location().start.offset),
+      };
+    }
 
 // ─── Connect ───────────────────────────────────────────────────────────
 

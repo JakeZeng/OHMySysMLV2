@@ -149,11 +149,167 @@ const PortNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoPortNode = React.memo(PortNode);
 
+// ─── M5 节点类型：状态、动作、需求、约束 ────────────────────────────
+
+const StateNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { isInitial?: boolean; isFinal?: boolean };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#d3adf7' : '#f9f0ff',
+        border: `2px solid ${selected ? '#722ed1' : '#b37feb'}`,
+        borderRadius: '16px',
+        padding: '8px 16px',
+        minWidth: '120px',
+        textAlign: 'center',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        transition: 'background 0.1s',
+      }}
+    >
+      {d.isInitial && (
+        <div style={{
+          position: 'absolute', left: -14, top: '50%', transform: 'translateY(-50%)',
+          width: 8, height: 8, borderRadius: '50%', background: '#722ed1',
+        }} />
+      )}
+      <Handle type="target" position={Position.Left} style={{ background: '#722ed1', width: 8, height: 8 }} />
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      {d.isFinal && (
+        <div style={{
+          position: 'absolute', right: -14, top: '50%', transform: 'translateY(-50%)',
+          width: 12, height: 12, borderRadius: '50%', border: '2px solid #722ed1',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#722ed1' }} />
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={{ background: '#722ed1', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoStateNode = React.memo(StateNode);
+
+const ActionNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { isInitial?: boolean; isFinal?: boolean };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#b5f5ec' : '#e6fffb',
+        border: `2px solid ${selected ? '#08979c' : '#13c2c2'}`,
+        borderRadius: '4px',
+        padding: '8px 16px',
+        minWidth: '120px',
+        textAlign: 'center',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+      }}
+    >
+      {d.isInitial && (
+        <div style={{
+          position: 'absolute', left: -10, top: '50%', transform: 'translateY(-50%)',
+          width: 8, height: 8, borderRadius: '50%', background: '#08979c',
+        }} />
+      )}
+      <Handle type="target" position={Position.Left} style={{ background: '#13c2c2', width: 8, height: 8 }} />
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      {d.isFinal && (
+        <div style={{
+          position: 'absolute', right: -14, top: '50%', transform: 'translateY(-50%)',
+          width: 12, height: 12, borderRadius: '50%', border: '2px solid #08979c',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#08979c' }} />
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={{ background: '#13c2c2', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoActionNode = React.memo(ActionNode);
+
+const RequirementNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { reqId?: string; text?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#fff1b8' : '#fffbe6',
+        border: `2px solid ${selected ? '#d48806' : '#faad14'}`,
+        borderRadius: '4px',
+        padding: '8px 12px',
+        minWidth: '160px',
+        maxWidth: '280px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={{ background: '#faad14', width: 8, height: 8 }} />
+      {d.reqId && (
+        <div style={{
+          display: 'inline-block',
+          background: '#d48806',
+          color: '#fff',
+          padding: '1px 6px',
+          borderRadius: '3px',
+          fontSize: '10px',
+          marginBottom: '4px',
+        }}>
+          {d.reqId}
+        </div>
+      )}
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      {d.text && (
+        <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {d.text}
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={{ background: '#faad14', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoRequirementNode = React.memo(RequirementNode);
+
+const ConstraintBlockNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { constraint?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#ffccc7' : '#fff1f0',
+        border: `2px solid ${selected ? '#cf1322' : '#f5222d'}`,
+        borderRadius: '4px',
+        padding: '8px 12px',
+        minWidth: '140px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        clipPath: 'polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)',
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={{ background: '#f5222d', width: 8, height: 8 }} />
+      <div style={{ fontWeight: 600, color: '#262626', textAlign: 'center' }}>{d.label}</div>
+      {d.constraint && (
+        <div style={{ fontSize: '11px', color: '#8c8c8c', textAlign: 'center', marginTop: '2px' }}>
+          {d.constraint}
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={{ background: '#f5222d', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoConstraintBlockNode = React.memo(ConstraintBlockNode);
+
 const nodeTypes = {
   sysmlPartDef: MemoPartDefNode,
   sysmlPartUsage: MemoPartUsageNode,
   sysmlPortDef: MemoPortDefNode,
   sysmlPort: MemoPortNode,
+  sysmlState: MemoStateNode,
+  sysmlAction: MemoActionNode,
+  sysmlRequirement: MemoRequirementNode,
+  sysmlConstraint: MemoConstraintBlockNode,
 };
 
 // ─── 回调接口 ─────────────────────────────────────────────────────────
@@ -354,6 +510,10 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
               case 'sysmlPartUsage': return '#fa8c16';
               case 'sysmlPortDef': return '#52c41a';
               case 'sysmlPort': return '#52c41a';
+              case 'sysmlState': return '#722ed1';
+              case 'sysmlAction': return '#13c2c2';
+              case 'sysmlRequirement': return '#faad14';
+              case 'sysmlConstraint': return '#f5222d';
               default: return '#d9d9d9';
             }
           }}

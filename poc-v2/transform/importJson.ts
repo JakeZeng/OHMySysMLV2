@@ -16,6 +16,10 @@
 import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefinition, PortDefinition, PartUsage, PortUsage, AttributeUsage, Connection, ImportStatement } from '../ast/model';
 import { serialize } from './serializer';
 
+function emptyModel(): SysMLModel {
+  return { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [] };
+}
+
 // ─── 类型守卫 ─────────────────────────────────────────────────────────
 
 export interface ImportError {
@@ -47,7 +51,7 @@ export function importFromJson(jsonStr: string): ImportResult {
     return {
       ok: false,
       text: '',
-      model: { packages: [], connections: [] },
+      model: emptyModel(),
       errors: [{ path: '$', message: `JSON 解析失败: ${(e as Error).message}` }],
     };
   }
@@ -58,7 +62,7 @@ export function importFromJson(jsonStr: string): ImportResult {
     return {
       ok: false,
       text: '',
-      model: { packages: [], connections: [] },
+      model: emptyModel(),
       errors: [{ path: '$.model', message: '缺少 model 字段或类型不正确' }],
     };
   }
@@ -71,7 +75,7 @@ export function importFromJson(jsonStr: string): ImportResult {
     return {
       ok: false,
       text: '',
-      model: { packages: [], connections: [] },
+      model: emptyModel(),
       errors,
     };
   }
@@ -92,7 +96,7 @@ export function importFromJson(jsonStr: string): ImportResult {
     }
   }
 
-  const model: SysMLModel = { packages, connections };
+  const model: SysMLModel = { ...emptyModel(), packages, connections };
 
   // 6. 序列化为文本
   let text = '';

@@ -63,7 +63,12 @@ export type NamespaceMember =
   | PartUsage
   | PortUsage
   | AttributeUsage
-  | Connection;
+  | Connection
+  | StateMachine
+  | Activity
+  | Requirement
+  | TraceLink
+  | ConstraintBlock;
 
 /** `import Foo::*;` 或 `import Bar;` */
 export interface ImportStatement extends SysMLNode {
@@ -141,15 +146,103 @@ export interface EndpointRef {
   location: SourceLocation;
 }
 
+// ─── State Machine（M5 行为视图）────────────────────────────────────────
+
+export interface StateMachine extends SysMLNode {
+  kind: 'stateMachine';
+  name: string;
+  states: StateDefinition[];
+  transitions: Transition[];
+}
+
+export interface StateDefinition extends SysMLNode {
+  kind: 'stateDef';
+  name: string;
+  isInitial?: boolean;
+  isFinal?: boolean;
+}
+
+export interface Transition extends SysMLNode {
+  kind: 'transition';
+  source: string;
+  target: string;
+  trigger?: string;
+  guard?: string;
+}
+
+// ─── Activity（M5 行为视图）────────────────────────────────────────────
+
+export interface Activity extends SysMLNode {
+  kind: 'activity';
+  name: string;
+  actions: ActionDefinition[];
+  flows: ControlFlow[];
+}
+
+export interface ActionDefinition extends SysMLNode {
+  kind: 'actionDef';
+  name: string;
+  isInitial?: boolean;
+  isFinal?: boolean;
+}
+
+export interface ControlFlow extends SysMLNode {
+  kind: 'controlFlow';
+  source: string;
+  target: string;
+  guard?: string;
+}
+
+// ─── Requirement（M5 需求视图）─────────────────────────────────────────
+
+export interface Requirement extends SysMLNode {
+  kind: 'requirement';
+  name: string;
+  reqId?: string;
+  text?: string;
+}
+
+export interface TraceLink extends SysMLNode {
+  kind: 'trace';
+  source: string;
+  target: string;
+  relation: 'satisfy' | 'verify' | 'refine' | 'allocate';
+}
+
+// ─── Constraint Block（M5 参数视图）────────────────────────────────────
+
+export interface ConstraintBlock extends SysMLNode {
+  kind: 'constraintBlock';
+  name: string;
+  constraint?: string;
+  parameters: ConstraintParameter[];
+}
+
+export interface ConstraintParameter extends SysMLNode {
+  kind: 'constraintParam';
+  name: string;
+  typeRef: string;
+}
+
 // ─── 顶层模型 ───────────────────────────────────────────────────────────
 
 /**
- * 解析后的整个模型。MVP 阶段只支持一个或多个 package 在文件顶层。
+ * 解析后的整个模型。M5 扩展支持行为视图、需求视图、参数视图。
  */
 export interface SysMLModel {
   packages: Package[];
   /** 顶层 connect 语句（不在任何 package 内时归到这里） */
   connections: Connection[];
+  /** M5: 状态机 */
+  stateMachines: StateMachine[];
+  /** M5: 活动 */
+  activities: Activity[];
+  /** M5: 需求 */
+  requirements: Requirement[];
+  /** M5: 追溯链接 */
+  traceLinks: TraceLink[];
+  /** M5: 约束块 */
+  constraintBlocks: ConstraintBlock[];
 }
 
 // ─── Parser Result ──────────────────────────────────────────────────────

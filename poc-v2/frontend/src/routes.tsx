@@ -16,6 +16,7 @@ import { SharedProjectPage } from './pages/SharedProjectPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { DashboardPage } from './pages/DashboardPage';
+import { TemplateMarketPage } from './pages/TemplateMarketPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
       { path: 'teams/:teamId', element: <TeamDetailPage /> },
       { path: 'audit', element: <AuditLogPage /> },
       { path: 'profile', element: <ProfilePage /> },
+      { path: 'templates', element: <TemplateMarketPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },

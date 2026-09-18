@@ -210,6 +210,14 @@ func main() {
 			// M4.5 增量：归档清理（M5+ 候选落地）— 删除 ≥ N 天前的日志
 			auditGroup.DELETE("/archive", auditH.ArchiveAuditLogs)
 		}
+
+		// M5：Profile 导出/导入（受保护）
+		profilesGroup := v1.Group("/profiles")
+		profilesGroup.Use(middleware.AuthRequired())
+		{
+			profilesGroup.POST("/export", h.ExportProfile)
+			profilesGroup.POST("/import", h.ImportProfile)
+		}
 	}
 
 	srv := &http.Server{

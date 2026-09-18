@@ -80,6 +80,9 @@ export const ModelEditor: React.FC = () => {
   // M4.5 增量：快捷键帮助
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = React.useState(false);
 
+  // M5: 视图模式切换
+  const [viewMode, setViewMode] = React.useState<'structure' | 'behavior' | 'requirements' | 'constraints'>('structure');
+
   // M4.5 增量：版本历史面板
   const [showVersionHistory, setShowVersionHistory] = React.useState(false);
   const [versionHistory, setVersionHistory] = React.useState<ModelVersion[]>([]);
@@ -396,6 +399,43 @@ export const ModelEditor: React.FC = () => {
     },
     [content, setContent, showToast]
   );
+
+  // M5: 根据视图模式过滤节点和边
+  const filteredNodes = React.useMemo(() => {
+    if (viewMode === 'structure') {
+      return pipeline.nodes.filter(n =>
+        n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage' ||
+        n.type === 'sysmlPortDef' || n.type === 'sysmlPort'
+      );
+    }
+    if (viewMode === 'behavior') {
+      return pipeline.nodes.filter(n =>
+        n.type === 'sysmlState' || n.type === 'sysmlAction'
+      );
+    }
+    if (viewMode === 'requirements') {
+      return pipeline.nodes.filter(n => n.type === 'sysmlRequirement');
+    }
+    if (viewMode === 'constraints') {
+      return pipeline.nodes.filter(n => n.type === 'sysmlConstraint');
+    }
+    return pipeline.nodes;
+  }, [viewMode, pipeline.nodes]);
+
+  const filteredEdges = React.useMemo(() => {
+    if (viewMode === 'structure') {
+      return pipeline.edges.filter(e =>
+        !e.id.startsWith('edge:') || e.style?.stroke === '#1890ff'
+      );
+    }
+    if (viewMode === 'behavior') {
+      return pipeline.edges.filter(e =>
+        e.style?.stroke === '#722ed1' || e.style?.stroke === '#13c2c2'
+      );
+    }
+    // requirements/constraints 暂不显示边
+    return [];
+  }, [viewMode, pipeline.edges]);
 
   const parseErrorCount = pipeline.parseErrors.length;
   const validationErrorCount = pipeline.validationIssues.filter(
@@ -738,6 +778,34 @@ export const ModelEditor: React.FC = () => {
         </div>
       )}
 
+      {/* M5: 视图模式 Tabs */}
+      <div className="flex items-center gap-1 border-b border-gray-200 bg-gray-50 px-3 py-1">
+        {([
+          { key: 'structure', label: '结构视图', icon: '📦' },
+          { key: 'behavior', label: '行为视图', icon: '⚡' },
+          { key: 'requirements', label: '需求视图', icon: '📋' },
+          { key: 'constraints', label: '参数视图', icon: '📐' },
+        ] as const).map(tab => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setViewMode(tab.key)}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+              viewMode === tab.key
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+            data-testid={`view-tab-${tab.key}`}
+          >
+            {tab.icon} {tab.label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <span className="text-xs text-gray-400">
+          {filteredNodes.length} 节点 · {filteredEdges.length} 连接
+        </span>
+      </div>
+
       {/* 主体：左编辑器 / 右画布 */}
       <div className="flex flex-1 overflow-hidden">
         <div className="flex w-3/5 flex-col border-r border-gray-200">
@@ -762,14 +830,14 @@ export const ModelEditor: React.FC = () => {
         <div className="relative w-2/5 bg-gray-50">
           <DiagramCanvas
             ref={diagramRef}
-            nodes={pipeline.nodes}
-            edges={pipeline.edges}
+            nodes={filteredNodes}
+            edges={filteredEdges}
             onNodeRename={renameNode}
             onNodeDelete={deleteNode}
             onNodesDelete={(ids) => ids.forEach(deleteNode)}
             onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
             onNodePositionChange={setNodePosition}
-            nodeCount={pipeline.nodes.length}
+            nodeCount={filteredNodes.length}
           />
           <div
             data-testid="layout-engine-badge"

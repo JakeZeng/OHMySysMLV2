@@ -59,7 +59,7 @@ export function parse(source: string): ParseResult {
     });
     return {
       ok: false,
-      model: { packages: [], connections: [] },
+      model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [] },
       errors,
     };
   } finally {
