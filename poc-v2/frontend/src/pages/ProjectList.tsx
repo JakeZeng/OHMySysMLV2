@@ -9,7 +9,7 @@
 
 import * as React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, FolderKanban, Loader2 } from 'lucide-react';
+import { Plus, FolderKanban, Loader2, Search } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -92,6 +92,9 @@ export const ProjectList: React.FC = () => {
     React.useState<ProjectVisibility>('private');
   const [creating, setCreating] = React.useState(false);
 
+  // M4.5 增量：项目列表搜索过滤
+  const [search, setSearch] = React.useState('');
+
   React.useEffect(() => {
     void fetchProjects().catch((e: Error) => {
       // 静默：可能是后端未启动
@@ -125,12 +128,20 @@ export const ProjectList: React.FC = () => {
     }
   };
 
-  const groups = React.useMemo(
-    () => groupProjects(list, user?.id),
-    [list, user?.id],
-  );
+  const groups = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? list.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            (p.description ?? '').toLowerCase().includes(q),
+        )
+      : list;
+    return groupProjects(filtered, user?.id);
+  }, [list, user?.id, search]);
 
   const totalCount = list.length;
+  const filteredCount = groups.reduce((n, g) => n + g.items.length, 0);
 
   return (
     <div className="h-full overflow-auto bg-gray-50 p-6">
@@ -142,14 +153,33 @@ export const ProjectList: React.FC = () => {
               管理和查看你的所有 SysML v2 模型项目。
               {totalCount > 0 && (
                 <span className="ml-1 text-gray-400">
-                  · 共 {totalCount} 个
+                  · 共{' '}
+                  {search.trim()
+                    ? `${filteredCount}/${totalCount}`
+                    : totalCount}{' '}
+                  个
                 </span>
               )}
             </p>
           </div>
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" /> 新建项目
-          </Button>
+          <div className="flex items-center gap-2">
+            {totalCount > 0 && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="搜索项目…"
+                  data-testid="project-search"
+                  className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
+            )}
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" /> 新建项目
+            </Button>
+          </div>
         </div>
 
         {loading ? (
