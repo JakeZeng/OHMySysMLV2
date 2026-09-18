@@ -9,7 +9,7 @@
 
 import * as React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, FolderKanban, Loader2, Search, Star } from 'lucide-react';
+import { Plus, FolderKanban, Loader2, Search, Star, Upload } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -147,6 +147,55 @@ export const ProjectList: React.FC = () => {
     }
   };
 
+  // M4.5 增量：导入项目
+  const handleImport = React.useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const data = JSON.parse(reader.result as string);
+          if (!data.project?.name || !Array.isArray(data.models)) {
+            throw new Error('无效的项目导出文件');
+          }
+          const p = await createProject({
+            name: data.project.name,
+            description: data.project.description ?? '',
+            visibility: data.project.visibility ?? 'private',
+          });
+          // 导入每个模型
+          const { modelApi } = await import('../services/modelApi');
+          for (const m of data.models) {
+            await modelApi.create(p.id, {
+              name: m.name,
+              description: m.description ?? '',
+              content: m.content ?? '',
+              version: 1,
+            });
+          }
+          showToast({
+            title: `项目「${p.name}」已导入`,
+            description: `包含 ${data.models.length} 个模型`,
+            variant: 'success',
+          });
+          navigate(`/projects/${p.id}`);
+        } catch (e) {
+          showToast({
+            title: '导入失败',
+            description: (e as Error).message,
+            variant: 'error',
+          });
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, [createProject, navigate, showToast]);
+
   const groups = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     let filtered = q
@@ -217,6 +266,9 @@ export const ProjectList: React.FC = () => {
             )}
             <Button onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" /> 新建项目
+            </Button>
+            <Button variant="secondary" onClick={handleImport}>
+              <Upload className="h-4 w-4" /> 导入
             </Button>
           </div>
         </div>
