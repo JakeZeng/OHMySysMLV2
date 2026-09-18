@@ -307,6 +307,51 @@ func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*m
 	return &u, nil
 }
 
+// SearchModels 跨项目搜索模型名称 + 描述（M4.5 增量）。
+//
+// 只返回调用方有 read 权限的项目下的模型。
+// 用 userHeldPermission 在 handler 层做过滤太慢（N+1），
+// 所以这里直接用 SQL JOIN：owner 项目 + direct share 项目 + team share 项目。
+func (r *SQLiteRepository) SearchModels(
+	ctx context.Context, query, userID string, limit int,
+) ([]*model.Model, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	like := "%" + query + "%"
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT m.id, m.project_id, m.name, COALESCE(m.description, ''), m.content, m.version, m.created_at, m.updated_at
+         FROM models m
+         JOIN projects p ON p.id = m.project_id
+         WHERE (m.name LIKE ? OR m.description LIKE ?)
+           AND (
+             p.owner_id = ?
+             OR p.id IN (SELECT project_id FROM project_shares WHERE user_id = ?)
+             OR p.id IN (
+               SELECT tpa.project_id FROM team_project_access tpa
+               JOIN team_members tm ON tm.team_id = tpa.team_id
+               WHERE tm.user_id = ?
+             )
+           )
+         ORDER BY m.updated_at DESC
+         LIMIT ?`,
+		like, like, userID, userID, userID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.Model, 0)
+	for rows.Next() {
+		var m model.Model
+		if err := rows.Scan(&m.ID, &m.ProjectID, &m.Name, &m.Description, &m.Content, &m.Version, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	return out, rows.Err()
+}
+
 // ListModelVersions 返回模型的历史版本（M4.5 增量）。
 func (r *SQLiteRepository) ListModelVersions(
 	ctx context.Context, modelID string, limit int,

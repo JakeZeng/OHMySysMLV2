@@ -370,6 +370,34 @@ func (h *Handler) GetModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
+// SearchModels 跨项目搜索模型（M4.5 增量）。
+//
+// GET /api/v1/models/search?q=<keyword>&limit=<n>
+// 搜索当前用户有 read 权限的项目下的模型名称 + 描述。
+func (h *Handler) SearchModels(c *gin.Context) {
+	q := c.Query("q")
+	if q == "" {
+		badRequest(c, "缺少搜索关键词 q", nil)
+		return
+	}
+	limit := 20
+	if s := c.Query("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	userID := c.GetString("user_id")
+	models, err := h.repo.SearchModels(c, q, userID, limit)
+	if err != nil {
+		serverError(c, "搜索模型失败", err)
+		return
+	}
+	if models == nil {
+		models = []*model.Model{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": models})
+}
+
 // ListModelVersions 返回模型的历史版本列表（M4.5 增量）。
 func (h *Handler) ListModelVersions(c *gin.Context) {
 	modelID := c.Param("modelId")

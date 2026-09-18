@@ -127,6 +127,8 @@ func main() {
 		models := v1.Group("/models")
 		models.Use(middleware.AuthRequired())
 		{
+			// M4.5 增量：跨项目模型搜索（放在 /:id 之前避免路由冲突）
+			models.GET("/search", h.SearchModels)
 			models.GET("", h.ListModels)
 			models.POST("", h.CreateModel)
 			models.GET("/:id", h.GetModel)
