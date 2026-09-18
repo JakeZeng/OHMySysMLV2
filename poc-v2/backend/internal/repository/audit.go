@@ -41,10 +41,13 @@ func (r *SQLiteRepository) AppendAuditLog(
 func (r *SQLiteRepository) ListAuditLogs(
 	ctx context.Context,
 	filterActor, filterTargetType, filterTargetID, filterProjectID string,
-	limit int,
+	limit, offset int,
 ) ([]*model.AuditLog, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	q := `SELECT id, COALESCE(actor_id, ''), action, target_type, target_id, metadata, ip, user_agent, created_at
 	      FROM audit_logs WHERE 1=1`
@@ -67,8 +70,8 @@ func (r *SQLiteRepository) ListAuditLogs(
 		)`
 		args = append(args, filterProjectID, filterProjectID, filterProjectID, filterProjectID+"/%", filterProjectID)
 	}
-	q += ` ORDER BY created_at DESC LIMIT ?`
-	args = append(args, limit)
+	q += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {

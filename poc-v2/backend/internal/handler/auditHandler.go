@@ -60,8 +60,14 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 			limit = n
 		}
 	}
+	offset := 0
+	if s := c.Query("offset"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			offset = n
+		}
+	}
 
-	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit)
+	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit, offset)
 	if err != nil {
 		serverError(c, "查询审计日志失败", err)
 		return
@@ -75,7 +81,7 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	if logs == nil {
 		logs = []*model.AuditLog{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": logs})
+	c.JSON(http.StatusOK, gin.H{"data": logs, "offset": offset, "limit": limit})
 }
 
 // ExportAuditLogs 导出审计日志为 CSV / JSON。
@@ -106,7 +112,7 @@ func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 		}
 	}
 
-	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit)
+	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit, 0)
 	if err != nil {
 		serverError(c, "查询审计日志失败", err)
 		return
