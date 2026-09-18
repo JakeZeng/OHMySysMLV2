@@ -122,13 +122,13 @@ export const DashboardPage: React.FC = () => {
   );
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-5xl">
         <header className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
             欢迎回来，{user?.username ?? '用户'}
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             SysML v2 MBSE 工作台概览
           </p>
         </header>
@@ -139,10 +139,10 @@ export const DashboardPage: React.FC = () => {
             <CardContent className="flex items-center gap-3 py-4">
               <FolderKanban className="h-8 w-8 text-brand-500" />
               <div>
-                <div className="text-2xl font-bold text-gray-900">
+                <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.projects}
                 </div>
-                <div className="text-xs text-gray-500">个项目</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">个项目</div>
               </div>
             </CardContent>
           </Card>
@@ -150,10 +150,10 @@ export const DashboardPage: React.FC = () => {
             <CardContent className="flex items-center gap-3 py-4">
               <FileCode2 className="h-8 w-8 text-blue-500" />
               <div>
-                <div className="text-2xl font-bold text-gray-900">
+                <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.models}
                 </div>
-                <div className="text-xs text-gray-500">个模型</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">个模型</div>
               </div>
             </CardContent>
           </Card>
@@ -161,10 +161,10 @@ export const DashboardPage: React.FC = () => {
             <CardContent className="flex items-center gap-3 py-4">
               <Users className="h-8 w-8 text-green-500" />
               <div>
-                <div className="text-2xl font-bold text-gray-900">
+                <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.teams}
                 </div>
-                <div className="text-xs text-gray-500">个团队</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">个团队</div>
               </div>
             </CardContent>
           </Card>
@@ -172,10 +172,10 @@ export const DashboardPage: React.FC = () => {
             <CardContent className="flex items-center gap-3 py-4">
               <Activity className="h-8 w-8 text-purple-500" />
               <div>
-                <div className="text-sm font-bold text-gray-900">
+                <div className="text-sm font-bold text-gray-900 dark:text-gray-100">
                   {stats.lastActivity ?? '—'}
                 </div>
-                <div className="text-xs text-gray-500">最近活动</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">最近活动</div>
               </div>
             </CardContent>
           </Card>
@@ -228,10 +228,10 @@ export const DashboardPage: React.FC = () => {
             <button
               key={item.to}
               onClick={() => navigate(item.to)}
-              className="flex flex-col items-center gap-1 rounded-lg border border-gray-200 bg-white p-3 text-center transition hover:border-brand-300 hover:shadow-sm"
+              className="flex flex-col items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 text-center transition hover:border-brand-300 hover:shadow-sm"
             >
               <item.icon className={`h-5 w-5 ${item.color}`} />
-              <span className="text-[11px] text-gray-600">{item.label}</span>
+              <span className="text-[11px] text-gray-600 dark:text-gray-400">{item.label}</span>
             </button>
           ))}
         </div>
@@ -239,7 +239,7 @@ export const DashboardPage: React.FC = () => {
         {/* 最近打开的模型 */}
         {recentModels.length > 0 && (
           <section className="mb-6">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <FileCode2 className="h-4 w-4" /> 最近打开的模型
             </h2>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -258,7 +258,7 @@ export const DashboardPage: React.FC = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-400 dark:text-gray-500">
                         v{m.version} · 更新于 {relativeTime(m.updatedAt)}
                       </div>
                     </CardContent>
@@ -272,7 +272,7 @@ export const DashboardPage: React.FC = () => {
         {/* 最近项目 */}
         <section>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <Clock className="h-4 w-4" /> 最近更新的项目
             </h2>
             <Link
@@ -286,8 +286,8 @@ export const DashboardPage: React.FC = () => {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-10 text-center">
                 <FolderKanban className="mb-2 h-8 w-8 text-gray-400" />
-                <p className="text-sm text-gray-500">还没有项目</p>
-                <p className="mt-1 text-xs text-gray-400">
+                <p className="text-sm text-gray-500 dark:text-gray-400">还没有项目</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                   点击左侧"项目"页面创建你的第一个项目
                 </p>
               </CardContent>
@@ -308,7 +308,7 @@ export const DashboardPage: React.FC = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-400 dark:text-gray-500">
                         {p.modelCount !== undefined && (
                           <span>{p.modelCount} 个模型 · </span>
                         )}
