@@ -252,6 +252,16 @@ func main() {
 		{
 			reportsGroup.POST("/generate", h.GenerateReport)
 		}
+
+		// M7：插件系统（受保护）
+		pluginsGroup := v1.Group("/plugins")
+		pluginsGroup.Use(middleware.AuthRequired())
+		{
+			pluginsGroup.POST("", h.CreatePlugin)
+			pluginsGroup.GET("", h.ListPlugins)
+			pluginsGroup.DELETE("/:id", h.DeletePlugin)
+			pluginsGroup.POST("/:id/toggle", h.TogglePlugin)
+		}
 	}
 
 	srv := &http.Server{

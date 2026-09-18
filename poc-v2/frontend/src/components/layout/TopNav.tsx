@@ -5,7 +5,7 @@
 import * as React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard, Store, Webhook, Key, FileUp, FileText } from 'lucide-react';
+import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard, Store, Webhook, Key, FileUp, FileText, Puzzle } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
@@ -158,6 +158,19 @@ export const TopNav: React.FC = () => {
           }
         >
           <FileText className="h-4 w-4" /> 文档
+        </NavLink>
+        <NavLink
+          to="/plugins"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <Puzzle className="h-4 w-4" /> 插件
         </NavLink>
         <NavLink
           to="/audit"
