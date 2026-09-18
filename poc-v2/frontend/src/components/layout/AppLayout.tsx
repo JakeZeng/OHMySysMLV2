@@ -6,6 +6,7 @@ import * as React from 'react';
 import { Outlet } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { ErrorBoundary } from '../ErrorBoundary';
+import { BackToTop } from '../BackToTop';
 
 export const AppLayout: React.FC = () => {
   return (
@@ -16,6 +17,7 @@ export const AppLayout: React.FC = () => {
           <Outlet />
         </ErrorBoundary>
       </main>
+      <BackToTop />
     </div>
   );
 };
