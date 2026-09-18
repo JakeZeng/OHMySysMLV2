@@ -40,6 +40,7 @@ import { Breadcrumb } from '../components/Breadcrumb';
 import { modelApi, type ModelVersion } from '../services/modelApi';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { PresenceIndicator } from '../components/PresenceIndicator';
+import { ModelEditorTutorial } from '../components/tutorials/ModelEditorTutorial';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -945,6 +946,9 @@ export const ModelEditor: React.FC = () => {
           <CommentsPanel modelId={modelId} />
         </div>
       )}
+
+      {/* 引导式教程 */}
+      <ModelEditorTutorial />
     </div>
   );
 };
