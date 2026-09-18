@@ -32,6 +32,7 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const projects = useProjectStore((s) => s.list);
+  const recentIds = useProjectStore((s) => s.recentIds);
   const fetchProjects = useProjectStore((s) => s.fetch);
   const teams = useTeamStore((s) => s.list);
   const fetchTeams = useTeamStore((s) => s.fetch);
@@ -41,16 +42,29 @@ export const DashboardPage: React.FC = () => {
     void fetchTeams().catch(() => {});
   }, [fetchProjects, fetchTeams]);
 
-  const recentProjects = React.useMemo(
-    () =>
-      [...projects]
+  const recentProjects = React.useMemo(() => {
+    // 优先按最近访问顺序，其次按更新时间
+    if (recentIds.length > 0) {
+      const map = new Map(projects.map((p) => [p.id, p]));
+      const ordered = recentIds
+        .map((id) => map.get(id))
+        .filter(Boolean) as typeof projects;
+      // 追加不在 recentIds 中的项目（按更新时间排序）
+      const rest = projects
+        .filter((p) => !recentIds.includes(p.id))
         .sort(
           (a, b) =>
             new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-        )
-        .slice(0, 6),
-    [projects],
-  );
+        );
+      return [...ordered, ...rest].slice(0, 6);
+    }
+    return [...projects]
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+      .slice(0, 6);
+  }, [projects, recentIds]);
 
   const stats = React.useMemo(
     () => ({

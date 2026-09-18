@@ -327,11 +327,18 @@ export const ModelEditor: React.FC = () => {
     (i) => i.severity === 'warning'
   ).length;
 
-  // M4.5 增量：编辑器统计信息（字符数 + 行数）
+  // M4.5 增量：编辑器统计信息（字符数 + 行数 + 文件大小）
   const contentStats = React.useMemo(() => {
     const lines = content.split('\n').length;
     const chars = content.length;
-    return `${lines} 行 · ${chars} 字符`;
+    const bytes = new Blob([content]).size;
+    const sizeStr =
+      bytes < 1024
+        ? `${bytes} B`
+        : bytes < 1024 * 1024
+          ? `${(bytes / 1024).toFixed(1)} KB`
+          : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${lines} 行 · ${chars} 字符 · ${sizeStr}`;
   }, [content]);
 
   // M4.5 增量：记录上次保存时间

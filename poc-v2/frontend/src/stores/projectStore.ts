@@ -23,6 +23,9 @@ interface ProjectState {
   remove: (id: string) => Promise<void>;
   setCurrent: (p: Project | null) => void;
   clear: () => void;
+  /** M4.5 增量：最近访问的项目 ID 列表（持久化到 localStorage） */
+  recentIds: string[];
+  addRecent: (id: string) => void;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -30,6 +33,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   current: null,
   loading: false,
   error: null,
+  recentIds: (() => {
+    try {
+      return JSON.parse(localStorage.getItem('recent_projects') ?? '[]');
+    } catch {
+      return [];
+    }
+  })() as string[],
+
+  addRecent(id: string) {
+    const prev = get().recentIds.filter((x) => x !== id);
+    const next = [id, ...prev].slice(0, 10);
+    localStorage.setItem('recent_projects', JSON.stringify(next));
+    set({ recentIds: next });
+  },
 
   async fetch() {
     set({ loading: true, error: null });
@@ -47,6 +64,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const p = await projectApi.get(id);
       set({ current: p, loading: false });
+      // M4.5 增量：记录最近访问
+      get().addRecent(id);
       return p;
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
