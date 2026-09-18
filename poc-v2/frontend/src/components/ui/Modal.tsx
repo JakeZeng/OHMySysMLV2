@@ -38,7 +38,7 @@ export const Modal: React.FC<ModalProps> = ({
         <Dialog.Content
           className={cn(
             'dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-md ' +
-              '-translate-x-1/2 -translate-y-1/2 rounded-lg bg-white ' +
+              '-translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 ' +
               'p-6 shadow-xl focus:outline-none',
             className
           )}
@@ -48,7 +48,7 @@ export const Modal: React.FC<ModalProps> = ({
               aria-label="关闭"
               className={
                 'absolute right-3 top-3 rounded-md p-1.5 text-gray-400 ' +
-                'transition hover:bg-gray-100 hover:text-gray-600 ' +
+                'transition hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-300 ' +
                 'focus:outline-none focus:ring-2 focus:ring-brand-500'
               }
             >
@@ -56,12 +56,12 @@ export const Modal: React.FC<ModalProps> = ({
             </Dialog.Close>
           )}
           {title && (
-            <Dialog.Title className="text-base font-semibold text-gray-900">
+            <Dialog.Title className="text-base font-semibold text-gray-900 dark:text-gray-100">
               {title}
             </Dialog.Title>
           )}
           {description && (
-            <Dialog.Description className="mt-1 text-sm text-gray-500">
+            <Dialog.Description className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               {description}
             </Dialog.Description>
           )}
