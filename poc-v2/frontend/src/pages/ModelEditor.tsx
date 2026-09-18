@@ -262,6 +262,13 @@ export const ModelEditor: React.FC = () => {
     (i) => i.severity === 'warning'
   ).length;
 
+  // M4.5 增量：编辑器统计信息（字符数 + 行数）
+  const contentStats = React.useMemo(() => {
+    const lines = content.split('\n').length;
+    const chars = content.length;
+    return `${lines} 行 · ${chars} 字符`;
+  }, [content]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -342,6 +349,11 @@ export const ModelEditor: React.FC = () => {
         </Button>
 
         <div className="flex-1" />
+
+        <span className="text-xs text-gray-400" data-testid="content-stats">
+          {contentStats}
+        </span>
+        <div className="mx-1 h-5 w-px bg-gray-200" />
 
         {/* 状态徽章（可点击展开/折叠错误面板） */}
         {loading ? (
