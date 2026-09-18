@@ -32,9 +32,15 @@ func (r *SQLiteRepository) AppendAuditLog(
 //
 //   - filterActor: 可选，按 actor_id 过滤
 //   - filterTargetType + filterTargetID: 可选，按目标过滤
+//   - filterProjectID: 可选，把 target_type ∈ {project, model, share, link}
+//     的日志都收拢到一个 project 的视角：
+//       - target_type='project' AND target_id=?
+//       - target_type='model'   AND target_id IN (SELECT id FROM models WHERE project_id=?)
+//       - target_type='share'   AND (target_id=? OR target_id LIKE ? || '/%')
+//       - target_type='link'    AND target_id IN (SELECT id FROM share_links WHERE project_id=?)
 func (r *SQLiteRepository) ListAuditLogs(
 	ctx context.Context,
-	filterActor, filterTargetType, filterTargetID string,
+	filterActor, filterTargetType, filterTargetID, filterProjectID string,
 	limit int,
 ) ([]*model.AuditLog, error) {
 	if limit <= 0 || limit > 200 {
@@ -50,6 +56,16 @@ func (r *SQLiteRepository) ListAuditLogs(
 	if filterTargetType != "" && filterTargetID != "" {
 		q += ` AND target_type = ? AND target_id = ?`
 		args = append(args, filterTargetType, filterTargetID)
+	}
+	if filterProjectID != "" {
+		// 用 OR 收拢多种 target_type 的 project 关联日志
+		q += ` AND (
+			(target_type = 'project' AND target_id = ?)
+			OR (target_type = 'model' AND target_id IN (SELECT id FROM models WHERE project_id = ?))
+			OR (target_type = 'share' AND (target_id = ? OR target_id LIKE ?))
+			OR (target_type = 'link' AND target_id IN (SELECT id FROM share_links WHERE project_id = ?))
+		)`
+		args = append(args, filterProjectID, filterProjectID, filterProjectID, filterProjectID+"/%", filterProjectID)
 	}
 	q += ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)

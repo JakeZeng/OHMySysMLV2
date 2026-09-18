@@ -240,6 +240,60 @@ func TestW45_AuditAuthRegister(t *testing.T) {
 	}
 }
 
+// TestW45_AuditFilterByProject：按 projectId 过滤，跨 project/model/share/link。
+func TestW45_AuditFilterByProject(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, tokenB, _, idB := registerTwoUsers(t, r)
+
+	projectA := createProject(t, r, tokenA, "ProjA", "private")
+	projectB := createProject(t, r, tokenA, "ProjB", "private")
+
+	// A 在 projectA 上做一系列操作：创建 model、share 给 B、创建 link
+	doRequest(r, authedRequest("POST", "/api/v1/models", tokenA, gin.H{
+		"projectId": projectA, "name": "MA", "content": "x",
+	}))
+	doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectA+"/shares", tokenA, gin.H{
+		"userId": idB, "permission": "read",
+	}))
+	wLinkA := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectA+"/links", tokenA, gin.H{
+		"permission": "read",
+	}))
+	linkID_A := parseJSON(t, wLinkA.Body.Bytes())["data"].(map[string]any)["link"].(map[string]any)["id"].(string)
+
+	// B 在 projectB 上做不同操作（不应出现在 projectA 视图）
+	doRequest(r, authedRequest("POST", "/api/v1/models", tokenB, gin.H{
+		"projectId": projectB, "name": "MB", "content": "y",
+	}))
+	wLinkB := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectB+"/links", tokenB, gin.H{
+		"permission": "read",
+	}))
+	_ = parseJSON(t, wLinkB.Body.Bytes())
+	_ = linkID_A
+
+	// 查询 projectA 视图
+	w := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?projectId="+projectA, tokenA, nil))
+	logs := parseJSON(t, w.Body.Bytes())["data"].([]any)
+
+	// 应至少包含：projectA create、model create、share、link_create
+	// 不应包含：projectB create、projectB 上的 model、link
+	gotProjectBRef := false
+	for _, l := range logs {
+		m := l.(map[string]any)
+		tid := m["targetId"].(string)
+		if tid == projectB {
+			gotProjectBRef = true
+		}
+	}
+	if gotProjectBRef {
+		t.Errorf("projectId 过滤应排除 projectB 的日志，实际: %v", logs)
+	}
+
+	// 应至少 4 条（A 的 projectA 系列）
+	if len(logs) < 4 {
+		t.Errorf("projectA 视图应 ≥ 4 条日志，实际 %d", len(logs))
+	}
+}
+
 // TestW45_AuditLoginSuccessAndFail：登录成功 + 登录失败都产生审计。
 func TestW45_AuditLoginSuccessAndFail(t *testing.T) {
 	r, _ := setupTestRouter(t)

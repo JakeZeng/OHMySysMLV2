@@ -30,13 +30,15 @@ func NewAuditHandler(repo *repository.SQLiteRepository) *AuditHandler {
 // 查询参数（全部可选）：
 //
 //	actor=<userId>
-//	targetType=<project|model|share|link|team|member|project_access>
+//	targetType=<project|model|share|link|team|member|project_access|user>
 //	targetId=<id>
+//	projectId=<id>  把 project / model / share / link 关联日志收拢到该 project 视角
 //	limit=<n>  默认 50，上限 200
 func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	actor := c.Query("actor")
 	tType := c.Query("targetType")
 	tID := c.Query("targetId")
+	projectID := c.Query("projectId")
 
 	limit := 50
 	if s := c.Query("limit"); s != "" {
@@ -45,7 +47,7 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		}
 	}
 
-	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, limit)
+	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit)
 	if err != nil {
 		serverError(c, "查询审计日志失败", err)
 		return

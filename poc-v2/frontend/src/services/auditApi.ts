@@ -21,6 +21,8 @@ export const auditApi = {
     actor?: string;
     targetType?: string;
     targetId?: string;
+    /** M4.5 增量：把 project / model / share / link 关联日志收拢到该 project 视角 */
+    projectId?: string;
     limit?: number;
   } = {}): Promise<AuditLog[]> {
     const api = getApi();

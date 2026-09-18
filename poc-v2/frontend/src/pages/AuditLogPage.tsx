@@ -50,6 +50,7 @@ export const AuditLogPage: React.FC = () => {
   const [actor, setActor] = React.useState('');
   const [targetType, setTargetType] = React.useState('');
   const [targetId, setTargetId] = React.useState('');
+  const [projectId, setProjectId] = React.useState('');
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
 
@@ -61,11 +62,13 @@ export const AuditLogPage: React.FC = () => {
         actor?: string;
         targetType?: string;
         targetId?: string;
+        projectId?: string;
         limit: number;
       } = { limit: 100 };
       if (actor.trim()) params.actor = actor.trim();
       if (targetType) params.targetType = targetType;
       if (targetId.trim()) params.targetId = targetId.trim();
+      if (projectId.trim()) params.projectId = projectId.trim();
       const data = await auditApi.list(params);
       setLogs(data);
       setLastRefreshedAt(new Date());
@@ -74,7 +77,7 @@ export const AuditLogPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [actor, targetType, targetId]);
+  }, [actor, targetType, targetId, projectId]);
 
   React.useEffect(() => {
     void load();
@@ -89,11 +92,13 @@ export const AuditLogPage: React.FC = () => {
         actor?: string;
         targetType?: string;
         targetId?: string;
+        projectId?: string;
         limit: number;
       } = { limit: 100 };
       if (actor.trim()) params.actor = actor.trim();
       if (targetType) params.targetType = targetType;
       if (targetId.trim()) params.targetId = targetId.trim();
+      if (projectId.trim()) params.projectId = projectId.trim();
       auditApi
         .list(params)
         .then((data) => {
@@ -103,7 +108,7 @@ export const AuditLogPage: React.FC = () => {
         .catch(() => {/* silent */});
     }, 30_000);
     return () => clearInterval(id);
-  }, [autoRefresh, actor, targetType, targetId]);
+  }, [autoRefresh, actor, targetType, targetId, projectId]);
 
   return (
     <div className="h-full overflow-auto bg-gray-50 p-6">
@@ -140,7 +145,7 @@ export const AuditLogPage: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
               <div>
                 <label className="block text-xs font-medium text-gray-700">
                   Actor userId
@@ -176,6 +181,16 @@ export const AuditLogPage: React.FC = () => {
                   value={targetId}
                   onChange={(e) => setTargetId(e.target.value)}
                   placeholder="如：proj-uuid"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">
+                  Project 视角
+                </label>
+                <Input
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  placeholder="收拢 project/model/share/link"
                 />
               </div>
               <div className="flex items-end">
