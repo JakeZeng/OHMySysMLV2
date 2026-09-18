@@ -15,6 +15,14 @@ import {
   ArrowRight,
   Activity,
   Clock,
+  Crown,
+  Store,
+  FileText,
+  Puzzle,
+  CreditCard,
+  Key,
+  Webhook,
+  FileUp,
 } from 'lucide-react';
 import {
   Card,
@@ -202,6 +210,29 @@ export const DashboardPage: React.FC = () => {
           >
             <Activity className="mr-2 h-4 w-4" /> 元模型
           </Button>
+        </div>
+
+        {/* M5-M8 功能入口 */}
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
+          {[
+            { icon: Store, label: '模板市场', to: '/templates', color: 'text-blue-500' },
+            { icon: FileText, label: '文档生成', to: '/reports', color: 'text-green-500' },
+            { icon: Puzzle, label: '插件', to: '/plugins', color: 'text-purple-500' },
+            { icon: FileUp, label: '导入', to: '/import', color: 'text-orange-500' },
+            { icon: Key, label: 'API Keys', to: '/api-keys', color: 'text-gray-500' },
+            { icon: Webhook, label: 'Webhook', to: '/webhooks', color: 'text-teal-500' },
+            { icon: CreditCard, label: '订阅', to: '/subscription', color: 'text-pink-500' },
+            { icon: Crown, label: '元模型', to: '/metamodel', color: 'text-yellow-500' },
+          ].map((item) => (
+            <button
+              key={item.to}
+              onClick={() => navigate(item.to)}
+              className="flex flex-col items-center gap-1 rounded-lg border border-gray-200 bg-white p-3 text-center transition hover:border-brand-300 hover:shadow-sm"
+            >
+              <item.icon className={`h-5 w-5 ${item.color}`} />
+              <span className="text-[11px] text-gray-600">{item.label}</span>
+            </button>
+          ))}
         </div>
 
         {/* 最近打开的模型 */}
