@@ -22,16 +22,16 @@ export const ProfilePage: React.FC = () => {
   if (!user) return null;
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-2xl">
         <Link
           to="/"
-          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
         >
           <ArrowLeft className="h-3 w-3" /> 返回项目列表
         </Link>
 
-        <h1 className="mb-6 text-2xl font-semibold text-gray-900">个人资料</h1>
+        <h1 className="mb-6 text-2xl font-semibold text-gray-900 dark:text-gray-100">个人资料</h1>
 
         <Card>
           <CardHeader>
