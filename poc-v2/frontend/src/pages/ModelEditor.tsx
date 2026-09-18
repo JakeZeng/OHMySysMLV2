@@ -41,6 +41,7 @@ import { modelApi, type ModelVersion } from '../services/modelApi';
 import { CommentsPanel } from '../components/CommentsPanel';
 import { PresenceIndicator } from '../components/PresenceIndicator';
 import { ModelEditorTutorial } from '../components/tutorials/ModelEditorTutorial';
+import { SyntaxReference } from '../components/SyntaxReference';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -89,6 +90,9 @@ export const ModelEditor: React.FC = () => {
 
   // 评论面板
   const [showComments, setShowComments] = React.useState(false);
+
+  // 语法参考
+  const [showSyntaxRef, setShowSyntaxRef] = React.useState(false);
 
   // M4.5 增量：版本历史面板
   const [showVersionHistory, setShowVersionHistory] = React.useState(false);
@@ -718,6 +722,15 @@ export const ModelEditor: React.FC = () => {
         <Button
           variant="ghost"
           size="sm"
+          onClick={() => setShowSyntaxRef(true)}
+          title="语法参考"
+          data-testid="syntax-reference"
+        >
+          📖 语法
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setShowVersionHistory((v) => !v)}
           title="版本历史"
           data-testid="toggle-version-history"
@@ -949,6 +962,12 @@ export const ModelEditor: React.FC = () => {
 
       {/* 引导式教程 */}
       <ModelEditorTutorial />
+
+      {/* 语法参考面板 */}
+      <SyntaxReference
+        open={showSyntaxRef}
+        onClose={() => setShowSyntaxRef(false)}
+      />
     </div>
   );
 };
