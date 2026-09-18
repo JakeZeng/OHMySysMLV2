@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `f841610` / `0ea0556` / `54dd77f` / `d82c727` / `dc2564e` / `22d1427` / `6bf8980` / `c6d4d85` / `5b9cc8b` / `06b7aa4` / `64a61fa` / `3ddaa79` / `31ba6af` / `bd33ef3` / `7124d0c` / `509fce7` / `5663bd4` / `a636537` / `02b7023` / `0c0ecf5`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `f841610` / `0ea0556` / `54dd77f` / `d82c727` / `dc2564e` / `22d1427` / `6bf8980` / `c6d4d85` / `5b9cc8b` / `06b7aa4` / `64a61fa` / `3ddaa79` / `31ba6af` / `bd33ef3` / `7124d0c` / `509fce7` / `5663bd4` / `a636537` / `02b7023` / `0c0ecf5` / `ff24157` / `72d900e` / `abf739d` / `b5d02de` / `d0ea314` / `beef725` / `879545d` / `9c78784` / `20bdc60` / `a4c1654` / `382d543` / `0700b08` / `c353e85`）
 
 | 项 | 内容 |
 |----|------|
@@ -44,6 +44,17 @@
 | 相对时间 | relativeTime() 工具（刚刚/N 分钟前/N 小时前/昨天/N 天前/N 个月前），应用于项目卡片/模型列表 |
 | 未保存变更警告 | beforeunload 拦截：内容与上次加载/保存基准不同时弹浏览器离开确认 |
 | 编辑器内容统计 | 工具栏显示"N 行 · M 字符" |
+| 审计日志分页 | `?offset=N` 参数 + offset/limit 返回值 |
+| 快捷键帮助 | ModelEditor "快捷键" 按钮 + "?" 快捷键打开帮助 Modal |
+| 导出 .sysml | ModelEditor ".sysml" 下载按钮导出原始 SysML 文件 |
+| 批量删除模型 | ProjectDetail 模型列表复选框 + 批量删除按钮 |
+| 复制模型 | ProjectDetail 每个模型卡的复制按钮（"(副本)" 后缀） |
+| 项目内联重命名 | ProjectDetail 点击项目名进入编辑模式（hover 铅笔图标） |
+| 模型版本显示 | ModelEditor 工具栏显示 "vN" 版本号 |
+| 上次保存时间 | ModelEditor 工具栏显示 "上次保存 HH:MM:SS" |
+| 项目面包屑 | ModelEditor 返回按钮显示项目名而非"返回" |
+| 登录页提示 | 注册页下方显示"首个注册用户自动管理员" |
+| 模型版本历史 | model_versions 表 + API + ModelEditor 底部抽屉面板（版本列表 + 内容预览 + 恢复） |
 | 归档清理前端 UI | AuditLogPage "归档清理" 按钮 → Modal 选天数（min 7） → 打开即 dry-run 预览影响行数 → 确认后调用并刷新列表 |
 | audit_logs created_at 索引 | 加速归档清理 + 无过滤列表查询（避免全表扫描） |
 | admin 角色 | `users.is_admin` 列；首个注册用户自动 admin；`ArchiveAuditLogs` 仅 admin 可调用 |
