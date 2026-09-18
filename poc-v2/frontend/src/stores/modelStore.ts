@@ -55,6 +55,10 @@ interface ModelState {
   aiError: string | null;
   aiAbortController: AbortController | null;
 
+  /** M4.5 增量：最近打开的模型 ID 列表 */
+  recentModelIds: string[];
+  addRecentModel: (id: string) => void;
+
   setName: (n: string) => void;
   setDescription: (d: string) => void;
   setContent: (c: string) => void;
@@ -103,6 +107,21 @@ export const useModelStore = create<ModelState>((set, get) => ({
   aiIssues: [],
   aiError: null,
   aiAbortController: null,
+
+  /** M4.5 增量：最近打开的模型 */
+  recentModelIds: (() => {
+    try {
+      return JSON.parse(localStorage.getItem('recent_models') ?? '[]');
+    } catch {
+      return [];
+    }
+  })() as string[],
+  addRecentModel(id: string) {
+    const prev = get().recentModelIds.filter((x) => x !== id);
+    const next = [id, ...prev].slice(0, 10);
+    localStorage.setItem('recent_models', JSON.stringify(next));
+    set({ recentModelIds: next });
+  },
 
   setName(n) {
     set({ name: n, saved: false });
@@ -217,6 +236,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         projectId,
         loading: false,
       });
+      // M4.5 增量：记录最近打开
+      get().addRecentModel(rec.id);
       get().runPipeline(rec.content);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
