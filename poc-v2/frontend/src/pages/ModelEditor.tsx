@@ -167,6 +167,7 @@ export const ModelEditor: React.FC = () => {
 
   // M4.5 增量：键盘快捷键
   const [wordWrapEnabled, setWordWrapEnabled] = React.useState(true);
+  const [minimapEnabled, setMinimapEnabled] = React.useState(false);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -207,6 +208,17 @@ export const ModelEditor: React.FC = () => {
           sysmlEditorRef.current
             ?.getEditor()
             ?.updateOptions({ wordWrap: next ? 'on' : 'off' });
+          return next;
+        });
+      }
+      // Alt+M 切换 minimap
+      if (e.altKey && e.key === 'm') {
+        e.preventDefault();
+        setMinimapEnabled((v) => {
+          const next = !v;
+          sysmlEditorRef.current
+            ?.getEditor()
+            ?.updateOptions({ minimap: { enabled: next } });
           return next;
         });
       }
