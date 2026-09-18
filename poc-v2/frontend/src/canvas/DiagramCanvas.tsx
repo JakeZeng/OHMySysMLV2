@@ -175,6 +175,8 @@ export interface DiagramCanvasProps {
 export interface DiagramCanvasHandle {
   /** 聚焦并高亮指定节点 */
   focusNode(nodeId: string): void;
+  /** M4.5 增量：导出画布为 PNG blob */
+  exportPng(): Promise<Blob | null>;
 }
 
 // ─── 组件 ─────────────────────────────────────────────────────────────
@@ -208,6 +210,22 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         instance.fitView({ nodes: [node as Node], duration: 500, padding: 0.5 });
         setHighlightedNodeId(nodeId);
         scheduleClear();
+      }
+    },
+    async exportPng(): Promise<Blob | null> {
+      // 使用 html-to-image 或直接从 ReactFlow 的 DOM 截取
+      const rfElement = document.querySelector('.react-flow') as HTMLElement | null;
+      if (!rfElement) return null;
+      try {
+        const { toPng } = await import('html-to-image');
+        const dataUrl = await toPng(rfElement, {
+          backgroundColor: '#f9fafb',
+          quality: 0.95,
+        });
+        const res = await fetch(dataUrl);
+        return res.blob();
+      } catch {
+        return null;
       }
     },
   }), [scheduleClear]);
