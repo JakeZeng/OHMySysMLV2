@@ -422,6 +422,16 @@ export const ModelEditor: React.FC = () => {
   // M4.5 增量：光标位置（行:列）
   const [cursorPos, setCursorPos] = React.useState<{ line: number; column: number } | null>(null);
 
+  // M4.5 增量：模型重命名（双击名称进入编辑模式）
+  const [editingModelName, setEditingModelName] = React.useState(false);
+  const [editModelName, setEditModelName] = React.useState('');
+  const handleModelNameSubmit = React.useCallback(() => {
+    if (editModelName.trim() && editModelName.trim() !== name) {
+      setName(editModelName.trim());
+    }
+    setEditingModelName(false);
+  }, [editModelName, name, setName]);
+
   // 打开版本历史面板时加载数据
   React.useEffect(() => {
     if (showVersionHistory) void loadVersionHistory();
@@ -440,12 +450,37 @@ export const ModelEditor: React.FC = () => {
           {currentProject ? currentProject.name : '返回项目'}
         </Button>
         <div className="mx-2 h-5 w-px bg-gray-200" />
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="模型名"
-          className="h-8 rounded border border-gray-300 px-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-        />
+        {editingModelName ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleModelNameSubmit();
+            }}
+            className="flex items-center gap-1"
+          >
+            <input
+              value={editModelName}
+              onChange={(e) => setEditModelName(e.target.value)}
+              autoFocus
+              onBlur={handleModelNameSubmit}
+              className="h-8 w-40 rounded border border-gray-300 px-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              data-testid="edit-model-name"
+            />
+          </form>
+        ) : (
+          <button
+            type="button"
+            onDoubleClick={() => {
+              setEditModelName(name);
+              setEditingModelName(true);
+            }}
+            className="h-8 rounded border border-transparent px-2 text-sm font-medium text-gray-900 transition hover:border-gray-300 hover:bg-gray-50"
+            title="双击重命名"
+            data-testid="model-name-display"
+          >
+            {name || 'untitled'}
+          </button>
+        )}
         <input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
