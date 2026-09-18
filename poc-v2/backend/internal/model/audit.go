@@ -29,13 +29,14 @@ const (
 
 // AuditTargetType 目标类型。
 const (
-	AuditTargetProject      = "project"
-	AuditTargetModel        = "model"
-	AuditTargetShare        = "share"
-	AuditTargetLink         = "link"
-	AuditTargetTeam         = "team"
-	AuditTargetMember       = "member"
+	AuditTargetProject       = "project"
+	AuditTargetModel         = "model"
+	AuditTargetShare         = "share"
+	AuditTargetLink          = "link"
+	AuditTargetTeam          = "team"
+	AuditTargetMember        = "member"
 	AuditTargetProjectAccess = "project_access"
+	AuditTargetUser          = "user"
 )
 
 // AuditLog 一条审计日志。

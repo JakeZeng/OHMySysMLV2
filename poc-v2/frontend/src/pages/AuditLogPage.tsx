@@ -39,6 +39,7 @@ const TARGETS = [
   'team',
   'member',
   'project_access',
+  'user',
 ];
 
 export const AuditLogPage: React.FC = () => {

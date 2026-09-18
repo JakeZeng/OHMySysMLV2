@@ -94,6 +94,9 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
+	writeAudit(c, h.repo, "register", "user", user.ID,
+		`{"username":"`+escapeJSON(user.Username)+`","email":"`+escapeJSON(user.Email)+`"}`)
+
 	token, expires, err := newToken(user.ID)
 	if err != nil {
 		serverError(c, "生成 token 失败", err)
@@ -121,9 +124,15 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	if !checkPassword(req.Password, user.PasswordHash) {
+		// 登录失败也记录审计（IP + 尝试的用户名），用于异常检测
+		writeAudit(c, h.repo, "login_fail", "user", "",
+			`{"username":"`+escapeJSON(req.Username)+`"}`)
 		badRequest(c, "用户名或密码错误", nil)
 		return
 	}
+
+	writeAudit(c, h.repo, "login", "user", user.ID,
+		`{"username":"`+escapeJSON(user.Username)+`"}`)
 
 	token, expires, err := newToken(user.ID)
 	if err != nil {
@@ -187,6 +196,8 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		serverError(c, "创建项目失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetProject, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","visibility":"`+p.Visibility+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
@@ -229,6 +240,8 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 		serverError(c, "更新项目失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetProject, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","visibility":"`+p.Visibility+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
@@ -243,6 +256,7 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 		serverError(c, "删除项目失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetProject, id, "")
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 
@@ -303,6 +317,8 @@ func (h *Handler) CreateModel(c *gin.Context) {
 		serverError(c, "创建模型失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetModel, m.ID,
+		`{"name":"`+escapeJSON(m.Name)+`","project":"`+m.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
@@ -351,6 +367,8 @@ func (h *Handler) UpdateModel(c *gin.Context) {
 		serverError(c, "更新模型失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetModel, m.ID,
+		`{"name":"`+escapeJSON(m.Name)+`","project":"`+m.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
@@ -365,6 +383,8 @@ func (h *Handler) DeleteModel(c *gin.Context) {
 		serverError(c, "删除模型失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetModel, id,
+		`{"name":"`+escapeJSON(m.Name)+`","project":"`+m.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 
@@ -417,6 +437,8 @@ func (h *Handler) CreateModelInProject(c *gin.Context) {
 		serverError(c, "创建模型失败", err)
 		return
 	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetModel, m.ID,
+		`{"name":"`+escapeJSON(m.Name)+`","project":"`+m.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
