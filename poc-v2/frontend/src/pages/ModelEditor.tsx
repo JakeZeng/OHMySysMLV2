@@ -344,6 +344,9 @@ export const ModelEditor: React.FC = () => {
     }
   }, [saved, showVersionHistory, loadVersionHistory]);
 
+  // M4.5 增量：光标位置（行:列）
+  const [cursorPos, setCursorPos] = React.useState<{ line: number; column: number } | null>(null);
+
   // 打开版本历史面板时加载数据
   React.useEffect(() => {
     if (showVersionHistory) void loadVersionHistory();
@@ -473,6 +476,11 @@ export const ModelEditor: React.FC = () => {
         <span className="text-xs text-gray-400" data-testid="content-stats">
           {contentStats}
         </span>
+        {cursorPos && (
+          <span className="text-xs text-gray-400" data-testid="cursor-pos">
+            行 {cursorPos.line} : 列 {cursorPos.column}
+          </span>
+        )}
         {lastSavedAt && (
           <span className="text-xs text-gray-400" data-testid="last-saved">
             上次保存 {lastSavedAt.toLocaleTimeString()}
@@ -534,6 +542,7 @@ export const ModelEditor: React.FC = () => {
               value={content}
               onChange={(v) => setContent(v)}
               onPipelineResult={handlePipeline}
+              onCursorChange={setCursorPos}
             />
           </div>
           {errorPanelExpanded && (

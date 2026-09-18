@@ -36,6 +36,8 @@ interface SysMLEditorProps {
   showMinimap?: boolean;
   /** M4.5 增量：是否自动换行（默认 true） */
   wordWrap?: 'on' | 'off';
+  /** M4.5 增量：光标位置变化回调 */
+  onCursorChange?: (position: { line: number; column: number }) => void;
 }
 
 /** 暴露给父组件的操作接口 */
@@ -148,6 +150,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   readOnly = false,
   showMinimap = false,
   wordWrap = 'on',
+  onCursorChange,
 }, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -303,10 +306,20 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
         }
       );
 
+      // M4.5 增量：光标位置变化回调
+      if (onCursorChange) {
+        editor.onDidChangeCursorPosition((e) => {
+          onCursorChange({
+            line: e.position.lineNumber,
+            column: e.position.column,
+          });
+        });
+      }
+
       // 首次挂载立即运行
       setTimeout(() => runPipeline(value), 100);
     },
-    [value, runPipeline]
+    [value, runPipeline, onCursorChange]
   );
 
   const handleChange: OnChange = useCallback(
