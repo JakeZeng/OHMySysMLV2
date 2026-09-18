@@ -43,10 +43,10 @@ export const useToast = (): ToastContextValue => {
 };
 
 const variantClasses: Record<ToastVariant, string> = {
-  default: 'border-gray-200 bg-white text-gray-900',
-  success: 'border-green-200 bg-green-50 text-green-900',
-  error:   'border-red-200 bg-red-50 text-red-900',
-  warning: 'border-amber-200 bg-amber-50 text-amber-900',
+  default: 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100',
+  success: 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 text-green-900 dark:text-green-200',
+  error:   'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-900 dark:text-red-200',
+  warning: 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-200',
 };
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
