@@ -397,6 +397,9 @@ export const ModelEditor: React.FC = () => {
     return `${lines} 行 · ${chars} 字符 · ${sizeStr}`;
   }, [content]);
 
+  // M4.5 增量：模型描述显示（工具栏下方）
+  const [showDescription, setShowDescription] = React.useState(false);
+
   // M4.5 增量：复制内容到剪贴板
   const [copied, setCopied] = React.useState(false);
   const handleCopyContent = React.useCallback(async () => {
@@ -649,6 +652,24 @@ export const ModelEditor: React.FC = () => {
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           ⚠ {error}
+        </div>
+      )}
+
+      {/* 模型描述（可展开） */}
+      {description && (
+        <div className="border-b border-gray-100 bg-gray-50 px-4 py-1.5">
+          <button
+            type="button"
+            onClick={() => setShowDescription((v) => !v)}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          >
+            {showDescription ? '▾' : '▸'} 模型描述
+          </button>
+          {showDescription && (
+            <p className="mt-1 text-xs text-gray-600" data-testid="model-description">
+              {description}
+            </p>
+          )}
         </div>
       )}
 
