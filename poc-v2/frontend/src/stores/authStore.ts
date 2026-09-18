@@ -92,14 +92,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ status: 'unauthenticated' });
       return;
     }
-    // 后端暂无 /auth/me 端点，从 localStorage 恢复用户信息
-    const stored = getStoredUser() as User | null;
-    if (stored) {
-      set({ user: stored, token, status: 'authenticated', error: null });
-    } else {
-      // 有 token 但无用户信息（异常状态），清除登录态
-      set({ user: null, token: null, status: 'unauthenticated' });
-      setStoredToken(null);
+    // M4.5 增量：有 token 时优先调 /auth/me 拉最新（含 isAdmin）；
+    // 失败则回退到 localStorage 缓存（兼容后端宕机场景）。
+    try {
+      const fresh = await authApi.me();
+      setStoredUser(fresh as unknown as Record<string, unknown>);
+      set({ user: fresh, token, status: 'authenticated', error: null });
+    } catch {
+      const stored = getStoredUser() as User | null;
+      if (stored) {
+        set({ user: stored, token, status: 'authenticated', error: null });
+      } else {
+        set({ user: null, token: null, status: 'unauthenticated' });
+        setStoredToken(null);
+      }
     }
   },
 

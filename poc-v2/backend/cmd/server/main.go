@@ -91,6 +91,8 @@ func main() {
 		// Auth（公开路由：CSRF 已在 SkipPaths 中跳过）
 		v1.POST("/auth/register", h.Register)
 		v1.POST("/auth/login", h.Login)
+		// M4.5 增量：/auth/me — 当前登录用户信息（含 isAdmin）
+		v1.GET("/auth/me", middleware.AuthRequired(), h.Me)
 
 		// 受保护路由（需要 JWT 认证）
 		projects := v1.Group("/projects")

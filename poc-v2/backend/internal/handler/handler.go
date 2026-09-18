@@ -157,6 +157,27 @@ func (h *Handler) Login(c *gin.Context) {
 	}})
 }
 
+// Me 返回当前登录用户的基本信息（含 isAdmin）— M4.5 增量。
+//
+// 用于前端 bootstrap 时确认 admin 权限（决定是否渲染"归档清理"等管理按钮）。
+func (h *Handler) Me(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{
+			"code": "E_UNAUTHORIZED", "message": "未登录",
+		}})
+		return
+	}
+	user, err := h.repo.GetUserByID(c, userID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{
+			"code": "E_UNAUTHORIZED", "message": "用户不存在",
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": user})
+}
+
 // ─── Projects ────────────────────────────────────────────────────────
 
 type createProjectReq struct {

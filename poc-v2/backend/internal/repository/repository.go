@@ -279,6 +279,20 @@ func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*m
 	return &u, nil
 }
 
+// GetUserByID 按 id 查用户；用于 /auth/me（M4.5 增量）。
+func (r *SQLiteRepository) GetUserByID(ctx context.Context, id string) (*model.User, error) {
+	const q = `SELECT id, username, email, password_hash, is_admin, created_at
+              FROM users WHERE id = ?`
+	row := r.db.QueryRowContext(ctx, q, id)
+	var u model.User
+	var isAdmin int
+	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &isAdmin, &u.CreatedAt); err != nil {
+		return nil, err
+	}
+	u.IsAdmin = isAdmin == 1
+	return &u, nil
+}
+
 // SearchUsers 按 username 或 email 前缀模糊匹配，最多返回 limit 条（默认 10，上限 50）。
 // 用于"邀请成员 / 分享给用户"等场景下解析 username → userId。
 // 排除 password_hash 字段，对外仅暴露 username/email/id。

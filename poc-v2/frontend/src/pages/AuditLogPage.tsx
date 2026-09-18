@@ -19,6 +19,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { useToast } from '../components/ui/Toast';
+import { useAuthStore } from '../stores/authStore';
 import { auditApi, type AuditLog } from '../services/auditApi';
 
 const ACTIONS = [
@@ -59,6 +60,8 @@ export const AuditLogPage: React.FC = () => {
 
   // M4.5 增量：归档清理
   const { showToast } = useToast();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.isAdmin === true;
   const [showArchive, setShowArchive] = React.useState(false);
   const [archiveDays, setArchiveDays] = React.useState(30);
   const [archiving, setArchiving] = React.useState(false);
@@ -244,15 +247,17 @@ export const AuditLogPage: React.FC = () => {
               )}
               导出 CSV
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowArchive(true)}
-              data-testid="audit-open-archive"
-            >
-              <Archive className="h-3.5 w-3.5" />
-              归档清理
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowArchive(true)}
+                data-testid="audit-open-archive"
+              >
+                <Archive className="h-3.5 w-3.5" />
+                归档清理
+              </Button>
+            )}
           </div>
         </header>
 

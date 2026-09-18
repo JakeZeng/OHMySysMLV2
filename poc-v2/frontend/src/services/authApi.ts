@@ -8,6 +8,8 @@ export interface User {
   id: string;
   email: string;
   username: string;
+  /** M4.5 增量：首个注册用户自动 admin（用于审计归档等管理 UI） */
+  isAdmin: boolean;
   createdAt: string;
 }
 

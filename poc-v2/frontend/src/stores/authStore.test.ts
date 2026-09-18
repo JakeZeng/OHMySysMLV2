@@ -44,7 +44,7 @@ describe('authStore', () => {
   });
 
   it('clearAuth 清空一切', () => {
-    useAuthStore.setState({ token: 'x', user: { id: '1', email: 'a@b.c', username: 'a', createdAt: '' } });
+    useAuthStore.setState({ token: 'x', user: { id: '1', email: 'a@b.c', username: 'a', isAdmin: false, createdAt: '' } });
     useAuthStore.getState().clearAuth();
     const s = useAuthStore.getState();
     expect(s.token).toBeNull();

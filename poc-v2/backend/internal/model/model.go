@@ -10,8 +10,8 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"` // 不导出
 	// M4.5 增量：首个注册用户自动获得 admin 权限；用于审计归档等管理操作。
-	// 暂不暴露给 JSON（避免普通接口返回内部标志）；管理员相关接口按需读取。
-	IsAdmin   bool      `json:"-"`
+	// /auth/me 端点暴露给前端用于 UI 权限控制；登录/注册响应也带上。
+	IsAdmin   bool      `json:"isAdmin"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
