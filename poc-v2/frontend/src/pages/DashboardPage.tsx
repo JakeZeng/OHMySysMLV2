@@ -101,6 +101,13 @@ export const DashboardPage: React.FC = () => {
       projects: projects.length,
       models: projects.reduce((n, p) => n + (p.modelCount ?? 0), 0),
       teams: teams.length,
+      lastActivity: projects.length > 0
+        ? relativeTime(
+            projects.reduce((latest, p) =>
+              new Date(p.updatedAt) > new Date(latest.updatedAt) ? p : latest,
+            ).updatedAt,
+          )
+        : null,
     }),
     [projects, teams],
   );
@@ -118,7 +125,7 @@ export const DashboardPage: React.FC = () => {
         </header>
 
         {/* 统计卡片 */}
-        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="flex items-center gap-3 py-4">
               <FolderKanban className="h-8 w-8 text-brand-500" />
@@ -149,6 +156,17 @@ export const DashboardPage: React.FC = () => {
                   {stats.teams}
                 </div>
                 <div className="text-xs text-gray-500">个团队</div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4">
+              <Activity className="h-8 w-8 text-purple-500" />
+              <div>
+                <div className="text-sm font-bold text-gray-900">
+                  {stats.lastActivity ?? '—'}
+                </div>
+                <div className="text-xs text-gray-500">最近活动</div>
               </div>
             </CardContent>
           </Card>
