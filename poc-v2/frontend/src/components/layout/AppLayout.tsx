@@ -1,5 +1,5 @@
 /**
- * 主布局：顶导航 + 内容区 Outlet。
+ * 主布局：顶导航 + 内容区 Outlet + 新手引导。
  */
 
 import * as React from 'react';
@@ -7,6 +7,7 @@ import { Outlet } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { BackToTop } from '../BackToTop';
+import { OnboardingWizard } from '../OnboardingWizard';
 
 export const AppLayout: React.FC = () => {
   return (
@@ -18,6 +19,7 @@ export const AppLayout: React.FC = () => {
         </ErrorBoundary>
       </main>
       <BackToTop />
+      <OnboardingWizard />
     </div>
   );
 };
