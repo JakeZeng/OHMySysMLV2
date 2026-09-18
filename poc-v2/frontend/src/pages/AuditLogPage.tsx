@@ -1,9 +1,10 @@
 /**
- * 审计日志页（M4.5）：浏览所有 mutating 操作的记录。
+ * 审计日志页（M4.5 + M4.5 增量）：浏览所有 mutating 操作的记录。
  *
  *   - 顶部筛选：按 actor / target 类型
  *   - 时间倒序，最新在前
  *   - metadata 字段尝试解析为 JSON 展示，否则原样
+ *   - 可选 30s 自动轮询（实时性）
  */
 
 import * as React from 'react';
@@ -49,6 +50,8 @@ export const AuditLogPage: React.FC = () => {
   const [actor, setActor] = React.useState('');
   const [targetType, setTargetType] = React.useState('');
   const [targetId, setTargetId] = React.useState('');
+  const [autoRefresh, setAutoRefresh] = React.useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -65,6 +68,7 @@ export const AuditLogPage: React.FC = () => {
       if (targetId.trim()) params.targetId = targetId.trim();
       const data = await auditApi.list(params);
       setLogs(data);
+      setLastRefreshedAt(new Date());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -76,6 +80,31 @@ export const AuditLogPage: React.FC = () => {
     void load();
   }, [load]);
 
+  // M4.5 增量：30s 自动轮询（可关闭）。用 silent 标志避免抖动 loading 指示器。
+  React.useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(() => {
+      // 重用 load 但不触发 loading 切换
+      const params: {
+        actor?: string;
+        targetType?: string;
+        targetId?: string;
+        limit: number;
+      } = { limit: 100 };
+      if (actor.trim()) params.actor = actor.trim();
+      if (targetType) params.targetType = targetType;
+      if (targetId.trim()) params.targetId = targetId.trim();
+      auditApi
+        .list(params)
+        .then((data) => {
+          setLogs(data);
+          setLastRefreshedAt(new Date());
+        })
+        .catch(() => {/* silent */});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [autoRefresh, actor, targetType, targetId]);
+
   return (
     <div className="h-full overflow-auto bg-gray-50 p-6">
       <div className="mx-auto max-w-5xl">
@@ -86,7 +115,21 @@ export const AuditLogPage: React.FC = () => {
           </h1>
           <p className="mt-1 text-sm text-gray-500">
             系统所有 mutating 操作的 append-only 记录。{logs.length > 0 && `共 ${logs.length} 条`}
+            {lastRefreshedAt && (
+              <span className="ml-2 text-xs text-gray-400">
+                （{lastRefreshedAt.toLocaleTimeString()} 刷新）
+              </span>
+            )}
           </p>
+          <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            自动刷新（30s）
+          </label>
         </header>
 
         {/* 筛选器 */}
