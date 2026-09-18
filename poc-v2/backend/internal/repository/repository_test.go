@@ -434,3 +434,19 @@ func TestRepo_AuditIndexesPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestRepo_Counts：M4.5 增量 — Counts 返回各表行数。
+func TestRepo_Counts(t *testing.T) {
+	repo, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer repo.Close()
+	c := repo.Counts(context.Background())
+	want := []string{"users", "projects", "models", "teams", "project_shares", "share_links", "audit_logs"}
+	for _, k := range want {
+		if _, ok := c[k]; !ok {
+			t.Errorf("Counts 缺 %s 字段", k)
+		}
+	}
+}

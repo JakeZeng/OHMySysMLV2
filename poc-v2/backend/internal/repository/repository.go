@@ -28,6 +28,30 @@ type SQLiteRepository struct {
 // M4 引入：跨切面授权（userHeldPermission 等）需要直接 UNION，保留这一入口。
 func (r *SQLiteRepository) DB() *sql.DB { return r.db }
 
+// Counts 返回各表的行数。M4.5 用于 /health 端点的轻量监控。
+//
+// 单次查询一张表，best-effort；任一失败记 0 不阻塞整体响应。
+func (r *SQLiteRepository) Counts(ctx context.Context) map[string]int64 {
+	out := map[string]int64{
+		"users":      0,
+		"projects":   0,
+		"models":     0,
+		"teams":      0,
+		"shares":     0,
+		"share_links": 0,
+		"audit_logs": 0,
+	}
+	for _, table := range []string{
+		"users", "projects", "models", "teams",
+		"project_shares", "share_links", "audit_logs",
+	} {
+		var n int64
+		_ = r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n)
+		out[table] = n
+	}
+	return out
+}
+
 // New 打开或创建 SQLite 数据库，初始化全部 schema。
 func New(path string) (*SQLiteRepository, error) {
 	db, err := sql.Open("sqlite", path)

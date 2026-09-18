@@ -663,3 +663,23 @@ func TestHealth(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
+
+// TestHealthEnriched：M4.5 增量 — /health 包含 db 状态 + counts。
+func TestHealthEnriched(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	w := doRequest(r, authedRequest("GET", "/api/v1/../health", "", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("health: %d", w.Code)
+	}
+	body := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	if body["db"] != "ok" {
+		t.Errorf("db 应 ok，实际 %v", body["db"])
+	}
+	counts, ok := body["counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("counts 缺失")
+	}
+	if _, ok := counts["audit_logs"]; !ok {
+		t.Errorf("counts 应含 audit_logs")
+	}
+}

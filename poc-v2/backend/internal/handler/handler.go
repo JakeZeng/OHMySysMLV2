@@ -29,9 +29,19 @@ func New(repo *repository.SQLiteRepository) *Handler {
 // ─── Health ──────────────────────────────────────────────────────────
 
 func (h *Handler) Health(c *gin.Context) {
+	// M4.5 增量：附带 DB ping + 资源计数，便于运维探活与监控。
+	// 失败时仍返回 200（健康探针不应被资源统计拖死），但 status 字段标 degraded。
+	dbStatus := "ok"
+	if err := h.repo.DB().PingContext(c); err != nil {
+		dbStatus = "degraded: " + err.Error()
+	}
+	counts := h.repo.Counts(c)
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
+		"status":   "ok",
+		"db":       dbStatus,
+		"time":     time.Now().UTC().Format(time.RFC3339),
+		"counts":   counts,
 	}})
 }
 
