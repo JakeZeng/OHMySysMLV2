@@ -1,15 +1,54 @@
 /**
- * 顶部导航：Logo + 用户菜单（Radix DropdownMenu）。
+ * 顶部导航：Logo + 主导航 + 工具下拉菜单 + 用户菜单。
+ *
+ * M8 优化：将工具类入口合并为下拉菜单，保持导航栏简洁。
  */
 
 import * as React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard, Store, Webhook, Key, FileUp, FileText, Puzzle, CreditCard } from 'lucide-react';
+import {
+  LogOut,
+  User as UserIcon,
+  Settings,
+  FolderKanban,
+  Users,
+  BookOpen,
+  ScrollText,
+  LayoutDashboard,
+  Store,
+  Webhook,
+  Key,
+  FileUp,
+  FileText,
+  Puzzle,
+  CreditCard,
+  MoreHorizontal,
+} from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
 import { GlobalSearch } from '../GlobalSearch';
+
+// 主导航项（始终显示）
+const PRIMARY_NAV = [
+  { to: '/', icon: LayoutDashboard, label: '概览', end: true },
+  { to: '/projects', icon: FolderKanban, label: '项目' },
+  { to: '/teams', icon: Users, label: '团队' },
+  { to: '/metamodel', icon: BookOpen, label: '元模型' },
+];
+
+// 工具菜单项（下拉菜单）
+const TOOL_ITEMS = [
+  { to: '/templates', icon: Store, label: '模板市场', group: 'marketplace' },
+  { to: '/reports', icon: FileText, label: '文档生成', group: 'tools' },
+  { to: '/plugins', icon: Puzzle, label: '插件系统', group: 'tools' },
+  { to: '/import', icon: FileUp, label: '导入模型', group: 'tools' },
+  { to: '/webhooks', icon: Webhook, label: 'Webhook', group: 'integration' },
+  { to: '/api-keys', icon: Key, label: 'API Keys', group: 'integration' },
+  { to: '/subscription', icon: CreditCard, label: '订阅管理', group: 'account' },
+  { to: '/audit', icon: ScrollText, label: '审计日志', group: 'admin' },
+];
 
 export const TopNav: React.FC = () => {
   const user = useAuthStore((s) => s.user);
@@ -40,166 +79,118 @@ export const TopNav: React.FC = () => {
         <span>SysML v2 MBSE</span>
       </Link>
 
+      {/* 主导航 */}
       <nav className="ml-6 flex items-center gap-1">
-        <NavLink
-          to="/"
-          end
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <LayoutDashboard className="h-4 w-4" /> 概览
-        </NavLink>
-        <NavLink
-          to="/projects"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <FolderKanban className="h-4 w-4" /> 项目
-        </NavLink>
-        <NavLink
-          to="/teams"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <Users className="h-4 w-4" /> 团队
-        </NavLink>
-        <NavLink
-          to="/metamodel"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <BookOpen className="h-4 w-4" /> 元模型
-        </NavLink>
-        <NavLink
-          to="/templates"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <Store className="h-4 w-4" /> 模板市场
-        </NavLink>
-        <NavLink
-          to="/webhooks"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <Webhook className="h-4 w-4" /> Webhook
-        </NavLink>
-        <NavLink
-          to="/api-keys"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <Key className="h-4 w-4" /> API Keys
-        </NavLink>
-        <NavLink
-          to="/import"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <FileUp className="h-4 w-4" /> 导入
-        </NavLink>
-        <NavLink
-          to="/reports"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <FileText className="h-4 w-4" /> 文档
-        </NavLink>
-        <NavLink
-          to="/plugins"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <Puzzle className="h-4 w-4" /> 插件
-        </NavLink>
-        <NavLink
-          to="/subscription"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <CreditCard className="h-4 w-4" /> 订阅
-        </NavLink>
-        <NavLink
-          to="/audit"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
-              isActive
-                ? 'bg-brand-50 text-brand-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-            )
-          }
-        >
-          <ScrollText className="h-4 w-4" /> 审计
-        </NavLink>
+        {PRIMARY_NAV.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+                isActive
+                  ? 'bg-brand-50 text-brand-700'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+              )
+            }
+          >
+            <item.icon className="h-4 w-4" /> {item.label}
+          </NavLink>
+        ))}
+
+        {/* 工具下拉菜单 */}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              className={cn(
+                'flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium',
+                'text-gray-600 transition hover:bg-gray-100 hover:text-gray-900',
+                'focus:outline-none focus:ring-2 focus:ring-brand-500'
+              )}
+            >
+              <MoreHorizontal className="h-4 w-4" /> 更多
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="start"
+              sideOffset={6}
+              className={cn(
+                'z-50 min-w-[220px] rounded-md border border-gray-200 bg-white p-1',
+                'shadow-lg focus:outline-none'
+              )}
+            >
+              {/* 市场 */}
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+                市场
+              </DropdownMenu.Label>
+              {TOOL_ITEMS.filter((i) => i.group === 'marketplace').map((item) => (
+                <DropdownMenu.Item
+                  key={item.to}
+                  onSelect={() => navigate(item.to)}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </DropdownMenu.Item>
+              ))}
+
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+
+              {/* 工具 */}
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+                工具
+              </DropdownMenu.Label>
+              {TOOL_ITEMS.filter((i) => i.group === 'tools').map((item) => (
+                <DropdownMenu.Item
+                  key={item.to}
+                  onSelect={() => navigate(item.to)}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </DropdownMenu.Item>
+              ))}
+
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+
+              {/* 集成 */}
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+                集成
+              </DropdownMenu.Label>
+              {TOOL_ITEMS.filter((i) => i.group === 'integration').map((item) => (
+                <DropdownMenu.Item
+                  key={item.to}
+                  onSelect={() => navigate(item.to)}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </DropdownMenu.Item>
+              ))}
+
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+
+              {/* 账户 + 管理 */}
+              {TOOL_ITEMS.filter((i) => i.group === 'account' || i.group === 'admin').map(
+                (item) => (
+                  <DropdownMenu.Item
+                    key={item.to}
+                    onSelect={() => navigate(item.to)}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </DropdownMenu.Item>
+                )
+              )}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </nav>
 
+      {/* 右侧：搜索 + 主题 + 用户信息 + 用户菜单 */}
       <div className="flex items-center gap-3">
         <GlobalSearch />
         <button
@@ -259,19 +250,13 @@ export const TopNav: React.FC = () => {
               <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
               <DropdownMenu.Item
                 onSelect={() => navigate('/profile')}
-                className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
-                  'text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100'
-                )}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
               >
                 <UserIcon className="h-4 w-4" />
                 个人资料
               </DropdownMenu.Item>
               <DropdownMenu.Item
-                className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
-                  'text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100'
-                )}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
               >
                 <Settings className="h-4 w-4" />
                 设置
@@ -281,10 +266,7 @@ export const TopNav: React.FC = () => {
                   e.preventDefault();
                   void handleLogout();
                 }}
-                className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
-                  'text-sm text-red-600 outline-none data-[highlighted]:bg-red-50'
-                )}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-red-600 outline-none data-[highlighted]:bg-red-50"
               >
                 <LogOut className="h-4 w-4" />
                 退出登录
