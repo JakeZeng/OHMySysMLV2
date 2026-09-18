@@ -73,6 +73,7 @@ export const ProjectDetail: React.FC = () => {
   const [showShare, setShowShare] = React.useState(false);
   const [showSettings, setShowSettings] = React.useState(false);
   const [name, setName] = React.useState('');
+  const [modelDescription, setModelDescription] = React.useState('');
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
   const [modelSearch, setModelSearch] = React.useState('');
@@ -260,12 +261,14 @@ export const ProjectDetail: React.FC = () => {
     try {
       const rec: ModelRecord = await modelApi.create(projectId, {
         name: name.trim(),
+        description: modelDescription.trim(),
         content,
         version: 1,
       });
       showToast({ title: '模型已创建', variant: 'success' });
       setShowCreate(false);
       setName('');
+      setModelDescription('');
       setContent(DEFAULT_MODEL_BODY);
       navigate(`/models/${rec.id}?projectId=${projectId}`);
     } catch (e) {
@@ -743,6 +746,20 @@ export const ProjectDetail: React.FC = () => {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="例如：vehicle-model"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="m-desc"
+              className="block text-xs font-medium text-gray-700"
+            >
+              描述（可选）
+            </label>
+            <Input
+              id="m-desc"
+              value={modelDescription}
+              onChange={(e) => setModelDescription(e.target.value)}
+              placeholder="一句话描述这个模型…"
             />
           </div>
           <div>
