@@ -64,7 +64,12 @@ export type ValidationIssueCode =
   // M5: 需求视图
   | 'E205_TRACE_TARGET_NOT_FOUND'
   // M5: 参数视图
-  | 'E206_CONSTRAINT_PARAM_TYPE_NOT_FOUND';
+  | 'E206_CONSTRAINT_PARAM_TYPE_NOT_FOUND'
+  // 扩展验证
+  | 'W207_ABSTRACT_INSTANTIATION'
+  | 'W208_UNUSED_IMPORT'
+  | 'W209_EMPTY_BODY'
+  | 'W210_DUPLICATE_TRANSITION';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -182,6 +187,93 @@ export function validate(model: SysMLModel): ValidationResult {
   // 递归遍历 package 内的 M5 元素
   for (const pkg of model.packages) {
     collectM5Elements(pkg, scope, issues);
+  }
+
+  // 第六遍：扩展验证（警告级别）
+  // W207: 抽象类型不应被直接实例化
+  for (const [qname, usage] of scope.partUsages) {
+    const parentSym = scope.partDefs.get(usage.typeRef) ??
+      scope.portDefs.get(usage.typeRef) ??
+      resolveType(scope, usage.typeRef, parentPackageOf(usage, scope));
+    if (parentSym && parentSym.isAbstract) {
+      issues.push({
+        code: 'W207_ABSTRACT_INSTANTIATION',
+        message: `part \`${usage.name}\` 实例化了抽象类型 \`${usage.typeRef}\``,
+        location: usage.location,
+        severity: 'warning',
+        relatedLocations: [parentSym.location],
+      });
+    }
+  }
+
+  // W208: 未使用的 import
+  for (const [pkgQName, imports] of scope.imports) {
+    for (const imp of imports) {
+      const ns = imp.namespace.endsWith('::*')
+        ? imp.namespace.slice(0, -3)
+        : imp.namespace;
+      // 检查是否有任何引用使用了这个命名空间
+      let used = false;
+      for (const [, sym] of scope.partDefs) {
+        if (sym.qualifiedName.startsWith(ns + '::')) {
+          used = true;
+          break;
+        }
+      }
+      if (!used) {
+        issues.push({
+          code: 'W208_UNUSED_IMPORT',
+          message: `import \`${imp.namespace}\` 未被使用`,
+          location: imp.location,
+          severity: 'warning',
+        });
+      }
+    }
+  }
+
+  // W209: 空 body 警告
+  for (const [qname, sym] of scope.partDefs) {
+    if (sym.ports.size === 0) {
+      // 检查是否有子部件（通过 partUsage 引用）
+      let hasChildren = false;
+      for (const [, usage] of scope.partUsages) {
+        if (usage.typeRef === sym.name || usage.typeRef === qname) {
+          hasChildren = true;
+          break;
+        }
+      }
+      if (!hasChildren && sym.ports.size === 0) {
+        issues.push({
+          code: 'W209_EMPTY_BODY',
+          message: `part def \`${sym.name}\` 没有端口或子部件`,
+          location: sym.location,
+          severity: 'warning',
+        });
+      }
+    }
+  }
+
+  // W210: 重复转换
+  for (const sm of model.stateMachines) {
+    const transitions = new Map<string, number>();
+    for (const t of sm.transitions) {
+      const key = `${t.source}->${t.target}`;
+      transitions.set(key, (transitions.get(key) ?? 0) + 1);
+    }
+    for (const [key, count] of transitions) {
+      if (count > 1) {
+        const [src, tgt] = key.split('->');
+        const t = sm.transitions.find(t => t.source === src && t.target === tgt);
+        if (t) {
+          issues.push({
+            code: 'W210_DUPLICATE_TRANSITION',
+            message: `状态机 \`${sm.name}\` 中从 \`${src}\` 到 \`${tgt}\` 有 ${count} 条重复转换`,
+            location: t.location,
+            severity: 'warning',
+          });
+        }
+      }
+    }
   }
 
   return {
