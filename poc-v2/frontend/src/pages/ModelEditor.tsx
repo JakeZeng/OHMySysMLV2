@@ -222,6 +222,13 @@ export const ModelEditor: React.FC = () => {
           return next;
         });
       }
+      // Shift+Alt+F 格式化文档（Monaco 内置）
+      if (e.shiftKey && e.altKey && e.key === 'f') {
+        e.preventDefault();
+        sysmlEditorRef.current
+          ?.getEditor()
+          ?.trigger('keyboard', 'editor.action.formatDocument', {});
+      }
     };
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true });
