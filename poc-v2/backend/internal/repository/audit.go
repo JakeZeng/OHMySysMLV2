@@ -88,3 +88,42 @@ func (r *SQLiteRepository) ListAuditLogs(
 	}
 	return out, rows.Err()
 }
+
+// CountAuditLogsOlderThan 返回 created_at 早于 (now - days) 的行数。
+// 用于归档清理前的预演（dry-run 计数）。
+func (r *SQLiteRepository) CountAuditLogsOlderThan(
+	ctx context.Context, days int,
+) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	var n int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE created_at < ?`,
+		cutoff,
+	).Scan(&n)
+	return n, err
+}
+
+// DeleteAuditLogsOlderThan 删除 created_at 早于 (now - days) 的所有行。
+// 返回实际删除的行数。
+//
+// 注意：审计日志是 append-only；这是一个**归档清理**入口，应在外部
+// dump（CSV 导出）后再调用。M4.5 阶段不引入冷热分区或单独的 archive 表。
+func (r *SQLiteRepository) DeleteAuditLogsOlderThan(
+	ctx context.Context, days int,
+) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM audit_logs WHERE created_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

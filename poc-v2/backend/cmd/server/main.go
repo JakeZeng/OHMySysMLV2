@@ -199,6 +199,8 @@ func main() {
 			auditGroup.GET("", auditH.ListAuditLogs)
 			// M4.5 增量：CSV 导出（M5+ 候选落地）
 			auditGroup.GET("/export", auditH.ExportAuditLogs)
+			// M4.5 增量：归档清理（M5+ 候选落地）— 删除 ≥ N 天前的日志
+			auditGroup.DELETE("/archive", auditH.ArchiveAuditLogs)
 		}
 	}
 

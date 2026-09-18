@@ -146,6 +146,66 @@ func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 	w.Flush()
 }
 
+// ArchiveAuditLogs 归档清理 — 删除 N 天前的审计日志（M4.5 增量）。
+//
+// 设计取舍：
+//
+//	真正的冷热分区 / 分表归档需要 schema 演进（partitioned tables / 单独的
+//	audit_archive 表），M5+ 基础设施阶段再做。M4.5 落地"软归档"：
+//
+//	 - DELETE from audit_logs where created_at < now() - N days
+//	 - 安全护栏：days ≥ 7（避免误删近期审计）
+//	 - dryRun=true 只返回待删数量，不动数据
+//	 - 推荐工作流：先 dryRun → 然后用 export 备份 → 再正式清理
+//
+// 生产环境应：1) dump 旧行到对象存储；2) 再调 DELETE。
+func (h *AuditHandler) ArchiveAuditLogs(c *gin.Context) {
+	daysStr := c.Query("olderThanDays")
+	if daysStr == "" {
+		badRequest(c, "缺少 olderThanDays 参数（单位：天）", nil)
+		return
+	}
+	days, err := strconv.Atoi(daysStr)
+	if err != nil || days < 7 {
+		badRequest(c, "olderThanDays 必须是 ≥ 7 的整数（安全护栏）", nil)
+		return
+	}
+
+	dryRun := c.Query("dryRun") == "true"
+
+	if dryRun {
+		n, err := h.repo.CountAuditLogsOlderThan(c, days)
+		if err != nil {
+			serverError(c, "统计失败", err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"olderThanDays": days,
+				"wouldDelete":   n,
+				"dryRun":        true,
+			},
+		})
+		return
+	}
+
+	n, err := h.repo.DeleteAuditLogsOlderThan(c, days)
+	if err != nil {
+		serverError(c, "清理失败", err)
+		return
+	}
+	// 记录归档事件本身（指向 system，避免 RBAC 看到时困惑）
+	writeAudit(c, h.repo, "audit_archive", "audit", "self",
+		fmt.Sprintf(`{"older_than_days":%d,"deleted":%d}`, days, n))
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"olderThanDays": days,
+			"deleted":       n,
+			"dryRun":        false,
+		},
+	})
+}
+
 // filterLogsForCaller 按 RBAC 规则裁剪日志列表。
 //
 // 设计取舍：SQL 只负责"按 index 取到候选行"，可见性判定放 Go 端避免

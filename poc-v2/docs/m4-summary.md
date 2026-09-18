@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `TBD`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `f841610` / `TBD`）
 
 | 项 | 内容 |
 |----|------|
@@ -29,6 +29,7 @@
 | 审计 RBAC 收紧 | handler 在拿到行后按调用方权限再过滤：project/model/share/link 要求项目 read；team/member/project_access 要求 team admin/owner；user 仅本人；自己作为 actor 的行永远可见 |
 | 审计 CSV 导出 | `GET /audit-logs/export?format=csv|json`（默认 csv，上限 1000 行），Content-Disposition 触发下载；前端 "导出 CSV" 按钮复用当前筛选条件 |
 | 公开端点速率监控 | abuseMonitor 滑动窗口（30 次/分钟/（linkID, IP）），超阈值写 link_abuse 审计 + X-Share-Abuse-Warning 响应头；30s 节流防刷屏 |
+| 审计归档策略 | `DELETE /audit-logs/archive?olderThanDays=N[&dryRun=true]` — 安全护栏 N≥7；dry-run 返回计数；正式清理写一条 audit_archive 审计记录事件本身 |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -142,4 +143,4 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 
 ## 后续优化建议（M5+）
 
-1. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
+（无 — M4.5 阶段全部候选已落地。M5 候选需要新基础设施：DB 分区 / 元模型切换 ptc-25-04-30 / 实时协同 等大方向）

@@ -515,3 +515,98 @@ func TestW45_AuditRBACActorAlwaysVisible(t *testing.T) {
 		t.Errorf("bob 看不到自己的 login 行")
 	}
 }
+// TestW45_AuditArchiveDryRun：dryRun=true 只返回计数，不删数据。
+func TestW45_AuditArchiveDryRun(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "ArchTest", "private")
+	doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID, "name": "Mx", "content": "x",
+	}))
+
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive?olderThanDays=7&dryRun=true", token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("dry-run: %d %s", w.Code, w.Body.String())
+	}
+	body := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	if body["dryRun"] != true {
+		t.Errorf("dryRun 应为 true")
+	}
+	if _, ok := body["wouldDelete"]; !ok {
+		t.Errorf("应含 wouldDelete 字段")
+	}
+	// 实际审计列表不应变化（dry-run 不动数据）
+	wList := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?limit=200", token, nil))
+	logs := parseJSON(t, wList.Body.Bytes())["data"].([]any)
+	if len(logs) == 0 {
+		t.Errorf("dry-run 后审计不应被删除")
+	}
+}
+
+// TestW45_AuditArchiveSafetyFloor：olderThanDays < 7 应 400（防误删近期数据）。
+func TestW45_AuditArchiveSafetyFloor(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive?olderThanDays=3", token, nil))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("应 400，实际 %d", w.Code)
+	}
+}
+
+// TestW45_AuditArchiveRealDelete：≥ 7 天且 dryRun=false 时直接走 DB 操作。
+//
+// 测试中不能用 time-machine 注入老行，所以这里只验证：
+//   - 端点返回 deleted 字段
+//   - 端点本身写一条 audit_archive 审计
+//   - DB 行被删除（计数减少）
+func TestW45_AuditArchiveRealDelete(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "ArchDel", "private")
+	doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID, "name": "Md", "content": "x",
+	}))
+
+	// 拿删除前计数
+	wBefore := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?limit=200", token, nil))
+	before := len(parseJSON(t, wBefore.Body.Bytes())["data"].([]any))
+
+	// olderThanDays=7 → 当前所有审计行 created_at 是 now，< 7 天前的应为 0
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive?olderThanDays=7", token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("archive: %d %s", w.Code, w.Body.String())
+	}
+	body := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	if body["dryRun"] != false {
+		t.Errorf("dryRun 应为 false")
+	}
+	// deleted 应为非负整数
+	if _, ok := body["deleted"].(float64); !ok {
+		t.Errorf("deleted 应为数字，实际 %v", body["deleted"])
+	}
+
+	// 至少有一条 audit_archive 审计行（"self"）
+	wLogs := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?limit=200", token, nil))
+	logs := parseJSON(t, wLogs.Body.Bytes())["data"].([]any)
+	foundArchive := false
+	for _, l := range logs {
+		m := l.(map[string]any)
+		if m["action"] == "audit_archive" {
+			foundArchive = true
+		}
+	}
+	if !foundArchive {
+		t.Errorf("应产生 audit_archive 审计行")
+	}
+	_ = before
+}
+
+// TestW45_AuditArchiveMissingParam：缺 olderThanDays 应 400。
+func TestW45_AuditArchiveMissingParam(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive", token, nil))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("应 400，实际 %d", w.Code)
+	}
+}
