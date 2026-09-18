@@ -165,7 +165,8 @@ export const ModelEditor: React.FC = () => {
     }
   };
 
-  // M4.5 增量：Ctrl+S 全局快捷键保存 + "?" 快捷键帮助 + Ctrl+F 聚焦搜索
+  // M4.5 增量：键盘快捷键
+  const [wordWrapEnabled, setWordWrapEnabled] = React.useState(true);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -197,6 +198,17 @@ export const ModelEditor: React.FC = () => {
         sysmlEditorRef.current
           ?.getEditor()
           ?.trigger('keyboard', 'editor.action.gotoLine', {});
+      }
+      // Alt+Z 切换自动换行
+      if (e.altKey && e.key === 'z') {
+        e.preventDefault();
+        setWordWrapEnabled((v) => {
+          const next = !v;
+          sysmlEditorRef.current
+            ?.getEditor()
+            ?.updateOptions({ wordWrap: next ? 'on' : 'off' });
+          return next;
+        });
       }
     };
     window.addEventListener('keydown', onKey, { capture: true });
