@@ -18,6 +18,16 @@ export interface ModelListItem {
   updatedAt: string;
 }
 
+/** M4.5 增量：模型历史版本 */
+export interface ModelVersion {
+  id: string;
+  modelId: string;
+  content: string;
+  version: number;
+  savedBy?: string;
+  createdAt: string;
+}
+
 export const modelApi = {
   /** 列出某项目下的所有模型 */
   async listByProject(projectId: string): Promise<ModelListItem[]> {
@@ -68,6 +78,15 @@ export const modelApi = {
   async remove(projectId: string, modelId: string): Promise<void> {
     const api = getApi();
     await api.delete(`/projects/${projectId}/models/${modelId}`);
+  },
+
+  /** M4.5 增量：获取模型版本历史 */
+  async listVersions(projectId: string, modelId: string): Promise<ModelVersion[]> {
+    const api = getApi();
+    const { data } = await api.get<ModelVersion[]>(
+      `/projects/${projectId}/models/${modelId}/versions`,
+    );
+    return data ?? [];
   },
 
   /** 旧版接口（直挂 /api/v1/models，无 project）— 仅供 POC v2 端到端使用 */

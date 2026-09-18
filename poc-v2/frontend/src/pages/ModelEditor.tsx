@@ -20,6 +20,7 @@ import {
   Upload,
   Sparkles,
   Layers,
+  History,
 } from 'lucide-react';
 import SysMLEditor, { type PipelineResult, type SysMLEditorHandle } from '../editor/SysMLEditor';
 import { DiagramCanvas, type DiagramCanvasHandle } from '../canvas/DiagramCanvas';
@@ -33,6 +34,8 @@ import { importFromJson } from '@transform/importJson';
 import { AIGenerateModal } from '../components/modals/AIGenerateModal';
 import { TemplateChooserModal } from '../components/modals/TemplateChooserModal';
 import { KeyboardShortcutsModal } from '../components/modals/KeyboardShortcutsModal';
+import { VersionHistoryPanel } from '../components/VersionHistoryPanel';
+import { modelApi, type ModelVersion } from '../services/modelApi';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -73,6 +76,24 @@ export const ModelEditor: React.FC = () => {
   const [showTemplateChooser, setShowTemplateChooser] = React.useState(false);
   // M4.5 增量：快捷键帮助
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = React.useState(false);
+
+  // M4.5 增量：版本历史面板
+  const [showVersionHistory, setShowVersionHistory] = React.useState(false);
+  const [versionHistory, setVersionHistory] = React.useState<ModelVersion[]>([]);
+  const [versionHistoryLoading, setVersionHistoryLoading] = React.useState(false);
+
+  const loadVersionHistory = React.useCallback(async () => {
+    if (!projectIdFromQuery || !modelId) return;
+    setVersionHistoryLoading(true);
+    try {
+      const data = await modelApi.listVersions(projectIdFromQuery, modelId);
+      setVersionHistory(data);
+    } catch {
+      // silent
+    } finally {
+      setVersionHistoryLoading(false);
+    }
+  }, [projectIdFromQuery, modelId]);
 
   // 暴露 dev hook：浏览器演示脚本可直接调用 store action
   React.useEffect(() => {
@@ -314,8 +335,17 @@ export const ModelEditor: React.FC = () => {
   // M4.5 增量：记录上次保存时间
   const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
   React.useEffect(() => {
-    if (saved) setLastSavedAt(new Date());
-  }, [saved]);
+    if (saved) {
+      setLastSavedAt(new Date());
+      // 保存成功后刷新版本历史
+      if (showVersionHistory) void loadVersionHistory();
+    }
+  }, [saved, showVersionHistory, loadVersionHistory]);
+
+  // 打开版本历史面板时加载数据
+  React.useEffect(() => {
+    if (showVersionHistory) void loadVersionHistory();
+  }, [showVersionHistory, loadVersionHistory]);
 
   return (
     <div className="flex h-full flex-col">
@@ -418,6 +448,15 @@ export const ModelEditor: React.FC = () => {
           title="键盘快捷键 (?)"
         >
           ⌨ 快捷键
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowVersionHistory((v) => !v)}
+          title="版本历史"
+          data-testid="toggle-version-history"
+        >
+          <History className="h-3.5 w-3.5" /> 版本
         </Button>
 
         <div className="flex-1" />
@@ -538,6 +577,28 @@ export const ModelEditor: React.FC = () => {
         open={showKeyboardShortcuts}
         onClose={() => setShowKeyboardShortcuts(false)}
       />
+
+      {/* M4.5: 版本历史面板（底部抽屉） */}
+      {showVersionHistory && (
+        <div
+          className="h-64 border-t border-gray-200 bg-white"
+          data-testid="version-history-panel"
+        >
+          <VersionHistoryPanel
+            versions={versionHistory}
+            loading={versionHistoryLoading}
+            currentVersion={version}
+            onRestore={(v) => {
+              setContent(v.content);
+              showToast({
+                title: `已恢复 v${v.version} 内容`,
+                description: '请手动保存以应用更改。',
+                variant: 'success',
+              });
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };
