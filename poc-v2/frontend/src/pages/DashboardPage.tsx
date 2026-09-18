@@ -26,6 +26,8 @@ import { Button } from '../components/ui/Button';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { useTeamStore } from '../stores/teamStore';
+import { useModelStore } from '../stores/modelStore';
+import { modelApi, type ModelListItem } from '../services/modelApi';
 import { relativeTime } from '../lib/relativeTime';
 
 export const DashboardPage: React.FC = () => {
@@ -36,11 +38,39 @@ export const DashboardPage: React.FC = () => {
   const fetchProjects = useProjectStore((s) => s.fetch);
   const teams = useTeamStore((s) => s.list);
   const fetchTeams = useTeamStore((s) => s.fetch);
+  const recentModelIds = useModelStore((s) => s.recentModelIds);
+  const [recentModels, setRecentModels] = React.useState<
+    (ModelListItem & { projectId: string })[]
+  >([]);
 
   React.useEffect(() => {
     void fetchProjects().catch(() => {});
     void fetchTeams().catch(() => {});
   }, [fetchProjects, fetchTeams]);
+
+  // 加载最近打开的模型信息
+  React.useEffect(() => {
+    if (recentModelIds.length === 0) return;
+    void (async () => {
+      const results: (ModelListItem & { projectId: string })[] = [];
+      for (const mid of recentModelIds.slice(0, 5)) {
+        // 从项目列表中找到包含该模型的项目
+        for (const p of projects) {
+          try {
+            const models = await modelApi.listByProject(p.id);
+            const found = models.find((m) => m.id === mid);
+            if (found) {
+              results.push({ ...found, projectId: p.id });
+              break;
+            }
+          } catch {
+            // silent
+          }
+        }
+      }
+      setRecentModels(results);
+    })();
+  }, [recentModelIds, projects]);
 
   const recentProjects = React.useMemo(() => {
     // 优先按最近访问顺序，其次按更新时间
@@ -156,6 +186,39 @@ export const DashboardPage: React.FC = () => {
           </Button>
         </div>
 
+        {/* 最近打开的模型 */}
+        {recentModels.length > 0 && (
+          <section className="mb-6">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <FileCode2 className="h-4 w-4" /> 最近打开的模型
+            </h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {recentModels.map((m) => (
+                <Link
+                  key={m.id}
+                  to={`/models/${m.id}?projectId=${m.projectId}`}
+                  className="block"
+                  data-testid="dashboard-recent-model"
+                >
+                  <Card className="h-full transition hover:border-brand-300 hover:shadow">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 truncate text-sm">
+                        <FileCode2 className="h-4 w-4 text-gray-400" />
+                        {m.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-xs text-gray-400">
+                        v{m.version} · 更新于 {relativeTime(m.updatedAt)}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* 最近项目 */}
         <section>
           <div className="mb-3 flex items-center justify-between">
@@ -163,7 +226,7 @@ export const DashboardPage: React.FC = () => {
               <Clock className="h-4 w-4" /> 最近更新的项目
             </h2>
             <Link
-              to="/"
+              to="/projects"
               className="flex items-center gap-1 text-xs text-brand-600 hover:underline"
             >
               查看全部 <ArrowRight className="h-3 w-3" />
