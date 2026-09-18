@@ -90,6 +90,15 @@ export const modelApi = {
     return data ?? [];
   },
 
+  /** 跨项目搜索模型 */
+  async search(q: string, limit: number = 20): Promise<ModelListItem[]> {
+    const api = getApi();
+    const { data } = await api.get<{ data: ModelListItem[] }>(
+      `/models/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    );
+    return data?.data ?? [];
+  },
+
   /** 旧版接口（直挂 /api/v1/models，无 project）— 仅供 POC v2 端到端使用 */
   legacy: legacyModelApi,
 };

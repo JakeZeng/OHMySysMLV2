@@ -60,9 +60,7 @@ export const GlobalSearch: React.FC = () => {
       try {
         const [projects, models] = await Promise.all([
           projectApi.list().catch(() => []),
-          // modelApi.search 不存在，用 listByProject 太慢
-          // 简化：只搜项目名（model search 需要后端支持）
-          Promise.resolve<ModelListItem[]>([]),
+          modelApi.search(q, 10).catch(() => []),
         ]);
         const projectResults: SearchResult[] = (projects as Project[])
           .filter(
@@ -77,7 +75,16 @@ export const GlobalSearch: React.FC = () => {
             description: p.description,
             updatedAt: p.updatedAt,
           }));
-        setResults(projectResults.slice(0, 10));
+        const modelResults: SearchResult[] = (models as ModelListItem[])
+          .map((m) => ({
+            type: 'model' as const,
+            id: m.id,
+            name: m.name,
+            description: m.description,
+            projectId: m.projectId,
+            updatedAt: m.updatedAt,
+          }));
+        setResults([...modelResults, ...projectResults].slice(0, 10));
       } catch {
         setResults([]);
       } finally {
