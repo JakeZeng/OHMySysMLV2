@@ -352,3 +352,110 @@ func TestW45_SharedProjectExposesModelContent(t *testing.T) {
 		t.Errorf("content 应被公开暴露供 Monaco 只读渲染，实际 %q", got)
 	}
 }
+
+// TestW45_LinkRotation：rotate 后旧 token 立即失效，新 token 工作。
+func TestW45_LinkRotation(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "Rotate", "private")
+
+	// 创建初始 link
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	body := parseJSON(t, wCreate.Body.Bytes())["data"].(map[string]any)
+	oldLinkID := body["link"].(map[string]any)["id"].(string)
+	oldToken, _ := body["token"].(string)
+
+	// rotate
+	wRot := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links/"+oldLinkID+"/rotate", token, nil))
+	if wRot.Code != http.StatusOK {
+		t.Fatalf("rotate: %d %s", wRot.Code, wRot.Body.String())
+	}
+	rotBody := parseJSON(t, wRot.Body.Bytes())["data"].(map[string]any)
+	newLinkID := rotBody["link"].(map[string]any)["id"].(string)
+	newToken, _ := rotBody["token"].(string)
+
+	if newLinkID == oldLinkID {
+		t.Errorf("rotate 后应是新 link id，与旧相同")
+	}
+	if newToken == oldToken {
+		t.Errorf("rotate 后应是新 token，与旧相同")
+	}
+
+	// 旧 token 失效
+	wOld := doRequest(r, authedRequest("GET", "/api/v1/shared/"+oldToken, "", nil))
+	if wOld.Code != http.StatusNotFound {
+		t.Errorf("rotate 后旧 token 应 404，实际 %d", wOld.Code)
+	}
+
+	// 新 token 工作
+	wNew := doRequest(r, authedRequest("GET", "/api/v1/shared/"+newToken, "", nil))
+	if wNew.Code != http.StatusOK {
+		t.Errorf("rotate 后新 token 应 200，实际 %d", wNew.Code)
+	}
+
+	// 旧 link 的 revoked_at 应被设置
+	wList := doRequest(r, authedRequest("GET", "/api/v1/projects/"+projectID+"/links", token, nil))
+	links := parseJSON(t, wList.Body.Bytes())["data"].([]any)
+	if len(links) != 2 {
+		t.Errorf("rotate 后应 2 条链接（1 revoked + 1 新），实际 %d", len(links))
+	}
+}
+
+// TestW45_LinkRotationRejectedAfterRevoke：已撤销的 link 不能 rotate。
+func TestW45_LinkRotationRejectedAfterRevoke(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "RotateRevoke", "private")
+
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	linkID := parseJSON(t, wCreate.Body.Bytes())["data"].(map[string]any)["link"].(map[string]any)["id"].(string)
+
+	// 先撤销
+	doRequest(r, authedRequest("DELETE", "/api/v1/projects/"+projectID+"/links/"+linkID, token, nil))
+
+	// 再 rotate 应 400
+	wRot := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links/"+linkID+"/rotate", token, nil))
+	if wRot.Code != http.StatusBadRequest {
+		t.Errorf("已撤销 link rotate 应 400，实际 %d", wRot.Code)
+	}
+}
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "ReadOnlyView", "private")
+
+	// owner 在项目下创建一个模型，含 SysML 内容
+	wCreate := doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID,
+		"name":      "VehiclePkg",
+		"content":   "package Vehicle { part engine; }",
+	}))
+	if wCreate.Code != http.StatusOK {
+		t.Fatalf("create model: %d %s", wCreate.Code, wCreate.Body.String())
+	}
+
+	// 创建 read link
+	wLink := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	body := parseJSON(t, wLink.Body.Bytes())["data"].(map[string]any)
+	linkToken, _ := body["token"].(string)
+
+	// 公开访问
+	wShared := doRequest(r, authedRequest("GET", "/api/v1/shared/"+linkToken, "", nil))
+	if wShared.Code != http.StatusOK {
+		t.Fatalf("shared view: %d", wShared.Code)
+	}
+	d := parseJSON(t, wShared.Body.Bytes())["data"].(map[string]any)
+	models := d["models"].([]any)
+	if len(models) != 1 {
+		t.Fatalf("应 1 个模型，实际 %d", len(models))
+	}
+	m := models[0].(map[string]any)
+	if got, _ := m["content"].(string); got != "package Vehicle { part engine; }" {
+		t.Errorf("content 应被公开暴露供 Monaco 只读渲染，实际 %q", got)
+	}
+}

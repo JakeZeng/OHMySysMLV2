@@ -114,6 +114,15 @@ export const shareApi = {
     await api.delete(`/projects/${projectId}/links/${linkId}`);
   },
 
+  // M4.5 增量：链接轮换（撤销旧 token + 生成新 token）。
+  async rotateLink(projectId: string, linkId: string): Promise<CreateLinkResponse> {
+    const api = getApi();
+    const { data } = await api.post<CreateLinkResponse>(
+      `/projects/${projectId}/links/${linkId}/rotate`,
+    );
+    return data;
+  },
+
   // ─── 公开端点（不走 JWT）────────────────────────────────────────
   /**
    * 用 token 拉取只读项目视图。404/无效统一处理。

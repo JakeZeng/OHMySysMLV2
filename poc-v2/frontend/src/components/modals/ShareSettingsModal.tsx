@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { Copy, Loader2, Trash2, Link2, UserPlus, Eye } from 'lucide-react';
+import { Copy, Loader2, Trash2, Link2, UserPlus, Eye, RotateCw } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -181,6 +181,31 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
     } catch (e) {
       showToast({
         title: '撤销失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  };
+
+  const handleRotateLink = async (linkId: string) => {
+    if (!window.confirm('轮换后旧链接即刻失效，并生成新 token。继续？')) return;
+    try {
+      const r = await shareApi.rotateLink(projectId, linkId);
+      setNewToken(r.token);
+      // 旧 link 标记 revoked；新 link 推到列表头
+      setLinks((prev) =>
+        prev
+          .map((l) => (l.id === linkId ? { ...l, revokedAt: new Date().toISOString() } : l))
+          .concat([r.link]),
+      );
+      showToast({
+        title: '链接已轮换',
+        description: r.message,
+        variant: 'success',
+      });
+    } catch (e) {
+      showToast({
+        title: '轮换失败',
         description: (e as Error).message,
         variant: 'error',
       });
@@ -448,14 +473,25 @@ export const ShareSettingsModal: React.FC<ShareSettingsModalProps> = ({
                         {l.viewCount ?? 0}
                       </span>
                       {!l.revokedAt && (
-                        <button
-                          type="button"
-                          onClick={() => handleRevokeLink(l.id)}
-                          className="text-gray-400 hover:text-red-600"
-                          aria-label="撤销链接"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleRotateLink(l.id)}
+                            className="text-gray-400 hover:text-brand-600"
+                            aria-label="轮换链接"
+                            title="轮换：旧 token 即刻失效，生成新 token"
+                          >
+                            <RotateCw className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeLink(l.id)}
+                            className="text-gray-400 hover:text-red-600"
+                            aria-label="撤销链接"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </li>

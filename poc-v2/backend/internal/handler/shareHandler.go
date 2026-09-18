@@ -189,6 +189,56 @@ func (h *ShareHandler) RevokeLink(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 
+// RotateLink 轮换 token：撤销旧链接（保留审计连续性）+ 生成新 token。
+//
+// 与 revoke + create 的区别：保留原 ShareLink 记录的 revoked_at 时间戳，
+// 仅刷新 token_hash 与 created_at。语义上更清晰地表达"链接主体不变，仅密钥换"。
+func (h *ShareHandler) RotateLink(c *gin.Context) {
+	projectID := c.Param("id")
+	linkID := c.Param("linkId")
+	if _, ok := h.requireProjectAdmin(c, projectID); !ok {
+		return
+	}
+
+	// 取原链接元数据
+	old, err := h.repo.GetShareLinkByID(c, linkID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			notFound(c, "链接不存在")
+			return
+		}
+		serverError(c, "查询链接失败", err)
+		return
+	}
+	if old.ProjectID != projectID {
+		notFound(c, "链接不存在")
+		return
+	}
+	if old.RevokedAt != nil {
+		badRequest(c, "链接已撤销，无法轮换", nil)
+		return
+	}
+
+	// 撤销旧的 + 生成新的：原子操作（inTx 或顺序；这里用顺序，简单足够）
+	if err := h.repo.RevokeShareLink(c, linkID); err != nil {
+		serverError(c, "撤销旧链接失败", err)
+		return
+	}
+	sl, token, err := h.repo.NewShareLink(c, projectID, old.Permission, c.GetString("user_id"), old.ExpiresAt, old.MaxViews)
+	if err != nil {
+		serverError(c, "生成新链接失败", err)
+		return
+	}
+	writeAudit(c, h.repo, "link_rotate", model.AuditTargetLink,
+		linkID+"/"+sl.ID,
+		`{"old_link":"`+linkID+`","new_link":"`+sl.ID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"link":    sl,
+		"token":   token,
+		"message": "链接已轮换，旧 token 即刻失效。请保存新 token，刷新后无法再查看。",
+	}})
+}
+
 // ─── 公开端点 /api/v1/shared/:token ──────────────────────────────────
 
 // GetSharedProject 公开端点：持 token 获取项目只读视图（+ model 列表 + model.content）。

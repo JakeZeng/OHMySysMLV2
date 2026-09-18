@@ -66,6 +66,8 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		projects.POST("/:id/links", shareH.CreateLink)
 		projects.GET("/:id/links", shareH.ListLinks)
 		projects.DELETE("/:id/links/:linkId", shareH.RevokeLink)
+		// M4.5 增量：链接轮换
+		projects.POST("/:id/links/:linkId/rotate", shareH.RotateLink)
 	}
 
 	// M4 W3：公开端点 /shared/:token（不走 AuthRequired）

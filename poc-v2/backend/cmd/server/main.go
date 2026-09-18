@@ -116,6 +116,8 @@ func main() {
 			projects.POST("/:id/links", shareH.CreateLink)
 			projects.GET("/:id/links", shareH.ListLinks)
 			projects.DELETE("/:id/links/:linkId", shareH.RevokeLink)
+			// M4.5 增量：链接轮换
+			projects.POST("/:id/links/:linkId/rotate", shareH.RotateLink)
 		}
 
 		models := v1.Group("/models")

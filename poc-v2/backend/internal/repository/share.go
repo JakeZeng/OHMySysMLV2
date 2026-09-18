@@ -195,6 +195,27 @@ func (r *SQLiteRepository) IncrementShareLinkView(ctx context.Context, linkID st
 	return err
 }
 
+// GetShareLinkByID 用链接 ID 查一条记录（不校验 revoked/expired；用于 rotation 等管理操作）。
+func (r *SQLiteRepository) GetShareLinkByID(ctx context.Context, linkID string) (*model.ShareLink, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, project_id, permission, created_by, created_at, expires_at, revoked_at, view_count, last_viewed_at, max_views
+		 FROM share_links WHERE id = ?`,
+		linkID,
+	)
+	var sl model.ShareLink
+	if err := row.Scan(
+		&sl.ID, &sl.ProjectID, &sl.Permission, &sl.CreatedBy,
+		&sl.CreatedAt, &sl.ExpiresAt, &sl.RevokedAt,
+		&sl.ViewCount, &sl.LastViewedAt, &sl.MaxViews,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &sl, nil
+}
+
 // RevokeShareLink 撤销一条链接。
 func (r *SQLiteRepository) RevokeShareLink(ctx context.Context, linkID string) error {
 	now := time.Now().UTC()
