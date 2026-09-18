@@ -79,22 +79,24 @@ export const ProjectDetail: React.FC = () => {
   // M4.5 增量：内联重命名项目
   const [editingName, setEditingName] = React.useState(false);
   const [editName, setEditName] = React.useState('');
+  const [editDesc, setEditDesc] = React.useState('');
   const handleRenameProject = React.useCallback(async () => {
     if (!current || !editName.trim()) return;
     try {
       await useProjectStore.getState().update(current.id, {
         name: editName.trim(),
+        description: editDesc.trim(),
       });
-      showToast({ title: '项目名已更新', variant: 'success' });
+      showToast({ title: '项目信息已更新', variant: 'success' });
       setEditingName(false);
     } catch (e) {
       showToast({
-        title: '重命名失败',
+        title: '更新失败',
         description: (e as Error).message,
         variant: 'error',
       });
     }
-  }, [current, editName, showToast]);
+  }, [current, editName, editDesc, showToast]);
 
   // M4.5 增量：项目内"活动"标签页
   type Tab = 'models' | 'activity';
@@ -270,28 +272,36 @@ export const ProjectDetail: React.FC = () => {
                     e.preventDefault();
                     void handleRenameProject();
                   }}
-                  className="flex items-center gap-2"
+                  className="space-y-2"
                 >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      autoFocus
+                      onBlur={() => {
+                        if (!editName.trim()) setEditingName(false);
+                      }}
+                      className="text-2xl font-semibold"
+                      data-testid="inline-rename-input"
+                    />
+                    <Button size="sm" type="submit">
+                      保存
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setEditingName(false)}
+                    >
+                      取消
+                    </Button>
+                  </div>
                   <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    autoFocus
-                    onBlur={() => {
-                      if (!editName.trim()) setEditingName(false);
-                    }}
-                    className="text-2xl font-semibold"
-                    data-testid="inline-rename-input"
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    placeholder="项目描述（可选）"
+                    data-testid="inline-desc-input"
                   />
-                  <Button size="sm" type="submit">
-                    保存
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setEditingName(false)}
-                  >
-                    取消
-                  </Button>
                 </form>
               ) : (
                 <h1
@@ -299,6 +309,7 @@ export const ProjectDetail: React.FC = () => {
                   onClick={() => {
                     if (isOwner && current) {
                       setEditName(current.name);
+                      setEditDesc(current.description ?? '');
                       setEditingName(true);
                     }
                   }}
@@ -327,11 +338,35 @@ export const ProjectDetail: React.FC = () => {
                 </>
               )}
             </div>
-            {current?.description && (
-              <p className="mt-1 text-sm text-gray-500">
+            {editingName ? null : current?.description ? (
+              <p
+                className="group mt-1 cursor-pointer text-sm text-gray-500"
+                onClick={() => {
+                  if (isOwner && current) {
+                    setEditName(current.name);
+                    setEditDesc(current.description ?? '');
+                    setEditingName(true);
+                  }
+                }}
+              >
                 {current.description}
+                {isOwner && (
+                  <Pencil className="ml-1 inline h-3 w-3 text-gray-400 opacity-0 transition group-hover:opacity-100" />
+                )}
               </p>
-            )}
+            ) : isOwner && current && !editingName ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditName(current.name);
+                  setEditDesc('');
+                  setEditingName(true);
+                }}
+                className="mt-1 text-xs text-gray-400 hover:text-gray-600"
+              >
+                + 添加描述
+              </button>
+            ) : null}
             {models.length > 0 && (
               <p className="mt-1 text-xs text-gray-400">
                 {models.length} 个模型
