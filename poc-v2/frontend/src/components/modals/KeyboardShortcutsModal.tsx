@@ -16,6 +16,14 @@ interface Shortcut {
 const SHORTCUTS: Shortcut[] = [
   { keys: 'Ctrl + S', description: '保存模型' },
   { keys: 'Ctrl + Space', description: '触发代码补全' },
+  { keys: 'Ctrl + F', description: '搜索（Monaco 内置）' },
+  { keys: 'Ctrl + H', description: '搜索并替换' },
+  { keys: 'Ctrl + G', description: '跳转到行' },
+  { keys: 'Alt + Z', description: '切换自动换行' },
+  { keys: 'Alt + M', description: '切换 minimap' },
+  { keys: 'Ctrl + Shift + L', description: '切换行号显示' },
+  { keys: 'Shift + Alt + F', description: '格式化文档' },
+  { keys: '?', description: '打开快捷键帮助' },
 ];
 
 interface KeyboardShortcutsModalProps {
