@@ -201,6 +201,7 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 		// 兼容历史 DB：列已存在时忽略
 	}
 
+
 	// M4.5 增量：审计日志表。
 	if _, err := r.db.Exec(
 		`CREATE TABLE IF NOT EXISTS audit_logs (
