@@ -271,6 +271,16 @@ func main() {
 			subGroup.GET("", h.GetSubscription)
 			subGroup.POST("/upgrade", h.UpgradeSubscription)
 		}
+
+		// 模型评论（受保护）
+		modelsGroup := v1.Group("/models")
+		modelsGroup.Use(middleware.AuthRequired())
+		{
+			modelsGroup.POST("/:id/comments", h.AddComment)
+			modelsGroup.GET("/:id/comments", h.ListComments)
+			modelsGroup.DELETE("/:id/comments/:commentId", h.DeleteComment)
+			modelsGroup.PUT("/:id/comments/:commentId/resolve", h.ResolveComment)
+		}
 	}
 
 	srv := &http.Server{

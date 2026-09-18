@@ -21,6 +21,7 @@ import {
   Sparkles,
   Layers,
   History,
+  MessageSquare,
 } from 'lucide-react';
 import SysMLEditor, { type PipelineResult, type SysMLEditorHandle } from '../editor/SysMLEditor';
 import { DiagramCanvas, type DiagramCanvasHandle } from '../canvas/DiagramCanvas';
@@ -37,6 +38,7 @@ import { KeyboardShortcutsModal } from '../components/modals/KeyboardShortcutsMo
 import { VersionHistoryPanel } from '../components/VersionHistoryPanel';
 import { Breadcrumb } from '../components/Breadcrumb';
 import { modelApi, type ModelVersion } from '../services/modelApi';
+import { CommentsPanel } from '../components/CommentsPanel';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -82,6 +84,9 @@ export const ModelEditor: React.FC = () => {
 
   // M5: 视图模式切换
   const [viewMode, setViewMode] = React.useState<'structure' | 'behavior' | 'requirements' | 'constraints'>('structure');
+
+  // 评论面板
+  const [showComments, setShowComments] = React.useState(false);
 
   // M4.5 增量：版本历史面板
   const [showVersionHistory, setShowVersionHistory] = React.useState(false);
@@ -688,6 +693,15 @@ export const ModelEditor: React.FC = () => {
         >
           <History className="h-3.5 w-3.5" /> 版本
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowComments((v) => !v)}
+          title="评论"
+          data-testid="toggle-comments"
+        >
+          <MessageSquare className="h-3.5 w-3.5" /> 评论
+        </Button>
 
         <div className="flex-1" />
 
@@ -889,6 +903,16 @@ export const ModelEditor: React.FC = () => {
               });
             }}
           />
+        </div>
+      )}
+
+      {/* 评论面板（右侧抽屉） */}
+      {showComments && modelId && (
+        <div
+          className="absolute right-0 top-0 z-10 h-full w-80 border-l border-gray-200 bg-white shadow-lg"
+          data-testid="comments-panel"
+        >
+          <CommentsPanel modelId={modelId} />
         </div>
       )}
     </div>
