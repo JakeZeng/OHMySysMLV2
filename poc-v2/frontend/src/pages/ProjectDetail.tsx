@@ -14,6 +14,7 @@ import {
   Settings,
   Activity,
   Copy,
+  Pencil,
 } from 'lucide-react';
 import {
   Card,
@@ -72,6 +73,26 @@ export const ProjectDetail: React.FC = () => {
   const [name, setName] = React.useState('');
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
+
+  // M4.5 增量：内联重命名项目
+  const [editingName, setEditingName] = React.useState(false);
+  const [editName, setEditName] = React.useState('');
+  const handleRenameProject = React.useCallback(async () => {
+    if (!current || !editName.trim()) return;
+    try {
+      await useProjectStore.getState().update(current.id, {
+        name: editName.trim(),
+      });
+      showToast({ title: '项目名已更新', variant: 'success' });
+      setEditingName(false);
+    } catch (e) {
+      showToast({
+        title: '重命名失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [current, editName, showToast]);
 
   // M4.5 增量：项目内"活动"标签页
   type Tab = 'models' | 'activity';
@@ -241,9 +262,52 @@ export const ProjectDetail: React.FC = () => {
         <div className="mb-6 flex items-start justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-2xl font-semibold text-gray-900">
-                {current?.name ?? '加载中…'}
-              </h1>
+              {editingName ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleRenameProject();
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    autoFocus
+                    onBlur={() => {
+                      if (!editName.trim()) setEditingName(false);
+                    }}
+                    className="text-2xl font-semibold"
+                    data-testid="inline-rename-input"
+                  />
+                  <Button size="sm" type="submit">
+                    保存
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setEditingName(false)}
+                  >
+                    取消
+                  </Button>
+                </form>
+              ) : (
+                <h1
+                  className="group flex cursor-pointer items-center gap-2 truncate text-2xl font-semibold text-gray-900"
+                  onClick={() => {
+                    if (isOwner && current) {
+                      setEditName(current.name);
+                      setEditingName(true);
+                    }
+                  }}
+                  data-testid="project-name-display"
+                >
+                  {current?.name ?? '加载中…'}
+                  {isOwner && (
+                    <Pencil className="h-4 w-4 text-gray-400 opacity-0 transition group-hover:opacity-100" />
+                  )}
+                </h1>
+              )}
               {current && (
                 <>
                   <VisibilityBadge visibility={current.visibility} />

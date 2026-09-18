@@ -113,6 +113,9 @@ export const Login: React.FC = () => {
             注册
           </Link>
         </p>
+        <p className="mt-2 text-center text-[11px] text-gray-400">
+          首个注册的用户自动获得管理员权限。
+        </p>
       </div>
     </div>
   );
