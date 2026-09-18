@@ -238,6 +238,13 @@ export const ModelEditor: React.FC = () => {
           ?.getEditor()
           ?.trigger('keyboard', 'editor.action.addSelectionToNextFindMatch', {});
       }
+      // Ctrl+/ 切换行注释（Monaco 内置）
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        sysmlEditorRef.current
+          ?.getEditor()
+          ?.trigger('keyboard', 'editor.action.commentLine', {});
+      }
       // Ctrl+Shift+L 切换行号显示
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
         e.preventDefault();
