@@ -85,6 +85,8 @@ File
       const requirements = [];
       const traceLinks = [];
       const constraintBlocks = [];
+      const enums = [];
+      const comments = [];
       for (const pair of items) {
         const it = pair[1];
         if (it.kind === 'package') packages.push(it);
@@ -94,8 +96,10 @@ File
         else if (it.kind === 'requirement') requirements.push(it);
         else if (it.kind === 'trace') traceLinks.push(it);
         else if (it.kind === 'constraintBlock') constraintBlocks.push(it);
+        else if (it.kind === 'enumDef') enums.push(it);
+        else if (it.kind === 'comment') comments.push(it);
       }
-      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks };
+      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments };
     }
 
 NamespaceOrTopLevel
@@ -105,6 +109,8 @@ NamespaceOrTopLevel
   / RequirementDef
   / ConstraintBlockDef
   / TraceStatement
+  / EnumDef
+  / CommentBlock
   / ConnectStatement
 
 // ─── Package ───────────────────────────────────────────────────────────
@@ -142,6 +148,8 @@ PackageMember
   / RequirementDef
   / ConstraintBlockDef
   / TraceStatement
+  / EnumDef
+  / CommentBlock
   / ConnectStatement
 
 ImportStatement
@@ -477,6 +485,41 @@ ConstraintParam
         location: locationOf(location().start.offset),
       };
     }
+
+// ─── Enum Definition ────────────────────────────────────────────────
+
+EnumDef
+  = "enum" WS "def" WS name:Identifier OPEN _ values:(_ EnumValue)* CLOSE
+    {
+      return {
+        kind: 'enumDef',
+        id: nextId('enum'),
+        name,
+        values: values.map(v => v[1]),
+        location: locationOf(location().start.offset),
+      };
+    }
+
+EnumValue
+  = name:Identifier _ ";"
+    { return name; }
+
+// ─── Comment Block ─────────────────────────────────────────────────
+
+CommentBlock
+  = "comment" WS body:$(!("about" / ";") .)+ about:CommentAbout? _ ";"
+    {
+      return {
+        kind: 'comment',
+        id: nextId('cmt'),
+        body: body.trim(),
+        about: about || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+CommentAbout
+  = WS "about" WS name:QualifiedName { return name; }
 
 // ─── Connect ───────────────────────────────────────────────────────────
 

@@ -25,6 +25,8 @@ import type {
   Activity,
   Requirement,
   ConstraintBlock,
+  EnumDefinition,
+  CommentBlock,
 } from '../ast/model';
 
 // ─── 公共入口 ──────────────────────────────────────────────────────────
@@ -161,6 +163,12 @@ function serializePackage(pkg: Package, indent: number, out: string[]): void {
         break;
       case 'constraintBlock':
         serializeConstraintBlock(m, indent + 1, out);
+        break;
+      case 'enumDef':
+        serializeEnum(m, indent + 1, out);
+        break;
+      case 'comment':
+        serializeComment(m, indent + 1, out);
         break;
     }
   }
@@ -338,4 +346,26 @@ function serializeConstraintBlock(cb: ConstraintBlock, indent: number, out: stri
     out.push(`${pad}  attribute ${p.name} : ${p.typeRef};`);
   }
   out.push(`${pad}}`);
+}
+
+// ─── Enum Definition ──────────────────────────────────────────────
+
+function serializeEnum(e: EnumDefinition, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  out.push(`${pad}enum def ${e.name} {`);
+  for (const v of e.values) {
+    out.push(`${pad}  ${v};`);
+  }
+  out.push(`${pad}}`);
+}
+
+// ─── Comment Block ────────────────────────────────────────────────
+
+function serializeComment(c: CommentBlock, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  if (c.about) {
+    out.push(`${pad}comment ${c.body} about ${c.about};`);
+  } else {
+    out.push(`${pad}comment ${c.body};`);
+  }
 }

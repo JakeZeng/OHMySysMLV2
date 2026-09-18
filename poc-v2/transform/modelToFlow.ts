@@ -27,6 +27,8 @@ import type {
   Activity,
   Requirement,
   ConstraintBlock,
+  EnumDefinition,
+  CommentBlock,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
@@ -401,6 +403,10 @@ function collectMembers(
         break;
       case 'constraintBlock':
         constraintBlocks?.push(m);
+        break;
+      case 'enumDef':
+      case 'comment':
+        // 扩展语法：暂不参与图形渲染
         break;
     }
   }

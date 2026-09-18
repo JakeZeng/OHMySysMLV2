@@ -17,7 +17,7 @@ import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefiniti
 import { serialize } from './serializer';
 
 function emptyModel(): SysMLModel {
-  return { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [] };
+  return { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] };
 }
 
 // ─── 类型守卫 ─────────────────────────────────────────────────────────

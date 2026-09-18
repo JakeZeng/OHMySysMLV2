@@ -83,7 +83,7 @@ interface ModelState {
 const EMPTY_PIPELINE: PipelineResult = {
   parseErrors: [],
   validationIssues: [],
-  model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [] },
+  model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] },
   nodes: [],
   edges: [],
 };
@@ -144,7 +144,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const t0 = performance.now();
     let parseErrors: ParseError[] = [];
     let validationIssues: ValidationIssue[] = [];
-    let model: SysMLModel = { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [] };
+    let model: SysMLModel = { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] };
     let nodes: Node[] = [];
     let edges: Edge[] = [];
     let layoutMs = 0;

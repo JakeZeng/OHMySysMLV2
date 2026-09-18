@@ -68,7 +68,9 @@ export type NamespaceMember =
   | Activity
   | Requirement
   | TraceLink
-  | ConstraintBlock;
+  | ConstraintBlock
+  | EnumDefinition
+  | CommentBlock;
 
 /** `import Foo::*;` 或 `import Bar;` */
 export interface ImportStatement extends SysMLNode {
@@ -224,6 +226,22 @@ export interface ConstraintParameter extends SysMLNode {
   typeRef: string;
 }
 
+// ─── Enum Definition（扩展语法）───────────────────────────────────────
+
+export interface EnumDefinition extends SysMLNode {
+  kind: 'enumDef';
+  name: string;
+  values: string[];
+}
+
+// ─── Comment Block（扩展语法）────────────────────────────────────────
+
+export interface CommentBlock extends SysMLNode {
+  kind: 'comment';
+  body: string;
+  about?: string; // 关联的元素名
+}
+
 // ─── 顶层模型 ───────────────────────────────────────────────────────────
 
 /**
@@ -243,6 +261,10 @@ export interface SysMLModel {
   traceLinks: TraceLink[];
   /** M5: 约束块 */
   constraintBlocks: ConstraintBlock[];
+  /** 枚举定义 */
+  enums: EnumDefinition[];
+  /** 注释块 */
+  comments: CommentBlock[];
 }
 
 // ─── Parser Result ──────────────────────────────────────────────────────

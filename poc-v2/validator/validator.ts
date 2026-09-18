@@ -305,6 +305,10 @@ function collectFromPackage(
       case 'trace':
         // M5: 追溯链接单独验证
         break;
+      case 'enumDef':
+      case 'comment':
+        // 扩展语法：不需要在符号表中登记
+        break;
     }
   }
 }
@@ -323,6 +327,8 @@ function memberName(m: NamespaceMember): string {
     case 'requirement': return m.name;
     case 'trace': return '';             // 不参与成员名拼接
     case 'constraintBlock': return m.name;
+    case 'enumDef': return m.name;
+    case 'comment': return '';           // 不参与成员名拼接
   }
 }
 
