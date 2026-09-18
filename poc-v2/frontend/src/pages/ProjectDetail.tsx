@@ -78,6 +78,44 @@ export const ProjectDetail: React.FC = () => {
   const [activity, setActivity] = React.useState<AuditLog[]>([]);
   const [activityLoading, setActivityLoading] = React.useState(false);
 
+  // M4.5 增量：批量选择 + 删除
+  const [selectedModels, setSelectedModels] = React.useState<Set<string>>(new Set());
+  const toggleModelSelect = React.useCallback((id: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const handleBatchDelete = React.useCallback(async () => {
+    if (selectedModels.size === 0) return;
+    if (
+      !window.confirm(
+        `确认删除选中的 ${selectedModels.size} 个模型？此操作不可撤销。`,
+      )
+    )
+      return;
+    try {
+      await Promise.all(
+        Array.from(selectedModels).map((id) => modelApi.remove(projectId, id)),
+      );
+      showToast({
+        title: `已删除 ${selectedModels.size} 个模型`,
+        variant: 'success',
+      });
+      setSelectedModels(new Set());
+      const list = await modelApi.listByProject(projectId);
+      setModels(list);
+    } catch (e) {
+      showToast({
+        title: '批量删除失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [selectedModels, projectId, showToast]);
+
   const loadProject = React.useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
@@ -291,6 +329,32 @@ export const ProjectDetail: React.FC = () => {
         </div>
 
         {tab === 'models' ? (
+          <>
+            {selectedModels.size > 0 && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-sm text-gray-600">
+                  已选 {selectedModels.size} 个模型
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSelectedModels(new Set())}
+                >
+                  取消选择
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleBatchDelete}
+                  data-testid="batch-delete-models"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> 批量删除
+                </Button>
+              </div>
+            )}
+          </>
+        ) : null}
+        {tab === 'models' ? (
           loading ? (
             <div className="flex items-center justify-center py-12 text-sm text-gray-500">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
@@ -318,6 +382,18 @@ export const ProjectDetail: React.FC = () => {
                     <CardHeader>
                       <div className="flex items-center justify-between">
                         <CardTitle className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedModels.has(m.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              toggleModelSelect(m.id);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            data-testid={`select-model-${m.id}`}
+                            className="rounded border-gray-300"
+                          />
                           <FileCode2 className="h-4 w-4 text-gray-400" />
                           {m.name}
                         </CardTitle>
