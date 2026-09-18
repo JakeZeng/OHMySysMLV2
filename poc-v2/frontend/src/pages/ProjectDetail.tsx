@@ -33,6 +33,7 @@ import {
 import { auditApi, type AuditLog } from '../services/auditApi';
 import { useToast } from '../components/ui/Toast';
 import { VisibilityBadge } from '../components/VisibilityBadge';
+import { relativeTime } from '../lib/relativeTime';
 import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
 import { ProjectSettingsModal } from '../components/modals/ProjectSettingsModal';
 
@@ -327,7 +328,7 @@ export const ProjectDetail: React.FC = () => {
                     </CardHeader>
                     <CardContent>
                       <div className="text-xs text-gray-400">
-                        更新于 {new Date(m.updatedAt).toLocaleString()}
+                        更新于 {relativeTime(m.updatedAt)}
                       </div>
                     </CardContent>
                   </Card>

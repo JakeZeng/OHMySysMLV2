@@ -21,6 +21,7 @@ import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { VisibilityBadge } from '../components/VisibilityBadge';
+import { relativeTime } from '../lib/relativeTime';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { useToast } from '../components/ui/Toast';
@@ -237,7 +238,7 @@ export const ProjectList: React.FC = () => {
                               {p.modelCount !== undefined && (
                                 <span>{p.modelCount} 个模型 · </span>
                               )}
-                              更新于 {new Date(p.updatedAt).toLocaleString()}
+                              更新于 {relativeTime(p.updatedAt)}
                             </div>
                           </CardContent>
                         </Card>

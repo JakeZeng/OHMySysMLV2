@@ -30,6 +30,7 @@ import {
   shareApi,
   type SharedProjectView,
 } from '../services/shareApi';
+import { relativeTime } from '../lib/relativeTime';
 
 export const SharedProjectPage: React.FC = () => {
   const { token = '' } = useParams<{ token: string }>();
@@ -192,7 +193,7 @@ export const SharedProjectPage: React.FC = () => {
                         </CardHeader>
                         <CardContent>
                           <div className="text-xs text-gray-400">
-                            更新于 {new Date(m.updatedAt).toLocaleString()}
+                            更新于 {relativeTime(m.updatedAt)}
                           </div>
                         </CardContent>
                       </button>
