@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67`）
 
 | 项 | 内容 |
 |----|------|
@@ -23,6 +23,8 @@
 | Share-link maxViews | `MaxViews *int`；超限后链接自动 404（与 revoked / expired uniform 响应） |
 | 公开页 Monaco 只读渲染 | SharedProjectPage 点模型行展开 SysMLEditor(readOnly=true) |
 | Share-link rotation API | `POST /projects/:id/links/:linkId/rotate`：撤销旧 token + 生成新 token，保留审计连续性 |
+| 审计自动轮询 | AuditLogPage 30s silent polling（可关闭） |
+| 审计 projectId 过滤 | `?projectId=` 把 project/model/share/link 关联日志收拢到单一 project 视图 |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 

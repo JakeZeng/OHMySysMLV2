@@ -12,6 +12,7 @@ import {
   Trash2,
   Share2,
   Settings,
+  Activity,
 } from 'lucide-react';
 import {
   Card,
@@ -29,6 +30,7 @@ import {
   type ModelListItem,
   type ModelRecord,
 } from '../services/modelApi';
+import { auditApi, type AuditLog } from '../services/auditApi';
 import { useToast } from '../components/ui/Toast';
 import { VisibilityBadge } from '../components/VisibilityBadge';
 import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
@@ -69,6 +71,12 @@ export const ProjectDetail: React.FC = () => {
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
 
+  // M4.5 增量：项目内"活动"标签页
+  type Tab = 'models' | 'activity';
+  const [tab, setTab] = React.useState<Tab>('models');
+  const [activity, setActivity] = React.useState<AuditLog[]>([]);
+  const [activityLoading, setActivityLoading] = React.useState(false);
+
   const loadProject = React.useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
@@ -91,6 +99,27 @@ export const ProjectDetail: React.FC = () => {
   React.useEffect(() => {
     return () => setCurrent(null);
   }, [setCurrent]);
+
+  // M4.5 增量：切到"活动"标签时拉一次该项目视角的审计日志
+  React.useEffect(() => {
+    if (tab !== 'activity' || !projectId) return;
+    let cancelled = false;
+    setActivityLoading(true);
+    auditApi
+      .list({ projectId, limit: 50 })
+      .then((data) => {
+        if (!cancelled) setActivity(data);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError((e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setActivityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, projectId]);
 
   const handleCreate = async () => {
     if (!name.trim() || !projectId) return;
@@ -228,50 +257,143 @@ export const ProjectDetail: React.FC = () => {
           </div>
         )}
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-500">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
-          </div>
-        ) : models.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <FileCode2 className="mb-3 h-10 w-10 text-gray-400" />
-              <p className="text-sm text-gray-500">该项目下还没有模型</p>
-              <p className="mt-1 text-xs text-gray-400">
-                点击"新建模型"开始编写 SysML v2 代码
-              </p>
-            </CardContent>
-          </Card>
+        {/* M4.5 增量：标签切换（Models / Activity） */}
+        <div className="mb-4 flex gap-1 border-b border-gray-200">
+          <button
+            type="button"
+            onClick={() => setTab('models')}
+            className={
+              'border-b-2 px-3 py-1.5 text-sm transition ' +
+              (tab === 'models'
+                ? 'border-brand-500 text-brand-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700')
+            }
+            data-testid="tab-models"
+          >
+            <FileCode2 className="mr-1 inline h-3.5 w-3.5" />
+            模型
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('activity')}
+            className={
+              'border-b-2 px-3 py-1.5 text-sm transition ' +
+              (tab === 'activity'
+                ? 'border-brand-500 text-brand-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700')
+            }
+            data-testid="tab-activity"
+          >
+            <Activity className="mr-1 inline h-3.5 w-3.5" />
+            活动
+          </button>
+        </div>
+
+        {tab === 'models' ? (
+          loading ? (
+            <div className="flex items-center justify-center py-12 text-sm text-gray-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
+            </div>
+          ) : models.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                <FileCode2 className="mb-3 h-10 w-10 text-gray-400" />
+                <p className="text-sm text-gray-500">该项目下还没有模型</p>
+                <p className="mt-1 text-xs text-gray-400">
+                  点击"新建模型"开始编写 SysML v2 代码
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {models.map((m) => (
+                <Link
+                  key={m.id}
+                  to={`/models/${m.id}?projectId=${projectId}`}
+                  className="block"
+                  data-testid="model-row"
+                >
+                  <Card className="transition hover:border-brand-300 hover:shadow">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="flex items-center gap-2">
+                          <FileCode2 className="h-4 w-4 text-gray-400" />
+                          {m.name}
+                        </CardTitle>
+                        <span className="text-xs text-gray-400">
+                          v{m.version}
+                        </span>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-xs text-gray-400">
+                        更新于 {new Date(m.updatedAt).toLocaleString()}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )
         ) : (
-          <div className="space-y-2">
-            {models.map((m) => (
-              <Link
-                key={m.id}
-                to={`/models/${m.id}?projectId=${projectId}`}
-                className="block"
-                data-testid="model-row"
-              >
-                <Card className="transition hover:border-brand-300 hover:shadow">
-                  <CardHeader>
+          // ── Activity 标签（M4.5 增量：项目视角审计） ──
+          activityLoading ? (
+            <div className="flex items-center justify-center py-12 text-sm text-gray-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
+            </div>
+          ) : activity.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <Activity className="mb-3 h-8 w-8 text-gray-400" />
+                <p className="text-sm text-gray-500">该项目暂无活动记录</p>
+                <p className="mt-1 text-xs text-gray-400">
+                  模型增删、成员变更、分享链接变动都会出现在这里
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <ul className="divide-y divide-gray-100">
+                {activity.map((l) => (
+                  <li
+                    key={l.id}
+                    className="px-4 py-3 text-sm"
+                    data-testid="project-activity-row"
+                  >
                     <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2">
-                        <FileCode2 className="h-4 w-4 text-gray-400" />
-                        {m.name}
-                      </CardTitle>
-                      <span className="text-xs text-gray-400">
-                        v{m.version}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={
+                            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' +
+                            activityClass(l.action)
+                          }
+                        >
+                          {l.action}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {l.targetType}
+                        </span>
+                        <code className="truncate rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
+                          {l.targetId}
+                        </code>
+                      </div>
+                      <time className="text-xs text-gray-400">
+                        {new Date(l.createdAt).toLocaleString()}
+                      </time>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-xs text-gray-400">
-                      更新于 {new Date(m.updatedAt).toLocaleString()}
+                    <div className="mt-1 truncate text-xs text-gray-500">
+                      actor: <code className="font-mono">{l.actorId || '—'}</code>
+                      {l.ip && (
+                        <span className="ml-3">
+                          ip: <code className="font-mono">{l.ip}</code>
+                        </span>
+                      )}
                     </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
-          </div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )
         )}
       </div>
 
@@ -349,3 +471,13 @@ export const ProjectDetail: React.FC = () => {
     </div>
   );
 };
+
+function activityClass(action: string): string {
+  if (action.startsWith('create') || action.startsWith('link_create') || action === 'share' || action === 'grant')
+    return 'border border-green-200 bg-green-50 text-green-700';
+  if (action.startsWith('delete') || action.startsWith('revoke') || action === 'unshare' || action === 'link_revoke' || action === 'member_del')
+    return 'border border-red-200 bg-red-50 text-red-700';
+  if (action.startsWith('update') || action === 'member_role')
+    return 'border border-amber-200 bg-amber-50 text-amber-700';
+  return 'border border-gray-200 bg-gray-50 text-gray-600';
+}
