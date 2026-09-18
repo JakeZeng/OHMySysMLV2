@@ -237,6 +237,14 @@ func main() {
 			apiKeysGroup.GET("", h.ListAPIKeys)
 			apiKeysGroup.DELETE("/:id", h.DeleteAPIKey)
 		}
+
+		// M6：外部模型导入（受保护）
+		importGroup := v1.Group("/import")
+		importGroup.Use(middleware.AuthRequired())
+		{
+			importGroup.POST("/papyrus", h.ImportPapyrus)
+			importGroup.POST("/capella", h.ImportCapella)
+		}
 	}
 
 	srv := &http.Server{

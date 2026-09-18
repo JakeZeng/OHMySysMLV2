@@ -19,6 +19,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { TemplateMarketPage } from './pages/TemplateMarketPage';
 import { WebhookPage } from './pages/WebhookPage';
 import { APIKeysPage } from './pages/APIKeysPage';
+import { ImportPage } from './pages/ImportPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -47,6 +48,7 @@ export const router = createBrowserRouter([
       { path: 'templates', element: <TemplateMarketPage /> },
       { path: 'webhooks', element: <WebhookPage /> },
       { path: 'api-keys', element: <APIKeysPage /> },
+      { path: 'import', element: <ImportPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },
