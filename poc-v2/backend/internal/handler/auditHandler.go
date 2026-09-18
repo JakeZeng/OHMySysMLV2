@@ -154,12 +154,21 @@ func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 //	audit_archive 表），M5+ 基础设施阶段再做。M4.5 落地"软归档"：
 //
 //	 - DELETE from audit_logs where created_at < now() - N days
+//	 - 仅 admin（首个注册用户）可调用，防止普通用户误删
 //	 - 安全护栏：days ≥ 7（避免误删近期审计）
 //	 - dryRun=true 只返回待删数量，不动数据
 //	 - 推荐工作流：先 dryRun → 然后用 export 备份 → 再正式清理
 //
 // 生产环境应：1) dump 旧行到对象存储；2) 再调 DELETE。
 func (h *AuditHandler) ArchiveAuditLogs(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if !h.callerIsAdmin(c, callerID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
+			"code": "E_FORBIDDEN", "message": "归档清理仅 admin 可操作",
+		}})
+		return
+	}
+
 	daysStr := c.Query("olderThanDays")
 	if daysStr == "" {
 		badRequest(c, "缺少 olderThanDays 参数（单位：天）", nil)
@@ -196,7 +205,7 @@ func (h *AuditHandler) ArchiveAuditLogs(c *gin.Context) {
 	}
 	// 记录归档事件本身（指向 system，避免 RBAC 看到时困惑）
 	writeAudit(c, h.repo, "audit_archive", "audit", "self",
-		fmt.Sprintf(`{"older_than_days":%d,"deleted":%d}`, days, n))
+		fmt.Sprintf(`{"older_than_days":%d,"deleted":%d,"actor":"%s"}`, days, n, callerID))
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
 			"olderThanDays": days,
@@ -204,6 +213,22 @@ func (h *AuditHandler) ArchiveAuditLogs(c *gin.Context) {
 			"dryRun":        false,
 		},
 	})
+}
+
+// callerIsAdmin 查询用户 is_admin 列。
+// 仅 ArchiveAuditLogs 调用；不放入 JWT 以避免所有现有 token 失效。
+func (h *AuditHandler) callerIsAdmin(c *gin.Context, callerID string) bool {
+	if callerID == "" {
+		return false
+	}
+	var isAdmin int
+	err := h.repo.DB().QueryRowContext(c,
+		`SELECT is_admin FROM users WHERE id = ?`, callerID,
+	).Scan(&isAdmin)
+	if err != nil {
+		return false
+	}
+	return isAdmin == 1
 }
 
 // filterLogsForCaller 按 RBAC 规则裁剪日志列表。

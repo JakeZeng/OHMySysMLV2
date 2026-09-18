@@ -610,3 +610,40 @@ func TestW45_AuditArchiveMissingParam(t *testing.T) {
 		t.Errorf("应 400，实际 %d", w.Code)
 	}
 }
+
+// TestW45_AuditArchiveAdminOnly：仅 admin 可调归档。非 admin（第二个注册的用户）应 403。
+//
+// registerTwoUsers 先注册 Alice 再注册 Bob，所以 Alice 是 admin，Bob 不是。
+func TestW45_AuditArchiveAdminOnly(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	_, tokenB, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive?olderThanDays=7", tokenB, nil))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("非 admin 应 403，实际 %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestW45_AuditArchiveAdminAllowed：admin（Alice）可正常 dryRun。
+func TestW45_AuditArchiveAdminAllowed(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, _, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("DELETE", "/api/v1/audit-logs/archive?olderThanDays=7&dryRun=true", tokenA, nil))
+	if w.Code != http.StatusOK {
+		t.Errorf("admin 应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestW45_FirstUserIsAdmin：注册首用户后 is_admin=1；第二个=0。
+func TestW45_FirstUserIsAdmin(t *testing.T) {
+	r, repo := setupTestRouter(t)
+	idA, idB, _, _ := registerTwoUsers(t, r)
+	var a, b int
+	repo.DB().QueryRow(`SELECT is_admin FROM users WHERE id=?`, idA).Scan(&a)
+	repo.DB().QueryRow(`SELECT is_admin FROM users WHERE id=?`, idB).Scan(&b)
+	if a != 1 {
+		t.Errorf("首个用户应 admin=1，实际 %d", a)
+	}
+	if b != 0 {
+		t.Errorf("第二个用户应 admin=0，实际 %d", b)
+	}
+}

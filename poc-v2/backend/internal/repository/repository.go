@@ -162,6 +162,13 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 		// 兼容历史 DB：列已存在时忽略
 	}
 
+	// M4.5 增量：admin 角色（首个注册用户自动成为 admin，用于审计归档等管理操作）
+	if _, err := r.db.Exec(
+		`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`,
+	); err != nil {
+		// 兼容历史 DB：列已存在时忽略
+	}
+
 	// M4.5 增量：审计日志表。
 	if _, err := r.db.Exec(
 		`CREATE TABLE IF NOT EXISTS audit_logs (
@@ -205,31 +212,46 @@ func (r *SQLiteRepository) Close() error { return r.db.Close() }
 // ─── Users ──────────────────────────────────────────────────────────
 
 func (r *SQLiteRepository) CreateUser(ctx context.Context, u *model.User) error {
-	const q = `INSERT INTO users (id, username, email, password_hash, created_at)
-              VALUES (?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, q, u.ID, u.Username, u.Email, u.PasswordHash, u.CreatedAt)
+	// M4.5 增量：第一个注册的用户自动成为 admin（bootstrap 模式）。
+	// 后续注册的用户 is_admin=0。M5+ 可扩展为邀请码 / 角色管理 UI。
+	var count int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return err
+	}
+	const q = `INSERT INTO users (id, username, email, password_hash, is_admin, created_at)
+              VALUES (?, ?, ?, ?, ?, ?)`
+	isAdmin := 0
+	if count == 0 {
+		isAdmin = 1
+		u.IsAdmin = true
+	}
+	_, err := r.db.ExecContext(ctx, q, u.ID, u.Username, u.Email, u.PasswordHash, isAdmin, u.CreatedAt)
 	return err
 }
 
 func (r *SQLiteRepository) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {
-	const q = `SELECT id, username, email, password_hash, created_at
+	const q = `SELECT id, username, email, password_hash, is_admin, created_at
               FROM users WHERE username = ?`
 	row := r.db.QueryRowContext(ctx, q, username)
 	var u model.User
-	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.CreatedAt); err != nil {
+	var isAdmin int
+	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &isAdmin, &u.CreatedAt); err != nil {
 		return nil, err
 	}
+	u.IsAdmin = isAdmin == 1
 	return &u, nil
 }
 
 func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
-	const q = `SELECT id, username, email, password_hash, created_at
+	const q = `SELECT id, username, email, password_hash, is_admin, created_at
               FROM users WHERE email = ?`
 	row := r.db.QueryRowContext(ctx, q, email)
 	var u model.User
-	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.CreatedAt); err != nil {
+	var isAdmin int
+	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &isAdmin, &u.CreatedAt); err != nil {
 		return nil, err
 	}
+	u.IsAdmin = isAdmin == 1
 	return &u, nil
 }
 

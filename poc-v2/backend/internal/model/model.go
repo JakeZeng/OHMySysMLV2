@@ -9,7 +9,10 @@ type User struct {
 	Username     string    `json:"username"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"` // 不导出
-	CreatedAt    time.Time `json:"createdAt"`
+	// M4.5 增量：首个注册用户自动获得 admin 权限；用于审计归档等管理操作。
+	// 暂不暴露给 JSON（避免普通接口返回内部标志）；管理员相关接口按需读取。
+	IsAdmin   bool      `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // ProjectVisibility 项目可见性（M4 W1 引入）。
