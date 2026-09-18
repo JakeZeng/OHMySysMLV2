@@ -29,6 +29,7 @@ interface ToastItem extends ToastOptions {
 interface ToastContextValue {
   showToast: (opts: ToastOptions) => void;
   dismiss: (id: string) => void;
+  activeCount: number;
 }
 
 const ToastContext = React.createContext<ToastContextValue | null>(null);
@@ -62,9 +63,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
     setItems((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // M4.5 增量：暴露 toast 计数供外部组件使用
+  const activeCount = items.filter((t) => t.open).length;
+
   const ctxValue = React.useMemo(
-    () => ({ showToast, dismiss }),
-    [showToast, dismiss]
+    () => ({ showToast, dismiss, activeCount }),
+    [showToast, dismiss, activeCount],
   );
 
   return (
