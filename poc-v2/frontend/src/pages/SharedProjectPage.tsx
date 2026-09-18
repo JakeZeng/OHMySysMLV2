@@ -10,8 +10,10 @@ import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
   FileCode2,
   Loader2,
@@ -36,6 +38,18 @@ export const SharedProjectPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [openModelId, setOpenModelId] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  // M4.5 增量：复制当前分享链接到剪贴板
+  const handleCopyLink = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API 不可用时静默
+    }
+  }, []);
 
   React.useEffect(() => {
     if (!token) {
@@ -113,10 +127,28 @@ export const SharedProjectPage: React.FC = () => {
                   {view.project.description}
                 </p>
               )}
-              <p className="mt-3 inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                <Eye className="h-3 w-3" />
-                你正在以分享链接查看本项目，只读模式。
-              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                  <Eye className="h-3 w-3" />
+                  你正在以分享链接查看本项目，只读模式。
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  data-testid="copy-share-link"
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-3 w-3 text-green-600" /> 已复制
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3 w-3" /> 复制链接
+                    </>
+                  )}
+                </button>
+              </div>
             </header>
 
             <h2 className="mb-2 text-sm font-semibold text-gray-900">
