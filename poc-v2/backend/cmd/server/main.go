@@ -197,6 +197,8 @@ func main() {
 		auditGroup.Use(middleware.AuthRequired())
 		{
 			auditGroup.GET("", auditH.ListAuditLogs)
+			// M4.5 增量：CSV 导出（M5+ 候选落地）
+			auditGroup.GET("/export", auditH.ExportAuditLogs)
 		}
 	}
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -337,6 +338,71 @@ func TestW45_AuditLoginSuccessAndFail(t *testing.T) {
 	if !gotLoginFail {
 		t.Error("缺少 user/login_fail 审计")
 	}
+}
+
+// TestW45_AuditExportCSV：M4.5 增量 — CSV 导出。
+func TestW45_AuditExportCSV(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "Exported", "private")
+	doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID, "name": "Mexp", "content": "x",
+	}))
+
+	w := doRequest(r, authedRequest("GET", "/api/v1/audit-logs/export?format=csv", token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("csv export: %d %s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/csv") {
+		t.Errorf("Content-Type 应含 text/csv，实际 %q", ct)
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, ".csv") {
+		t.Errorf("Content-Disposition 应含 attachment + .csv，实际 %q", cd)
+	}
+	body := w.Body.String()
+	if !strings.HasPrefix(body, "created_at,actor_id,action,target_type,target_id") {
+		t.Errorf("CSV 头缺失，实际前 80 字节：%q", body[:minLen(80, len(body))])
+	}
+	if !strings.Contains(body, "project_create") || !strings.Contains(body, "model_create") {
+		t.Errorf("CSV 应含 project_create + model_create 行，实际：%s", body)
+	}
+}
+
+// TestW45_AuditExportJSON：format=json 与 ListAuditLogs 行为一致。
+func TestW45_AuditExportJSON(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "Jexport", "private")
+	doRequest(r, authedRequest("POST", "/api/v1/models", token, gin.H{
+		"projectId": projectID, "name": "Mj", "content": "x",
+	}))
+	w := doRequest(r, authedRequest("GET", "/api/v1/audit-logs/export?format=json&limit=50", token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("json export: %d", w.Code)
+	}
+	logs := parseJSON(t, w.Body.Bytes())["data"].([]any)
+	if len(logs) == 0 {
+		t.Fatalf("应至少 1 条")
+	}
+}
+
+// TestW45_AuditExportInvalidFormat：format=xml 应 400。
+func TestW45_AuditExportInvalidFormat(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("GET", "/api/v1/audit-logs/export?format=xml", token, nil))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("应 400，实际 %d", w.Code)
+	}
+}
+
+func minLen(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // TestW45_AuditRBACScoping：M4.5 增量 — 非授权用户看不到他人的项目日志。

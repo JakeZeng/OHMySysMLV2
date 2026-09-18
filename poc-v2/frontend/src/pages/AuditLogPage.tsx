@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { ScrollText, Loader2, Filter } from 'lucide-react';
+import { ScrollText, Loader2, Filter, Download } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -53,6 +53,38 @@ export const AuditLogPage: React.FC = () => {
   const [projectId, setProjectId] = React.useState('');
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+
+  // M4.5 增量：导出 CSV（用当前筛选条件）
+  const handleExport = React.useCallback(async () => {
+    setExporting(true);
+    try {
+      const params: {
+        actor?: string;
+        targetType?: string;
+        targetId?: string;
+        projectId?: string;
+      } = {};
+      if (actor.trim()) params.actor = actor.trim();
+      if (targetType) params.targetType = targetType;
+      if (targetId.trim()) params.targetId = targetId.trim();
+      if (projectId.trim()) params.projectId = projectId.trim();
+      const url = await auditApi.exportUrl(params);
+      // 触发下载
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // 释放 blob URL
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }, [actor, targetType, targetId, projectId]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -135,6 +167,22 @@ export const AuditLogPage: React.FC = () => {
             />
             自动刷新（30s）
           </label>
+          <div className="mt-2 flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExport}
+              disabled={exporting}
+              data-testid="audit-export"
+            >
+              {exporting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              导出 CSV
+            </Button>
+          </div>
         </header>
 
         {/* 筛选器 */}

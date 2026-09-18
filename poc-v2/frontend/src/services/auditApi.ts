@@ -29,4 +29,25 @@ export const auditApi = {
     const { data } = await api.get<AuditLog[]>('/audit-logs', { params });
     return data ?? [];
   },
+
+  /**
+   * 导出审计日志（M4.5 增量）。
+   *
+   * 返回一个 blob URL，调用方负责 revoke。
+   * 默认 format=csv，浏览器通过 Content-Disposition 自动下载。
+   */
+  async exportUrl(params: {
+    actor?: string;
+    targetType?: string;
+    targetId?: string;
+    projectId?: string;
+    format?: 'csv' | 'json';
+  } = {}): Promise<string> {
+    const api = getApi();
+    const res = await api.get('/audit-logs/export', {
+      params: { ...params, format: params.format ?? 'csv' },
+      responseType: 'blob',
+    });
+    return URL.createObjectURL(res.data);
+  },
 };

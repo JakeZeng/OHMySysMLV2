@@ -1,6 +1,7 @@
 // Package handler — M4.5 审计日志查询端点。
 //
 //   - GET /api/v1/audit-logs?actor=<userId>&targetType=<type>&targetId=<id>&projectId=<id>&limit=<n>
+//   - GET /api/v1/audit-logs/export?format=csv&...<same filters>  （M4.5 增量：CSV 导出）
 //
 // RBAC（M4.5 增量）：默认任何登录用户都可读全部；为收紧暴露面，
 // handler 在拿到行后再过滤一遍，只保留调用方有"读权限"看的目标：
@@ -16,8 +17,11 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/csv"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -72,6 +76,74 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		logs = []*model.AuditLog{}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+// ExportAuditLogs 导出审计日志为 CSV / JSON。
+//
+//   - format=csv  → text/csv 流式响应，Content-Disposition: attachment
+//   - format=json → 等同于 ListAuditLogs 的 data 字段（便于一致性消费）
+//   - 默认 format=csv
+//
+// 上限 1000 行；与 ListAuditLogs 共享同样的 RBAC 过滤。
+func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
+	format := c.DefaultQuery("format", "csv")
+	if format != "csv" && format != "json" {
+		badRequest(c, "format 仅支持 csv / json")
+		return
+	}
+
+	actor := c.Query("actor")
+	tType := c.Query("targetType")
+	tID := c.Query("targetId")
+	projectID := c.Query("projectId")
+	callerID := c.GetString("user_id")
+
+	// 导出给一个更宽的上限（1000），仍受 RBAC 过滤
+	limit := 1000
+	if s := c.Query("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 5000 {
+			limit = n
+		}
+	}
+
+	logs, err := h.repo.ListAuditLogs(c, actor, tType, tID, projectID, limit)
+	if err != nil {
+		serverError(c, "查询审计日志失败", err)
+		return
+	}
+	if callerID != "" && len(logs) > 0 {
+		logs = h.filterLogsForCaller(c, callerID, logs)
+	}
+
+	if format == "json" {
+		c.JSON(http.StatusOK, gin.H{"data": logs})
+		return
+	}
+
+	// CSV
+	filename := fmt.Sprintf("audit-logs-%s.csv", time.Now().UTC().Format("20060102T150405Z"))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Writer.WriteHeader(http.StatusOK)
+
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{
+		"created_at", "actor_id", "action", "target_type", "target_id",
+		"ip", "user_agent", "metadata",
+	})
+	for _, l := range logs {
+		_ = w.Write([]string{
+			l.CreatedAt.UTC().Format(time.RFC3339Nano),
+			l.ActorID,
+			l.Action,
+			l.TargetType,
+			l.TargetID,
+			l.IP,
+			l.UserAgent,
+			l.Metadata,
+		})
+	}
+	w.Flush()
 }
 
 // filterLogsForCaller 按 RBAC 规则裁剪日志列表。
