@@ -6,14 +6,17 @@ import (
 
 func TestAll(t *testing.T) {
 	all := All()
-	if len(all) != 3 {
-		t.Fatalf("expected 3 templates, got %d", len(all))
+	if len(all) != 6 {
+		t.Fatalf("expected 6 templates, got %d", len(all))
 	}
 
 	wantIDs := map[string]bool{
 		"automotive-powertrain":     false,
 		"aerospace-flight-control": false,
 		"software-microservice":    false,
+		"medical-device":           false,
+		"industrial-automation":    false,
+		"automotive-adas":          false,
 	}
 
 	for _, tpl := range all {
@@ -45,13 +48,13 @@ func TestAll(t *testing.T) {
 
 func TestByIndustry(t *testing.T) {
 	auto := ByIndustry("automotive")
-	if len(auto) != 1 || auto[0].ID != "automotive-powertrain" {
-		t.Errorf("expected 1 automotive template, got %d", len(auto))
+	if len(auto) != 2 {
+		t.Errorf("expected 2 automotive templates, got %d", len(auto))
 	}
 
 	all := ByIndustry("")
-	if len(all) != 3 {
-		t.Errorf("expected 3 templates with empty industry, got %d", len(all))
+	if len(all) != 6 {
+		t.Errorf("expected 6 templates with empty industry, got %d", len(all))
 	}
 
 	none := ByIndustry("nonexistent")
