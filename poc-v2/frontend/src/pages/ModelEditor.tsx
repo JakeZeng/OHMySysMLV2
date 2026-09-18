@@ -31,6 +31,7 @@ import { downloadJson } from '@transform/exportJson';
 import { importFromJson } from '@transform/importJson';
 import { AIGenerateModal } from '../components/modals/AIGenerateModal';
 import { TemplateChooserModal } from '../components/modals/TemplateChooserModal';
+import { KeyboardShortcutsModal } from '../components/modals/KeyboardShortcutsModal';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -66,6 +67,8 @@ export const ModelEditor: React.FC = () => {
   // M3: AI 生成 + 模板选择器
   const [showAIGenerate, setShowAIGenerate] = React.useState(false);
   const [showTemplateChooser, setShowTemplateChooser] = React.useState(false);
+  // M4.5 增量：快捷键帮助
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = React.useState(false);
 
   // 暴露 dev hook：浏览器演示脚本可直接调用 store action
   React.useEffect(() => {
@@ -134,6 +137,7 @@ export const ModelEditor: React.FC = () => {
   };
 
   // M4.5 增量：Ctrl+S 全局快捷键保存（捕获阶段，阻止浏览器默认行为）
+  // + "?" 打开快捷键帮助
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -141,6 +145,16 @@ export const ModelEditor: React.FC = () => {
         if (!saving && !loading) {
           void handleSave();
         }
+      }
+      // "?" 打开快捷键帮助（仅在非输入元素上触发）
+      if (
+        e.key === '?' &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        setShowKeyboardShortcuts((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey, { capture: true });
@@ -347,6 +361,14 @@ export const ModelEditor: React.FC = () => {
         >
           <Upload className="h-3.5 w-3.5" /> 导入
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowKeyboardShortcuts(true)}
+          title="键盘快捷键 (?)"
+        >
+          ⌨ 快捷键
+        </Button>
 
         <div className="flex-1" />
 
@@ -454,6 +476,12 @@ export const ModelEditor: React.FC = () => {
         open={showTemplateChooser}
         onClose={() => setShowTemplateChooser(false)}
         onApply={handleApplyTemplate}
+      />
+
+      {/* M4.5: 快捷键帮助 Modal */}
+      <KeyboardShortcutsModal
+        open={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
       />
     </div>
   );
