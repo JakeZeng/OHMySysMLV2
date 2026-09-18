@@ -195,6 +195,8 @@ PartBodyMember
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  / EnumDef
+  / CommentBlock
 
 // ─── Port Definition ───────────────────────────────────────────────────
 
