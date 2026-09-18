@@ -561,9 +561,9 @@ export const ModelEditor: React.FC = () => {
   return (
     <div className="flex h-full flex-col">
       {/* 面包屑 + Toolbar */}
-      <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2">
         <Breadcrumb items={breadcrumbItems} />
-        <div className="mx-1 h-5 w-px bg-gray-200" />
+        <div className="mx-1 h-5 w-px bg-gray-200 dark:bg-gray-700" />
         <Button
           variant="ghost"
           size="sm"
@@ -571,7 +571,7 @@ export const ModelEditor: React.FC = () => {
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
-        <div className="mx-2 h-5 w-px bg-gray-200" />
+        <div className="mx-2 h-5 w-px bg-gray-200 dark:bg-gray-700" />
         {editingModelName ? (
           <form
             onSubmit={(e) => {
@@ -585,7 +585,7 @@ export const ModelEditor: React.FC = () => {
               onChange={(e) => setEditModelName(e.target.value)}
               autoFocus
               onBlur={handleModelNameSubmit}
-              className="h-8 w-40 rounded border border-gray-300 px-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="h-8 w-40 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-sm text-gray-900 dark:text-gray-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               data-testid="edit-model-name"
             />
           </form>
@@ -596,7 +596,7 @@ export const ModelEditor: React.FC = () => {
               setEditModelName(name);
               setEditingModelName(true);
             }}
-            className="h-8 rounded border border-transparent px-2 text-sm font-medium text-gray-900 transition hover:border-gray-300 hover:bg-gray-50"
+            className="h-8 rounded border border-transparent px-2 text-sm font-medium text-gray-900 dark:text-gray-100 transition hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800"
             title="双击重命名"
             data-testid="model-name-display"
           >
@@ -607,7 +607,7 @@ export const ModelEditor: React.FC = () => {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="描述（可选）"
-          className="h-8 w-48 rounded border border-gray-300 px-2 text-xs text-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="h-8 w-48 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-xs text-gray-500 dark:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           data-testid="model-description-input"
         />
         {version > 0 && (
@@ -823,7 +823,7 @@ export const ModelEditor: React.FC = () => {
       )}
 
       {/* M5: 视图模式 Tabs */}
-      <div className="flex items-center gap-1 border-b border-gray-200 bg-gray-50 px-3 py-1">
+      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-1">
         {([
           { key: 'structure', label: '结构视图', icon: '📦' },
           { key: 'behavior', label: '行为视图', icon: '⚡' },
@@ -836,8 +836,8 @@ export const ModelEditor: React.FC = () => {
             onClick={() => setViewMode(tab.key)}
             className={`rounded-md px-3 py-1 text-xs font-medium transition ${
               viewMode === tab.key
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
             }`}
             data-testid={`view-tab-${tab.key}`}
           >
@@ -845,7 +845,7 @@ export const ModelEditor: React.FC = () => {
           </button>
         ))}
         <div className="flex-1" />
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-gray-400 dark:text-gray-500">
           {filteredNodes.length} 节点 · {filteredEdges.length} 连接
         </span>
       </div>
