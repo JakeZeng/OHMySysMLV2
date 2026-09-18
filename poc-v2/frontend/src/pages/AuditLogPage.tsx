@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { ScrollText, Loader2, Filter, Download } from 'lucide-react';
+import { ScrollText, Loader2, Filter, Download, Archive } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -17,6 +17,8 @@ import {
 } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Modal } from '../components/ui/Modal';
+import { useToast } from '../components/ui/Toast';
 import { auditApi, type AuditLog } from '../services/auditApi';
 
 const ACTIONS = [
@@ -54,6 +56,66 @@ export const AuditLogPage: React.FC = () => {
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
   const [exporting, setExporting] = React.useState(false);
+
+  // M4.5 增量：归档清理
+  const { showToast } = useToast();
+  const [showArchive, setShowArchive] = React.useState(false);
+  const [archiveDays, setArchiveDays] = React.useState(30);
+  const [archiving, setArchiving] = React.useState(false);
+  const [archivePreview, setArchivePreview] = React.useState<{
+    wouldDelete?: number;
+    deleted?: number;
+  } | null>(null);
+
+  // 打开归档 modal 时立刻 dry-run 一次
+  React.useEffect(() => {
+    if (!showArchive) return;
+    setArchivePreview(null);
+    setArchiving(true);
+    auditApi
+      .archive(archiveDays, true)
+      .then((r) => setArchivePreview({ wouldDelete: r.wouldDelete }))
+      .catch((e: unknown) =>
+        setError((e as Error).message),
+      )
+      .finally(() => setArchiving(false));
+  }, [showArchive, archiveDays]);
+
+  const handleArchiveConfirm = React.useCallback(async () => {
+    setArchiving(true);
+    try {
+      const r = await auditApi.archive(archiveDays, false);
+      setArchivePreview({ deleted: r.deleted });
+      showToast({
+        title: '归档完成',
+        description: `已清理 ${r.deleted} 条 ${archiveDays} 天前的审计日志`,
+        variant: 'success',
+      });
+      // 主动重新拉一次（避免依赖外层 load 声明顺序）
+      const params: {
+        actor?: string;
+        targetType?: string;
+        targetId?: string;
+        projectId?: string;
+        limit: number;
+      } = { limit: 100 };
+      if (actor.trim()) params.actor = actor.trim();
+      if (targetType) params.targetType = targetType;
+      if (targetId.trim()) params.targetId = targetId.trim();
+      if (projectId.trim()) params.projectId = projectId.trim();
+      const data = await auditApi.list(params);
+      setLogs(data);
+      setLastRefreshedAt(new Date());
+    } catch (e) {
+      showToast({
+        title: '归档失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    } finally {
+      setArchiving(false);
+    }
+  }, [archiveDays, showToast, actor, targetType, targetId, projectId]);
 
   // M4.5 增量：导出 CSV（用当前筛选条件）
   const handleExport = React.useCallback(async () => {
@@ -181,6 +243,15 @@ export const AuditLogPage: React.FC = () => {
                 <Download className="h-3.5 w-3.5" />
               )}
               导出 CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowArchive(true)}
+              data-testid="audit-open-archive"
+            >
+              <Archive className="h-3.5 w-3.5" />
+              归档清理
             </Button>
           </div>
         </header>
@@ -316,6 +387,90 @@ export const AuditLogPage: React.FC = () => {
           </Card>
         )}
       </div>
+
+      {/* 归档清理（M4.5 增量） */}
+      <Modal
+        open={showArchive}
+        onOpenChange={(o) => {
+          setShowArchive(o);
+          if (!o) setArchivePreview(null);
+        }}
+        title="归档清理审计日志"
+        description="删除指定天数之前的所有审计日志。操作不可恢复，请先导出备份。"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setShowArchive(false)}
+              disabled={archiving}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleArchiveConfirm}
+              disabled={
+                archiving ||
+                (archivePreview?.deleted !== undefined) ||
+                (archivePreview?.wouldDelete !== undefined &&
+                  archivePreview.wouldDelete === 0)
+              }
+              data-testid="audit-archive-confirm"
+            >
+              {archiving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {archivePreview?.deleted !== undefined
+                ? `已删除 ${archivePreview.deleted} 条`
+                : archivePreview?.wouldDelete === 0
+                  ? '无需清理'
+                  : '确认删除'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700">
+              早于（天）
+            </label>
+            <Input
+              type="number"
+              min={7}
+              max={3650}
+              value={archiveDays}
+              onChange={(e) =>
+                setArchiveDays(Math.max(7, parseInt(e.target.value || '7', 10)))
+              }
+              data-testid="audit-archive-days"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              安全护栏：最小 7 天。生产环境建议先点"导出 CSV"备份再清理。
+            </p>
+          </div>
+
+          <div
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
+            data-testid="audit-archive-preview"
+          >
+            {archiving && !archivePreview ? (
+              <span>统计中…</span>
+            ) : archivePreview?.deleted !== undefined ? (
+              <span>
+                ✅ 已删除 <b>{archivePreview.deleted}</b> 条 {archiveDays} 天前的审计日志。
+              </span>
+            ) : archivePreview?.wouldDelete !== undefined ? (
+              archivePreview.wouldDelete === 0 ? (
+                <span>当前没有早于 {archiveDays} 天的审计日志。</span>
+              ) : (
+                <span>
+                  ⚠ 将删除 <b>{archivePreview.wouldDelete}</b> 条{' '}
+                  {archiveDays} 天前的审计日志。操作不可撤销。
+                </span>
+              )
+            ) : null}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

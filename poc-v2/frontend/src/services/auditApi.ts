@@ -50,4 +50,25 @@ export const auditApi = {
     });
     return URL.createObjectURL(res.data);
   },
+
+  /**
+   * 归档清理审计日志（M4.5 增量）。
+   *
+   * olderThanDays 必须 ≥ 7（后端安全护栏）。
+   * dryRun=true 时返回 wouldDelete 数量而不动数据。
+   */
+  async archive(olderThanDays: number, dryRun: boolean): Promise<{
+    olderThanDays: number;
+    wouldDelete?: number;
+    deleted?: number;
+    dryRun: boolean;
+  }> {
+    const api = getApi();
+    const { data } = await api.delete<{
+      data: { olderThanDays: number; wouldDelete?: number; deleted?: number; dryRun: boolean };
+    }>('/audit-logs/archive', {
+      params: { olderThanDays, dryRun: dryRun ? 'true' : 'false' },
+    });
+    return data.data;
+  },
 };
