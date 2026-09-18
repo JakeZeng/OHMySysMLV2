@@ -683,3 +683,29 @@ func TestHealthEnriched(t *testing.T) {
 		t.Errorf("counts 应含 audit_logs")
 	}
 }
+
+// TestAuthMe：M4.5 增量 — GET /auth/me 返回当前用户（含 isAdmin）。
+func TestAuthMe(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	w := doRequest(r, authedRequest("GET", "/api/v1/auth/me", token, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("me: %d %s", w.Code, w.Body.String())
+	}
+	data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	if data["username"] != "alice" {
+		t.Errorf("username 应 alice，实际 %v", data["username"])
+	}
+	if data["isAdmin"] != true {
+		t.Errorf("首个用户 isAdmin 应 true，实际 %v", data["isAdmin"])
+	}
+}
+
+// TestAuthMeNoToken：无 token 应 401。
+func TestAuthMeNoToken(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	w := doRequest(r, authedRequest("GET", "/api/v1/auth/me", "", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("应 401，实际 %d", w.Code)
+	}
+}
