@@ -16,6 +16,7 @@ import {
   Copy,
   Pencil,
   Search,
+  Download,
 } from 'lucide-react';
 import {
   Card,
@@ -141,6 +142,48 @@ export const ProjectDetail: React.FC = () => {
       });
     }
   }, [selectedModels, projectId, showToast]);
+
+  // M4.5 增量：导出项目（含所有模型）为 JSON
+  const handleExportProject = React.useCallback(async () => {
+    if (!current) return;
+    try {
+      const fullModels = await Promise.all(
+        models.map((m) => modelApi.get(projectId, m.id)),
+      );
+      const exportData = {
+        project: {
+          name: current.name,
+          description: current.description,
+          visibility: current.visibility,
+        },
+        models: fullModels.map((m) => ({
+          name: m.name,
+          description: m.description ?? '',
+          content: m.content,
+          version: m.version,
+        })),
+        exportedAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${current.name || 'project'}.sysml-project.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast({ title: '项目已导出', variant: 'success' });
+    } catch (e) {
+      showToast({
+        title: '导出失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [current, models, projectId, showToast]);
 
   // M4.5 增量：复制模型
   const handleDuplicateModel = React.useCallback(
@@ -421,6 +464,16 @@ export const ProjectDetail: React.FC = () => {
               title={canWrite ? '' : '当前权限不足以创建模型'}
             >
               <Plus className="h-4 w-4" /> 新建模型
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportProject}
+              disabled={!current || models.length === 0}
+              title="导出项目（含所有模型）"
+              data-testid="export-project"
+            >
+              <Download className="h-3.5 w-3.5" /> 导出
             </Button>
           </div>
         </div>
