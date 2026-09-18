@@ -93,9 +93,19 @@ export const TopNav: React.FC = () => {
       </nav>
 
       <div className="flex items-center gap-3">
-        <span className="text-xs text-gray-500">
-          {user ? user.email : '未登录'}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-500">
+            {user ? user.email : '未登录'}
+          </span>
+          {user?.isAdmin && (
+            <span
+              className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700"
+              data-testid="admin-badge"
+            >
+              Admin
+            </span>
+          )}
+        </div>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button
