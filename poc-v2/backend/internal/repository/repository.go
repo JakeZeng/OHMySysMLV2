@@ -188,6 +188,14 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 	); err != nil {
 		return fmt.Errorf("创建 audit_logs target 索引失败: %w", err)
 	}
+	// M4.5 增量：单列 created_at 索引 — 加速归档清理（DELETE WHERE created_at < ?）
+	// 与无过滤的列表查询（ORDER BY created_at DESC LIMIT）。
+	// 与上面复合索引互补：复合索引只在带 actor/target 过滤时命中。
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC)`,
+	); err != nil {
+		return fmt.Errorf("创建 audit_logs created_at 索引失败: %w", err)
+	}
 	return nil
 }
 

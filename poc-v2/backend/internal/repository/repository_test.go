@@ -403,3 +403,34 @@ func TestModelVersionConflict(t *testing.T) {
 		t.Errorf("Version = %d, want 2", got.Version)
 	}
 }
+
+// TestRepo_AuditIndexesPresent：M4.5 增量 — 验证三条审计索引都建好。
+//
+// initSchema 是幂等的（IF NOT EXISTS）；只检查 sqlite_master 里有预期索引名。
+// 不命中即说明 initSchema 缺一段；归档清理场景下没有 idx_audit_created 会全表扫描。
+func TestRepo_AuditIndexesPresent(t *testing.T) {
+	repo, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer repo.Close()
+
+	want := []string{
+		"idx_audit_actor",
+		"idx_audit_target",
+		"idx_audit_created",
+	}
+	for _, name := range want {
+		var n int
+		err := repo.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`,
+			name,
+		).Scan(&n)
+		if err != nil {
+			t.Fatalf("query %s: %v", name, err)
+		}
+		if n != 1 {
+			t.Errorf("index %s 未创建", name)
+		}
+	}
+}
