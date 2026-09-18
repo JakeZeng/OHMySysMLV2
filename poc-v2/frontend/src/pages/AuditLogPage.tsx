@@ -231,22 +231,22 @@ export const AuditLogPage: React.FC = () => {
   }, [autoRefresh, actor, targetType, targetId, projectId]);
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-5xl">
         <header className="mb-6">
-          <h1 className="flex items-center gap-2 text-2xl font-semibold text-gray-900">
-            <ScrollText className="h-6 w-6 text-gray-500" />
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+            <ScrollText className="h-6 w-6 text-gray-500 dark:text-gray-400" />
             审计日志
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             系统所有 mutating 操作的 append-only 记录。{logs.length > 0 && `共 ${logs.length} 条`}
             {lastRefreshedAt && (
-              <span className="ml-2 text-xs text-gray-400">
+              <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
                 （{lastRefreshedAt.toLocaleTimeString()} 刷新）
               </span>
             )}
           </p>
-          <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
+          <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
             <input
               type="checkbox"
               checked={autoRefresh}
