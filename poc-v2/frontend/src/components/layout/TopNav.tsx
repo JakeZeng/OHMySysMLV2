@@ -66,13 +66,13 @@ export const TopNav: React.FC = () => {
   return (
     <header
       className={cn(
-        'flex h-14 items-center justify-between border-b border-gray-200',
-        'bg-white px-4 shadow-sm'
+        'flex h-14 items-center justify-between border-b border-gray-200 dark:border-gray-700',
+        'bg-white dark:bg-gray-900 px-4 shadow-sm'
       )}
     >
       <Link
         to="/"
-        className="flex items-center gap-2 text-base font-semibold text-gray-900 hover:text-brand-600"
+        className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100 hover:text-brand-600"
       >
         <div className="flex h-7 w-7 items-center justify-center rounded bg-brand-600 text-sm font-bold text-white">
           S
@@ -91,8 +91,8 @@ export const TopNav: React.FC = () => {
               cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
                 isActive
-                  ? 'bg-brand-50 text-brand-700'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100'
               )
             }
           >
@@ -106,7 +106,7 @@ export const TopNav: React.FC = () => {
             <button
               className={cn(
                 'flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium',
-                'text-gray-600 transition hover:bg-gray-100 hover:text-gray-900',
+                'text-gray-600 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100',
                 'focus:outline-none focus:ring-2 focus:ring-brand-500'
               )}
             >
@@ -118,60 +118,60 @@ export const TopNav: React.FC = () => {
               align="start"
               sideOffset={6}
               className={cn(
-                'z-50 min-w-[220px] rounded-md border border-gray-200 bg-white p-1',
+                'z-50 min-w-[220px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1',
                 'shadow-lg focus:outline-none'
               )}
             >
               {/* 市场 */}
-              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                 市场
               </DropdownMenu.Label>
               {TOOL_ITEMS.filter((i) => i.group === 'marketplace').map((item) => (
                 <DropdownMenu.Item
                   key={item.to}
                   onSelect={() => navigate(item.to)}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
                 </DropdownMenu.Item>
               ))}
 
-              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
 
               {/* 工具 */}
-              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                 工具
               </DropdownMenu.Label>
               {TOOL_ITEMS.filter((i) => i.group === 'tools').map((item) => (
                 <DropdownMenu.Item
                   key={item.to}
                   onSelect={() => navigate(item.to)}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
                 </DropdownMenu.Item>
               ))}
 
-              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
 
               {/* 集成 */}
-              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400">
+              <DropdownMenu.Label className="px-2 py-1 text-[11px] font-semibold uppercase text-gray-400 dark:text-gray-500">
                 集成
               </DropdownMenu.Label>
               {TOOL_ITEMS.filter((i) => i.group === 'integration').map((item) => (
                 <DropdownMenu.Item
                   key={item.to}
                   onSelect={() => navigate(item.to)}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
                 </DropdownMenu.Item>
               ))}
 
-              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
 
               {/* 账户 + 管理 */}
               {TOOL_ITEMS.filter((i) => i.group === 'account' || i.group === 'admin').map(
@@ -179,7 +179,7 @@ export const TopNav: React.FC = () => {
                   <DropdownMenu.Item
                     key={item.to}
                     onSelect={() => navigate(item.to)}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                   >
                     <item.icon className="h-4 w-4" />
                     {item.label}
@@ -205,7 +205,7 @@ export const TopNav: React.FC = () => {
           {theme === 'light' ? '🌙' : '☀️'}
         </button>
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
             {user ? user.email : '未登录'}
           </span>
           {user?.isAdmin && (
@@ -235,21 +235,21 @@ export const TopNav: React.FC = () => {
               align="end"
               sideOffset={6}
               className={cn(
-                'z-50 min-w-[200px] rounded-md border border-gray-200 bg-white p-1',
+                'z-50 min-w-[200px] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1',
                 'shadow-lg focus:outline-none'
               )}
             >
               {user && (
                 <div className="px-2 py-2">
-                  <div className="text-sm font-medium text-gray-900">
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
                     {user.username}
                   </div>
-                  <div className="truncate text-xs text-gray-500">
+                  <div className="truncate text-xs text-gray-500 dark:text-gray-400">
                     {user.email}
                   </div>
                 </div>
               )}
-              <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
+              <DropdownMenu.Separator className="my-1 h-px bg-gray-100 dark:bg-gray-700" />
               <DropdownMenu.Item
                 onSelect={() => navigate('/profile')}
                 className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 outline-none data-[highlighted]:bg-gray-100"
