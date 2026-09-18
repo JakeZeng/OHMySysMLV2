@@ -328,7 +328,8 @@ export const ProjectDetail: React.FC = () => {
                     </CardHeader>
                     <CardContent>
                       <div className="text-xs text-gray-400">
-                        更新于 {relativeTime(m.updatedAt)}
+                        创建于 {relativeTime(m.createdAt)} · 更新于{' '}
+                        {relativeTime(m.updatedAt)}
                       </div>
                     </CardContent>
                   </Card>

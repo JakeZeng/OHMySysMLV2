@@ -220,6 +220,28 @@ export const ModelEditor: React.FC = () => {
     }
   }, [pipeline.model, name, showToast]);
 
+  // M4.5 增量：导出 .sysml 原始文件
+  const handleExportSysML = React.useCallback(() => {
+    try {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name || 'model'}.sysml`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast({ title: '已导出 .sysml', variant: 'success' });
+    } catch (e) {
+      showToast({
+        title: '导出失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [content, name, showToast]);
+
   // 导入 JSON
   const handleImportJson = React.useCallback(() => {
     const input = document.createElement('input');
@@ -351,7 +373,17 @@ export const ModelEditor: React.FC = () => {
           disabled={loading}
           title="导出 JSON"
         >
-          <Download className="h-3.5 w-3.5" /> 导出
+          <Download className="h-3.5 w-3.5" /> JSON
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleExportSysML}
+          disabled={loading}
+          title="导出 .sysml 原始文件"
+          data-testid="export-sysml"
+        >
+          <Download className="h-3.5 w-3.5" /> .sysml
         </Button>
         <Button
           variant="ghost"
