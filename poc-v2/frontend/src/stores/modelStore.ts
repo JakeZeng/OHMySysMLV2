@@ -36,6 +36,7 @@ interface ModelState {
   modelId: string | null;
   projectId: string | null;
   name: string;
+  description: string;
   content: string;
   version: number;
   pipeline: PipelineResult;
@@ -55,6 +56,7 @@ interface ModelState {
   aiAbortController: AbortController | null;
 
   setName: (n: string) => void;
+  setDescription: (d: string) => void;
   setContent: (c: string) => void;
   setProject: (id: string | null) => void;
   runPipeline: (text: string) => void;
@@ -86,6 +88,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   modelId: null,
   projectId: null,
   name: 'untitled',
+  description: '',
   content: '',
   version: 1,
   pipeline: EMPTY_PIPELINE,
@@ -103,6 +106,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   setName(n) {
     set({ name: n, saved: false });
+  },
+
+  setDescription(d) {
+    set({ description: d, saved: false });
   },
 
   setContent(c) {
@@ -203,6 +210,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
       const rec: ModelRecord = await modelApi.get(projectId, modelId);
       set({
         name: rec.name,
+        description: rec.description ?? '',
         content: rec.content,
         version: rec.version,
         modelId: rec.id,
@@ -217,7 +225,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   async saveModel() {
-    const { projectId, modelId, name, content, version } = get();
+    const { projectId, modelId, name, description, content, version } = get();
     if (!projectId) {
       set({ error: '缺少 projectId，无法保存' });
       return;
@@ -228,6 +236,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
       if (modelId) {
         rec = await modelApi.update(projectId, modelId, {
           name,
+          description,
           content,
           version,
         });

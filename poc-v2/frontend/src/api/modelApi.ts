@@ -11,6 +11,7 @@ const API_BASE = '/api/v1';
 export interface ModelRecord {
   id: string;
   name: string;
+  description?: string;
   content: string;
   version: number;
   createdAt: string;
@@ -20,6 +21,7 @@ export interface ModelRecord {
 export interface SaveModelRequest {
   id?: string;
   name: string;
+  description?: string;
   content: string;
   version?: number;
 }

@@ -46,6 +46,8 @@ export const ModelEditor: React.FC = () => {
 
   const content = useModelStore((s) => s.content);
   const name = useModelStore((s) => s.name);
+  const description = useModelStore((s) => s.description);
+  const setDescription = useModelStore((s) => s.setDescription);
   const version = useModelStore((s) => s.version);
   const fetchProject = useProjectStore((s) => s.fetchOne);
   const currentProject = useProjectStore((s) => s.current);
@@ -365,6 +367,13 @@ export const ModelEditor: React.FC = () => {
           onChange={(e) => setName(e.target.value)}
           placeholder="模型名"
           className="h-8 rounded border border-gray-300 px-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="描述（可选）"
+          className="h-8 w-48 rounded border border-gray-300 px-2 text-xs text-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          data-testid="model-description-input"
         />
         {version > 0 && (
           <span className="text-xs text-gray-400" data-testid="model-version">
