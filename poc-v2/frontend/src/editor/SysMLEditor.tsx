@@ -34,6 +34,8 @@ interface SysMLEditorProps {
   readOnly?: boolean;
   /** M4.5 增量：是否显示 minimap（默认 false） */
   showMinimap?: boolean;
+  /** M4.5 增量：是否自动换行（默认 true） */
+  wordWrap?: 'on' | 'off';
 }
 
 /** 暴露给父组件的操作接口 */
@@ -145,6 +147,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   height = '100%',
   readOnly = false,
   showMinimap = false,
+  wordWrap = 'on',
 }, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -254,7 +257,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
         lineNumbers: 'on',
         minimap: { enabled: showMinimap },
         scrollBeyondLastLine: false,
-        wordWrap: 'on',
+        wordWrap: wordWrap,
         tabSize: 2,
         renderLineHighlight: 'all',
         // 保留关键词补全（suggest widget），下面的 Space keybinding
