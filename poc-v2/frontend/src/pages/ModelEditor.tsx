@@ -133,6 +133,21 @@ export const ModelEditor: React.FC = () => {
     }
   };
 
+  // M4.5 增量：Ctrl+S 全局快捷键保存（捕获阶段，阻止浏览器默认行为）
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (!saving && !loading) {
+          void handleSave();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saving, loading]);
+
   // 导出 JSON
   const handleExportJson = React.useCallback(() => {
     try {
