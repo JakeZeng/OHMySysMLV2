@@ -7,6 +7,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
 import { GlobalSearch } from '../GlobalSearch';
 
@@ -14,6 +15,8 @@ export const TopNav: React.FC = () => {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggle);
 
   const handleLogout = async () => {
     await logout();
@@ -108,6 +111,15 @@ export const TopNav: React.FC = () => {
 
       <div className="flex items-center gap-3">
         <GlobalSearch />
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className="rounded-md p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+          title={theme === 'light' ? '切换深色模式' : '切换浅色模式'}
+          data-testid="theme-toggle"
+        >
+          {theme === 'light' ? '🌙' : '☀️'}
+        </button>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500">
             {user ? user.email : '未登录'}
