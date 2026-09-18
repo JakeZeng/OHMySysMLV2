@@ -245,6 +245,13 @@ export const ModelEditor: React.FC = () => {
           ?.getEditor()
           ?.trigger('keyboard', 'editor.action.commentLine', {});
       }
+      // Ctrl+Shift+K 删除当前行（Monaco 内置）
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'K') {
+        e.preventDefault();
+        sysmlEditorRef.current
+          ?.getEditor()
+          ?.trigger('keyboard', 'editor.action.deleteLines', {});
+      }
       // Ctrl+Shift+L 切换行号显示
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
         e.preventDefault();
