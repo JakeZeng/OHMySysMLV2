@@ -301,7 +301,7 @@ func TestW45_AuditLoginSuccessAndFail(t *testing.T) {
 
 	// 成功登录
 	wOk := doRequest(r, authedRequest("POST", "/api/v1/auth/login", "", gin.H{
-		"username": "alice", "password": "pw_alice_123",
+		"username": "alice", "password": "pass-1234",
 	}))
 	if wOk.Code != http.StatusOK {
 		t.Fatalf("login ok: %d", wOk.Code)
@@ -336,5 +336,116 @@ func TestW45_AuditLoginSuccessAndFail(t *testing.T) {
 	}
 	if !gotLoginFail {
 		t.Error("缺少 user/login_fail 审计")
+	}
+}
+
+// TestW45_AuditRBACScoping：M4.5 增量 — 非授权用户看不到他人的项目日志。
+//
+// 场景：
+//   - Alice 建项目 projA 并做 share/link_revoke
+//   - Bob 完全不接触 projA（无任何 project_access）
+//   - Bob 查 audit-logs：应看不到 projA 的 share/link_revoke 行
+//     （但能看到自己的 actor 行，如 register / login）
+func TestW45_AuditRBACScoping(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, tokenB, _, idB := registerTwoUsers(t, r)
+	projectA := createProject(t, r, tokenA, "ProjA_rbac", "private")
+
+	// Alice 在 projA 上做 share 给 Bob + revoke
+	doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectA+"/shares", tokenA, gin.H{
+		"userId": idB, "permission": "read",
+	}))
+	doRequest(r, authedRequest("DELETE", "/api/v1/projects/"+projectA+"/shares/"+idB, tokenA, nil))
+	wLink := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectA+"/links", tokenA, gin.H{
+		"permission": "read",
+	}))
+	linkID := parseJSON(t, wLink.Body.Bytes())["data"].(map[string]any)["link"].(map[string]any)["id"].(string)
+	doRequest(r, authedRequest("DELETE", "/api/v1/projects/"+projectA+"/links/"+linkID, tokenA, nil))
+
+	// 拉所有 audit（用 admin 视角的 Alice 看全集）
+	wAll := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?limit=200", tokenA, nil))
+	allLogs := parseJSON(t, wAll.Body.Bytes())["data"].([]any)
+
+	// Bob 的视角（应被 RBAC 过滤掉 projA 行）
+	wBob := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?limit=200", tokenB, nil))
+	if wBob.Code != http.StatusOK {
+		t.Fatalf("bob list: %d", wBob.Code)
+	}
+	bobLogs := parseJSON(t, wBob.Body.Bytes())["data"].([]any)
+
+	// 计算全集里 projA 行的数量 + Bob 看到的行数量
+	countProjAForAlice := 0
+	for _, l := range allLogs {
+		m := l.(map[string]any)
+		if rowTouchesProjectA(m, projectA) {
+			countProjAForAlice++
+		}
+	}
+	countProjAForBob := 0
+	for _, l := range bobLogs {
+		m := l.(map[string]any)
+		if rowTouchesProjectA(m, projectA) {
+			countProjAForBob++
+		}
+	}
+
+	if countProjAForAlice == 0 {
+		t.Fatalf("Alice 视角应看到 projA 审计行，实际 0")
+	}
+	if countProjAForBob != 0 {
+		t.Errorf("Bob 视角不应看到 projA 任何行，实际 %d 行：%v",
+			countProjAForBob, bobLogs)
+	}
+}
+
+// rowTouchesProjectA 判断一行是否与 projectA 关联（target_id 直接等于 / 包含 / 通过 model 或 share_link 反向可达）。
+func rowTouchesProjectA(m map[string]any, projectA string) bool {
+	tid, _ := m["targetId"].(string)
+	if tid == "" {
+		return false
+	}
+	if tid == projectA {
+		return true
+	}
+	// share target 形如 "<projectId>/<userId>"
+	for i := 0; i < len(tid); i++ {
+		if tid[i] == '/' && tid[:i] == projectA {
+			return true
+		}
+	}
+	return false
+}
+
+// TestW45_AuditRBACActorAlwaysVisible：调用方作为 actor 的行一定可见，
+// 即使该行针对一个自己无权访问的 project（rare 场景：曾经的成员操作）。
+func TestW45_AuditRBACActorAlwaysVisible(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	tokenA, tokenB, _, idB := registerTwoUsers(t, r)
+	// Alice 建一个 project（Bob 无任何访问权）
+	_ = createProject(t, r, tokenA, "Proj_owner_only", "private")
+
+	// Bob 触发一条自己作为 actor 的审计（登录一次）
+	wBobLogin := doRequest(r, authedRequest("POST", "/api/v1/auth/login", "", gin.H{
+		"username": "bob", "password": "pass-1234",
+	}))
+	if wBobLogin.Code != http.StatusOK {
+		t.Fatalf("bob login: %d", wBobLogin.Code)
+	}
+
+	// Bob 按 actor=自己 查询 — 应看到自己的 login 行（actor-self 永远可见）
+	wBob := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?actor="+idB, tokenB, nil))
+	logs := parseJSON(t, wBob.Body.Bytes())["data"].([]any)
+	if len(logs) == 0 {
+		t.Fatalf("bob 查自己的 actor 行应至少 1 条，实际 0")
+	}
+	foundLogin := false
+	for _, l := range logs {
+		m := l.(map[string]any)
+		if m["action"] == "login" && m["targetType"] == "user" {
+			foundLogin = true
+		}
+	}
+	if !foundLogin {
+		t.Errorf("bob 看不到自己的 login 行")
 	}
 }

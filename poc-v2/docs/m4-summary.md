@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `TBD`）
 
 | 项 | 内容 |
 |----|------|
@@ -25,6 +25,8 @@
 | Share-link rotation API | `POST /projects/:id/links/:linkId/rotate`：撤销旧 token + 生成新 token，保留审计连续性 |
 | 审计自动轮询 | AuditLogPage 30s silent polling（可关闭） |
 | 审计 projectId 过滤 | `?projectId=` 把 project/model/share/link 关联日志收拢到单一 project 视图 |
+| ProjectDetail 活动标签 | 切到"活动"标签加载 projectId 视角审计（懒加载） |
+| 审计 RBAC 收紧 | handler 在拿到行后按调用方权限再过滤：project/model/share/link 要求项目 read；team/member/project_access 要求 team admin/owner；user 仅本人；自己作为 actor 的行永远可见 |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -139,6 +141,5 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 ## 后续优化建议（M5+）
 
 1. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
-2. **audit-log 角色过滤**：当前任何登录用户可看所有审计，生产应按项目/团队成员关系收紧
-3. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
-4. **审计导出 CSV / SIEM 集成**：合规需要
+2. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
+3. **审计导出 CSV / SIEM 集成**：合规需要

@@ -1,12 +1,21 @@
 // Package handler — M4.5 审计日志查询端点。
 //
-//   - GET /api/v1/audit-logs?actor=<userId>&targetType=<type>&targetId=<id>&limit=<n>
+//   - GET /api/v1/audit-logs?actor=<userId>&targetType=<type>&targetId=<id>&projectId=<id>&limit=<n>
 //
-// 当前 user 可看：自己的日志 + 自己是 admin 的项目的目标日志（简化：先返回所有人的，
-// owner 自己项目相关的）— 生产应加 role-based 过滤；M4.5 先开放给 owner。
+// RBAC（M4.5 增量）：默认任何登录用户都可读全部；为收紧暴露面，
+// handler 在拿到行后再过滤一遍，只保留调用方有"读权限"看的目标：
+//
+//   - 调用方是 actor：本人的操作日志一定可见
+//   - target_type ∈ {project, model, share, link}：调用方对该 target 的
+//     project 必须至少 read（owner / 直接 / 团队授权）
+//   - target_type ∈ {team, member, project_access}：调用方须是该 team 的
+//     admin / owner
+//   - target_type = user：仅本人用户行可见
+//   - 无 actor 的匿名 / 系统行：仅当 target 仍可被当前用户访问时可见
 package handler
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 
@@ -25,7 +34,7 @@ func NewAuditHandler(repo *repository.SQLiteRepository) *AuditHandler {
 	return &AuditHandler{repo: repo}
 }
 
-// ListAuditLogs 返回审计日志。
+// ListAuditLogs 返回审计日志（按时间倒序，最多 limit 条，默认 50，上限 200）。
 //
 // 查询参数（全部可选）：
 //
@@ -39,6 +48,7 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	tType := c.Query("targetType")
 	tID := c.Query("targetId")
 	projectID := c.Query("projectId")
+	callerID := c.GetString("user_id")
 
 	limit := 50
 	if s := c.Query("limit"); s != "" {
@@ -52,10 +62,137 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		serverError(c, "查询审计日志失败", err)
 		return
 	}
+
+	// RBAC：登录用户只能看到自己有 read 权限的那部分目标行
+	if callerID != "" && len(logs) > 0 {
+		logs = h.filterLogsForCaller(c, callerID, logs)
+	}
+
 	if logs == nil {
 		logs = []*model.AuditLog{}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})
+}
+
+// filterLogsForCaller 按 RBAC 规则裁剪日志列表。
+//
+// 设计取舍：SQL 只负责"按 index 取到候选行"，可见性判定放 Go 端避免
+// 4 种 target_type 各写一段 UNION。一次列表 ≤ 200 行，N+1 查询可接受。
+func (h *AuditHandler) filterLogsForCaller(
+	c *gin.Context, callerID string, in []*model.AuditLog,
+) []*model.AuditLog {
+	out := make([]*model.AuditLog, 0, len(in))
+	for _, l := range in {
+		if h.callerCanSeeAudit(c, callerID, l) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// callerCanSeeAudit 单行可见性判定。
+func (h *AuditHandler) callerCanSeeAudit(c *gin.Context, callerID string, l *model.AuditLog) bool {
+	// 1. 我自己的操作日志一定可见
+	if l.ActorID == callerID {
+		return true
+	}
+
+	switch l.TargetType {
+	case "project":
+		return h.callerHasProjectRead(c, callerID, l.TargetID)
+	case "model":
+		return h.callerHasModelRead(c, callerID, l.TargetID)
+	case "share":
+		// targetId 形如 "<projectId>/<userId>" 或纯 "<projectId>"
+		return h.callerHasShareTargetRead(c, callerID, l.TargetID)
+	case "link":
+		return h.callerHasLinkTargetRead(c, callerID, l.TargetID)
+	case "team", "member":
+		// targetId 是 teamId（member 行也是 teamId）
+		return h.callerIsTeamAdmin(c, callerID, l.TargetID)
+	case "project_access":
+		// targetId 是 teamId；调用方是该 team 的 admin/owner 才能看
+		return h.callerIsTeamAdmin(c, callerID, l.TargetID)
+	case "user":
+		// 仅本人用户行
+		return l.TargetID == callerID
+	default:
+		// 未知 target 类型：保守拒绝
+		return false
+	}
+}
+
+// callerHasProjectRead：调用方对指定 project 至少 read。
+func (h *AuditHandler) callerHasProjectRead(c *gin.Context, callerID, projectID string) bool {
+	if projectID == "" {
+		return false
+	}
+	held, err := userHeldPermission(h.repo, callerID, projectID)
+	if err != nil {
+		return false
+	}
+	return isAtLeast(held, PermRead)
+}
+
+// callerHasModelRead：解析 model → project → read。
+func (h *AuditHandler) callerHasModelRead(c *gin.Context, callerID, modelID string) bool {
+	if modelID == "" {
+		return false
+	}
+	var projectID string
+	err := h.repo.DB().QueryRowContext(c,
+		`SELECT project_id FROM models WHERE id = ?`, modelID,
+	).Scan(&projectID)
+	if err != nil {
+		return false
+	}
+	return h.callerHasProjectRead(c, callerID, projectID)
+}
+
+// callerHasShareTargetRead：targetId 形如 "<projectId>" 或 "<projectId>/<userId>"。
+func (h *AuditHandler) callerHasShareTargetRead(c *gin.Context, callerID, targetID string) bool {
+	projectID := targetID
+	for i := 0; i < len(targetID); i++ {
+		if targetID[i] == '/' {
+			projectID = targetID[:i]
+			break
+		}
+	}
+	return h.callerHasProjectRead(c, callerID, projectID)
+}
+
+// callerHasLinkTargetRead：解析 share_link → project → read。
+func (h *AuditHandler) callerHasLinkTargetRead(c *gin.Context, callerID, linkID string) bool {
+	if linkID == "" {
+		return false
+	}
+	var projectID string
+	err := h.repo.DB().QueryRowContext(c,
+		`SELECT project_id FROM share_links WHERE id = ?`, linkID,
+	).Scan(&projectID)
+	if err != nil {
+		return false
+	}
+	return h.callerHasProjectRead(c, callerID, projectID)
+}
+
+// callerIsTeamAdmin：调用方是 team admin 或 owner。
+func (h *AuditHandler) callerIsTeamAdmin(c *gin.Context, callerID, teamID string) bool {
+	if teamID == "" {
+		return false
+	}
+	var role string
+	err := h.repo.DB().QueryRowContext(c,
+		`SELECT role FROM team_members WHERE team_id = ? AND user_id = ?`,
+		teamID, callerID,
+	).Scan(&role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false
+		}
+		return false
+	}
+	return role == "admin" || role == "owner"
 }
 
 // writeAudit 内部 helper：从 gin context 抽取 IP / UA / actor 写入一条审计。
