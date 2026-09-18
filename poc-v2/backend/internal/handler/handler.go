@@ -370,6 +370,35 @@ func (h *Handler) GetModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": m})
 }
 
+// ListModelVersions 返回模型的历史版本列表（M4.5 增量）。
+func (h *Handler) ListModelVersions(c *gin.Context) {
+	modelID := c.Param("modelId")
+	if modelID == "" {
+		badRequest(c, "缺少 modelId", nil)
+		return
+	}
+	// 验证模型存在且当前用户有 read 权限
+	_, _, lerr := loadAccessibleModel(c, h.repo, modelID, PermRead)
+	if lerr != nil {
+		return
+	}
+	limit := 20
+	if s := c.Query("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	versions, err := h.repo.ListModelVersions(c, modelID, limit)
+	if err != nil {
+		serverError(c, "查询版本历史失败", err)
+		return
+	}
+	if versions == nil {
+		versions = []*model.ModelVersion{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": versions})
+}
+
 func (h *Handler) UpdateModel(c *gin.Context) {
 	id := modelID(c)
 	m, _, _, err := loadAccessibleModel(c, h.repo, id, PermWrite)

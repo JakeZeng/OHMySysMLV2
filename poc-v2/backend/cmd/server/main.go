@@ -109,6 +109,8 @@ func main() {
 			projects.GET("/:id/models/:modelId", h.GetModel)
 			projects.PUT("/:id/models/:modelId", h.UpdateModel)
 			projects.DELETE("/:id/models/:modelId", h.DeleteModel)
+			// M4.5 增量：模型版本历史（project-scoped）
+			projects.GET("/:id/models/:modelId/versions", h.ListModelVersions)
 
 			// M4 W3：项目级分享（owner 才能管）
 			projects.POST("/:id/shares", shareH.AddShare)
@@ -130,6 +132,8 @@ func main() {
 			models.GET("/:id", h.GetModel)
 			models.PUT("/:id", h.UpdateModel)
 			models.DELETE("/:id", h.DeleteModel)
+			// M4.5 增量：模型版本历史
+			models.GET("/:id/versions", h.ListModelVersions)
 		}
 
 		// AI endpoints（受保护）
