@@ -13,6 +13,7 @@ import {
   Share2,
   Settings,
   Activity,
+  Copy,
 } from 'lucide-react';
 import {
   Card,
@@ -115,6 +116,31 @@ export const ProjectDetail: React.FC = () => {
       });
     }
   }, [selectedModels, projectId, showToast]);
+
+  // M4.5 增量：复制模型
+  const handleDuplicateModel = React.useCallback(
+    async (modelId: string, modelName: string) => {
+      try {
+        const full = await modelApi.get(projectId, modelId);
+        const rec: ModelRecord = await modelApi.create(projectId, {
+          name: `${modelName} (副本)`,
+          content: full.content ?? '',
+          version: 1,
+        });
+        showToast({ title: `已复制「${modelName}」`, variant: 'success' });
+        const list = await modelApi.listByProject(projectId);
+        setModels(list);
+        navigate(`/models/${rec.id}?projectId=${projectId}`);
+      } catch (e) {
+        showToast({
+          title: '复制失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [projectId, showToast, navigate],
+  );
 
   const loadProject = React.useCallback(async () => {
     if (!projectId) return;
@@ -397,9 +423,24 @@ export const ProjectDetail: React.FC = () => {
                           <FileCode2 className="h-4 w-4 text-gray-400" />
                           {m.name}
                         </CardTitle>
-                        <span className="text-xs text-gray-400">
-                          v{m.version}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-400">
+                            v{m.version}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              void handleDuplicateModel(m.id, m.name);
+                            }}
+                            title="复制模型"
+                            data-testid={`duplicate-model-${m.id}`}
+                            className="rounded p-0.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
