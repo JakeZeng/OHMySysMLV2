@@ -93,8 +93,9 @@ export const ProjectList: React.FC = () => {
     React.useState<ProjectVisibility>('private');
   const [creating, setCreating] = React.useState(false);
 
-  // M4.5 增量：项目列表搜索过滤
+  // M4.5 增量：项目列表搜索过滤 + 排序
   const [search, setSearch] = React.useState('');
+  const [sortBy, setSortBy] = React.useState<'updated' | 'name'>('updated');
 
   React.useEffect(() => {
     void fetchProjects().catch((e: Error) => {
@@ -131,15 +132,24 @@ export const ProjectList: React.FC = () => {
 
   const groups = React.useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = q
+    let filtered = q
       ? list.filter(
           (p) =>
             p.name.toLowerCase().includes(q) ||
             (p.description ?? '').toLowerCase().includes(q),
         )
       : list;
+    // 排序
+    if (sortBy === 'name') {
+      filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      filtered = [...filtered].sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+    }
     return groupProjects(filtered, user?.id);
-  }, [list, user?.id, search]);
+  }, [list, user?.id, search, sortBy]);
 
   const totalCount = list.length;
   const filteredCount = groups.reduce((n, g) => n + g.items.length, 0);
@@ -165,16 +175,27 @@ export const ProjectList: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             {totalCount > 0 && (
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="搜索项目…"
-                  data-testid="project-search"
-                  className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="搜索项目…"
+                    data-testid="project-search"
+                    className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </div>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'updated' | 'name')}
+                  className="rounded-md border border-gray-300 bg-white py-1.5 px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  data-testid="project-sort"
+                >
+                  <option value="updated">最近更新</option>
+                  <option value="name">名称</option>
+                </select>
               </div>
             )}
             <Button onClick={() => setShowCreate(true)}>
