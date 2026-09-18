@@ -191,6 +191,13 @@ export const ModelEditor: React.FC = () => {
           ?.getEditor()
           ?.trigger('keyboard', 'editor.action.startFindReplaceAction', {});
       }
+      // Ctrl+G 打开 Monaco 的"跳转到行"面板
+      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+        e.preventDefault();
+        sysmlEditorRef.current
+          ?.getEditor()
+          ?.trigger('keyboard', 'editor.action.gotoLine', {});
+      }
     };
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true });
