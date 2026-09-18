@@ -35,6 +35,7 @@ import { AIGenerateModal } from '../components/modals/AIGenerateModal';
 import { TemplateChooserModal } from '../components/modals/TemplateChooserModal';
 import { KeyboardShortcutsModal } from '../components/modals/KeyboardShortcutsModal';
 import { VersionHistoryPanel } from '../components/VersionHistoryPanel';
+import { Breadcrumb } from '../components/Breadcrumb';
 import { modelApi, type ModelVersion } from '../services/modelApi';
 
 export const ModelEditor: React.FC = () => {
@@ -440,17 +441,32 @@ export const ModelEditor: React.FC = () => {
     if (showVersionHistory) void loadVersionHistory();
   }, [showVersionHistory, loadVersionHistory]);
 
+  const breadcrumbItems = React.useMemo(() => {
+    const items: { label: string; to?: string }[] = [
+      { label: '项目', to: '/projects' },
+    ];
+    if (currentProject) {
+      items.push({
+        label: currentProject.name,
+        to: `/projects/${projectIdFromQuery}`,
+      });
+    }
+    items.push({ label: name || 'untitled' });
+    return items;
+  }, [currentProject, projectIdFromQuery, name]);
+
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar */}
+      {/* 面包屑 + Toolbar */}
       <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2">
+        <Breadcrumb items={breadcrumbItems} />
+        <div className="mx-1 h-5 w-px bg-gray-200" />
         <Button
           variant="ghost"
           size="sm"
           onClick={() => navigate(`/projects/${projectIdFromQuery}`)}
         >
-          <ArrowLeft className="h-3.5 w-3.5" />{' '}
-          {currentProject ? currentProject.name : '返回项目'}
+          <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
         <div className="mx-2 h-5 w-px bg-gray-200" />
         {editingModelName ? (
