@@ -4,7 +4,7 @@
 
 import * as React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Users, Loader2, Crown } from 'lucide-react';
+import { Plus, Users, Loader2, Crown, Search } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -23,6 +23,18 @@ export const TeamsPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [showCreate, setShowCreate] = React.useState(false);
+  const [search, setSearch] = React.useState('');
+
+  // M4.5 增量：过滤后的列表
+  const filteredList = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (t) =>
+        t.name.toLowerCase().includes(q) ||
+        (t.description ?? '').toLowerCase().includes(q),
+    );
+  }, [list, search]);
 
   React.useEffect(() => {
     void fetchTeams().catch((e: Error) => {
@@ -39,13 +51,34 @@ export const TeamsPage: React.FC = () => {
             <p className="mt-1 text-sm text-gray-500">
               管理你所在的团队，并为其授予项目访问权限。
               {list.length > 0 && (
-                <span className="ml-1 text-gray-400">· 共 {list.length} 个</span>
+                <span className="ml-1 text-gray-400">
+                  · 共{' '}
+                  {search.trim()
+                    ? `${filteredList.length}/${list.length}`
+                    : list.length}{' '}
+                  个
+                </span>
               )}
             </p>
           </div>
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" /> 创建团队
-          </Button>
+          <div className="flex items-center gap-2">
+            {list.length > 0 && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="搜索团队…"
+                  data-testid="team-search"
+                  className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
+            )}
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" /> 创建团队
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -64,7 +97,7 @@ export const TeamsPage: React.FC = () => {
           </Card>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {list.map((t) => (
+            {filteredList.map((t) => (
               <Link
                 key={t.id}
                 to={`/teams/${t.id}`}
