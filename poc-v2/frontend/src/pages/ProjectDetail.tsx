@@ -246,7 +246,7 @@ export const ProjectDetail: React.FC = () => {
     try {
       await removeProject(current.id);
       showToast({ title: '项目已删除', variant: 'success' });
-      navigate('/');
+      navigate('/projects');
     } catch (e) {
       showToast({
         title: '删除失败',
@@ -260,7 +260,7 @@ export const ProjectDetail: React.FC = () => {
     <div className="h-full overflow-auto bg-gray-50 p-6">
       <div className="mx-auto max-w-5xl">
         <Link
-          to="/"
+          to="/projects"
           className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
         >
           <ArrowLeft className="h-3 w-3" /> 返回项目列表

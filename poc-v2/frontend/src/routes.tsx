@@ -15,6 +15,7 @@ import { TeamDetailPage } from './pages/TeamDetailPage';
 import { SharedProjectPage } from './pages/SharedProjectPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { DashboardPage } from './pages/DashboardPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -31,7 +32,8 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <ProjectList /> },
+      { index: true, element: <DashboardPage /> },
+      { path: 'projects', element: <ProjectList /> },
       { path: 'projects/:projectId', element: <ProjectDetail /> },
       { path: 'models/:modelId', element: <ModelEditor /> },
       { path: 'metamodel', element: <MetamodelPage /> },
