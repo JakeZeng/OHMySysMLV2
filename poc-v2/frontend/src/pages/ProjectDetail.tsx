@@ -15,6 +15,7 @@ import {
   Activity,
   Copy,
   Pencil,
+  Search,
 } from 'lucide-react';
 import {
   Card,
@@ -73,6 +74,7 @@ export const ProjectDetail: React.FC = () => {
   const [name, setName] = React.useState('');
   const [content, setContent] = React.useState(DEFAULT_MODEL_BODY);
   const [creating, setCreating] = React.useState(false);
+  const [modelSearch, setModelSearch] = React.useState('');
 
   // M4.5 增量：内联重命名项目
   const [editingName, setEditingName] = React.useState(false);
@@ -442,6 +444,21 @@ export const ProjectDetail: React.FC = () => {
                 </Button>
               </div>
             )}
+            {models.length > 3 && (
+              <div className="mb-3">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    placeholder="搜索模型…"
+                    data-testid="model-search"
+                    className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </div>
+              </div>
+            )}
           </>
         ) : null}
         {tab === 'models' ? (
@@ -461,7 +478,16 @@ export const ProjectDetail: React.FC = () => {
             </Card>
           ) : (
             <div className="space-y-2">
-              {models.map((m) => (
+              {models
+                .filter(
+                  (m) =>
+                    !modelSearch.trim() ||
+                    m.name.toLowerCase().includes(modelSearch.toLowerCase()) ||
+                    (m.description ?? '')
+                      .toLowerCase()
+                      .includes(modelSearch.toLowerCase()),
+                )
+                .map((m) => (
                 <Link
                   key={m.id}
                   to={`/models/${m.id}?projectId=${projectId}`}
