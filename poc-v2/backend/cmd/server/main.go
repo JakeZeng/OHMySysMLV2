@@ -291,6 +291,13 @@ func main() {
 			notifGroup.PUT("/:id/read", h.MarkAsRead)
 			notifGroup.PUT("/read-all", h.MarkAllAsRead)
 		}
+
+		// 代码生成（受保护）
+		codegenGroup := v1.Group("/codegen")
+		codegenGroup.Use(middleware.AuthRequired())
+		{
+			codegenGroup.POST("/generate", h.GenerateCode)
+		}
 	}
 
 	srv := &http.Server{

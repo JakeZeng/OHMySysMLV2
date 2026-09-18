@@ -23,6 +23,7 @@ import { ImportPage } from './pages/ImportPage';
 import { ReportPage } from './pages/ReportPage';
 import { PluginsPage } from './pages/PluginsPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
+import { CodeGenPage } from './pages/CodeGenPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
       { path: 'reports', element: <ReportPage /> },
       { path: 'plugins', element: <PluginsPage /> },
       { path: 'subscription', element: <SubscriptionPage /> },
+      { path: 'codegen', element: <CodeGenPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },

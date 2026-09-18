@@ -23,6 +23,7 @@ import {
   Key,
   Webhook,
   FileUp,
+  Code,
 } from 'lucide-react';
 import {
   Card,
@@ -222,7 +223,7 @@ export const DashboardPage: React.FC = () => {
             { icon: Key, label: 'API Keys', to: '/api-keys', color: 'text-gray-500' },
             { icon: Webhook, label: 'Webhook', to: '/webhooks', color: 'text-teal-500' },
             { icon: CreditCard, label: '订阅', to: '/subscription', color: 'text-pink-500' },
-            { icon: Crown, label: '元模型', to: '/metamodel', color: 'text-yellow-500' },
+            { icon: Code, label: '代码生成', to: '/codegen', color: 'text-indigo-500' },
           ].map((item) => (
             <button
               key={item.to}
