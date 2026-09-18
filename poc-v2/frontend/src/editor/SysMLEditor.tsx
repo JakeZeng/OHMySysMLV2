@@ -62,22 +62,25 @@ const SYSML_KEYWORDS = [
   'entry', 'enum', 'event', 'exhibit', 'exit', 'expose', 'false',
   'filter', 'first', 'flow', 'for', 'fork', 'frame', 'from', 'hastype',
   'if', 'implies', 'import', 'in', 'include', 'individual', 'inout',
-  'interface', 'istype', 'item', 'join', 'language', 'library', 'locale',
-  'loop', 'merge', 'message', 'meta', 'metadata', 'new', 'nonunique',
-  'not', 'null', 'objective', 'occurrence', 'of', 'or', 'ordered',
-  'out', 'package', 'parallel', 'part', 'perform', 'port', 'private',
-  'protected', 'public', 'redefines', 'ref', 'references', 'render',
-  'rendering', 'rep', 'require', 'requirement', 'return', 'satisfy',
-  'send', 'snapshot', 'specializes', 'stakeholder', 'standard', 'state',
-  'subject', 'subsets', 'succession', 'terminate', 'then', 'timeslice',
-  'to', 'transition', 'true', 'until', 'use', 'variant', 'variation',
-  'verification', 'verify', 'via', 'view', 'viewpoint', 'when', 'while',
-  'xor',
+  'initial', 'interface', 'istype', 'item', 'join', 'language', 'library',
+  'locale', 'loop', 'machine', 'merge', 'message', 'meta', 'metadata',
+  'new', 'nonunique', 'not', 'null', 'objective', 'occurrence', 'of',
+  'or', 'ordered', 'out', 'package', 'parallel', 'part', 'perform',
+  'port', 'private', 'protected', 'public', 'redefines', 'ref',
+  'references', 'render', 'rendering', 'rep', 'require', 'requirement',
+  'return', 'satisfy', 'send', 'snapshot', 'specializes', 'stakeholder',
+  'standard', 'state', 'subject', 'subsets', 'succession', 'terminate',
+  'then', 'timeslice', 'to', 'transition', 'true', 'until', 'use',
+  'variant', 'variation', 'verification', 'verify', 'via', 'view',
+  'viewpoint', 'when', 'while', 'xor',
+  // M5 新增关键字
+  'activity', 'guard', 'final',
 ];
 
 const SYSML_TYPE_KEYWORDS = [
   'attribute', 'connection', 'def', 'item', 'package', 'part', 'port',
-  'requirement', 'state',
+  'requirement', 'state', 'machine', 'action', 'flow', 'transition',
+  'activity', 'constraint', 'trace',
 ];
 
 const language: Monaco.languages.IMonarchLanguage = {
@@ -137,6 +140,113 @@ function registerSysMLLanguage(monacoInstance: typeof Monaco) {
       { open: '(', close: ')' },
       { open: '"', close: '"' },
     ],
+  });
+
+  // SysML v2 自动补全
+  monacoInstance.languages.registerCompletionItemProvider('sysml', {
+    provideCompletionItems: (model, position) => {
+      const word = model.getWordUntilPosition(position);
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn,
+      };
+
+      const suggestions: Monaco.languages.CompletionItem[] = [
+        // 常用代码片段
+        {
+          label: 'part def',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'part def ${1:Name} {\n  $0\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Part 定义',
+          range,
+        },
+        {
+          label: 'port def',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'port def ${1:Name} {\n  $0\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Port 定义',
+          range,
+        },
+        {
+          label: 'package',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'package ${1:Name} {\n  $0\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Package 定义',
+          range,
+        },
+        {
+          label: 'connect',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'connect ${1:src}.${2:port} to ${3:tgt}.${4:port};',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '连接语句',
+          range,
+        },
+        {
+          label: 'attribute',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'attribute ${1:name} : ${2:Real};',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '属性定义',
+          range,
+        },
+        {
+          label: 'state machine',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'state machine ${1:Name} {\n  initial state ${2:Start};\n  state ${3:Running};\n  final state ${4:End};\n\n  transition ${2:Start} to ${3:Running};\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '状态机定义（M5）',
+          range,
+        },
+        {
+          label: 'activity',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'activity ${1:Name} {\n  initial action ${2:Start};\n  action ${3:Process};\n  final action ${4:End};\n\n  flow ${2:Start} to ${3:Process};\n  flow ${3:Process} to ${4:End};\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '活动定义（M5）',
+          range,
+        },
+        {
+          label: 'requirement def',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'requirement def ${1:Name} (${2:REQ-001}) {${3:描述}};',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '需求定义（M5）',
+          range,
+        },
+        {
+          label: 'constraint def',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'constraint def ${1:Name} {\n  attribute ${2:param} : ${3:Real};\n}',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '约束块定义（M5）',
+          range,
+        },
+        {
+          label: 'import',
+          kind: monacoInstance.languages.CompletionItemKind.Snippet,
+          insertText: 'import ${1:PackageName}::*;',
+          insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: '导入语句',
+          range,
+        },
+        // 常用类型
+        ...['Real', 'Integer', 'Boolean', 'String', 'Natural', 'Positive'].map((t) => ({
+          label: t,
+          kind: monacoInstance.languages.CompletionItemKind.TypeParameter,
+          insertText: t,
+          documentation: `内置类型: ${t}`,
+          range,
+        })),
+      ];
+
+      return { suggestions };
+    },
   });
 }
 
