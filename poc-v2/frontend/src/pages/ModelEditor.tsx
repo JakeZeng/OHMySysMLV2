@@ -26,6 +26,7 @@ import { DiagramCanvas, type DiagramCanvasHandle } from '../canvas/DiagramCanvas
 import { ErrorPanel } from '../editor/ErrorPanel';
 import { Button } from '../components/ui/Button';
 import { useModelStore } from '../stores/modelStore';
+import { useProjectStore } from '../stores/projectStore';
 import { useToast } from '../components/ui/Toast';
 import { downloadJson } from '@transform/exportJson';
 import { importFromJson } from '@transform/importJson';
@@ -42,6 +43,8 @@ export const ModelEditor: React.FC = () => {
 
   const content = useModelStore((s) => s.content);
   const name = useModelStore((s) => s.name);
+  const fetchProject = useProjectStore((s) => s.fetchOne);
+  const currentProject = useProjectStore((s) => s.current);
   const pipeline = useModelStore((s) => s.pipeline);
   const loading = useModelStore((s) => s.loading);
   const saving = useModelStore((s) => s.saving);
@@ -85,10 +88,12 @@ export const ModelEditor: React.FC = () => {
     if (modelId && projectIdFromQuery) {
       setProject(projectIdFromQuery);
       void loadModel(projectIdFromQuery, modelId);
+      // M4.5 增量：加载项目信息（用于面包屑导航）
+      void fetchProject(projectIdFromQuery).catch(() => {/* silent */});
     } else if (projectIdFromQuery) {
-      // 仅有 projectId 视为新建空白模型（不会自动保存）
       setProject(projectIdFromQuery);
       reset();
+      void fetchProject(projectIdFromQuery).catch(() => {/* silent */});
       // 注入一个空 pipeline 的初始内容（避免空编辑器看不到提示）
     } else {
       // 没有 projectId，回到项目列表
@@ -314,7 +319,8 @@ export const ModelEditor: React.FC = () => {
           size="sm"
           onClick={() => navigate(`/projects/${projectIdFromQuery}`)}
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> 返回
+          <ArrowLeft className="h-3.5 w-3.5" />{' '}
+          {currentProject ? currentProject.name : '返回项目'}
         </Button>
         <div className="mx-2 h-5 w-px bg-gray-200" />
         <input
