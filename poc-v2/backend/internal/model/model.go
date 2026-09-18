@@ -39,13 +39,14 @@ type Project struct {
 // Model 表示一个 SysML v2 模型。
 // Content 是原始 SysML 文本。
 type Model struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"projectId"`
-	Name      string    `json:"name"`
-	Content   string    `json:"content"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	ProjectID   string    `json:"projectId"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Content     string    `json:"content"`
+	Version     int       `json:"version"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // ModelVersion 表示模型的一个历史版本（M4.5 增量）。

@@ -194,6 +194,13 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 		// 兼容历史 DB：列已存在时忽略
 	}
 
+	// M4.5 增量：模型描述字段
+	if _, err := r.db.Exec(
+		`ALTER TABLE models ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		// 兼容历史 DB：列已存在时忽略
+	}
+
 	// M4.5 增量：审计日志表。
 	if _, err := r.db.Exec(
 		`CREATE TABLE IF NOT EXISTS audit_logs (
@@ -482,18 +489,18 @@ func (r *SQLiteRepository) DeleteProject(ctx context.Context, id string) error {
 // ─── Models ──────────────────────────────────────────────────────────
 
 func (r *SQLiteRepository) CreateModel(ctx context.Context, m *model.Model) error {
-	const q = `INSERT INTO models (id, project_id, name, content, version, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, q, m.ID, m.ProjectID, m.Name, m.Content, m.Version, m.CreatedAt, m.UpdatedAt)
+	const q = `INSERT INTO models (id, project_id, name, description, content, version, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := r.db.ExecContext(ctx, q, m.ID, m.ProjectID, m.Name, m.Description, m.Content, m.Version, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
 func (r *SQLiteRepository) GetModel(ctx context.Context, id string) (*model.Model, error) {
-	const q = `SELECT id, project_id, name, content, version, created_at, updated_at
+	const q = `SELECT id, project_id, name, COALESCE(description, ''), content, version, created_at, updated_at
               FROM models WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, q, id)
 	var m model.Model
-	if err := row.Scan(&m.ID, &m.ProjectID, &m.Name, &m.Content, &m.Version, &m.CreatedAt, &m.UpdatedAt); err != nil {
+	if err := row.Scan(&m.ID, &m.ProjectID, &m.Name, &m.Description, &m.Content, &m.Version, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -503,7 +510,7 @@ func (r *SQLiteRepository) GetModel(ctx context.Context, id string) (*model.Mode
 }
 
 func (r *SQLiteRepository) ListModelsByProject(ctx context.Context, projectID string) ([]*model.Model, error) {
-	const q = `SELECT id, project_id, name, content, version, created_at, updated_at
+	const q = `SELECT id, project_id, name, COALESCE(description, ''), content, version, created_at, updated_at
               FROM models WHERE project_id = ? ORDER BY updated_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, projectID)
 	if err != nil {
@@ -515,7 +522,7 @@ func (r *SQLiteRepository) ListModelsByProject(ctx context.Context, projectID st
 	out := make([]*model.Model, 0)
 	for rows.Next() {
 		var m model.Model
-		if err := rows.Scan(&m.ID, &m.ProjectID, &m.Name, &m.Content, &m.Version, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProjectID, &m.Name, &m.Description, &m.Content, &m.Version, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &m)
@@ -536,9 +543,9 @@ func (r *SQLiteRepository) UpdateModel(ctx context.Context, m *model.Model, save
 		)
 	}
 
-	const q = `UPDATE models SET name = ?, content = ?, version = version + 1, updated_at = ?
+	const q = `UPDATE models SET name = ?, description = ?, content = ?, version = version + 1, updated_at = ?
               WHERE id = ? AND version = ?`
-	res, err := r.db.ExecContext(ctx, q, m.Name, m.Content, now, m.ID, m.Version)
+	res, err := r.db.ExecContext(ctx, q, m.Name, m.Description, m.Content, now, m.ID, m.Version)
 	if err != nil {
 		return err
 	}
