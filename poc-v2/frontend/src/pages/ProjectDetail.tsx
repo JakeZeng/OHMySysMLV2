@@ -236,10 +236,13 @@ export const ProjectDetail: React.FC = () => {
     }
   };
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const handleDeleteProject = async () => {
     if (!current) return;
-    if (!window.confirm(`确认删除项目「${current.name}」？此操作不可撤销。`))
-      return;
+    setShowDeleteConfirm(true);
+  };
+  const confirmDeleteProject = async () => {
+    if (!current) return;
     try {
       await removeProject(current.id);
       showToast({ title: '项目已删除', variant: 'success' });
@@ -722,6 +725,37 @@ export const ProjectDetail: React.FC = () => {
           project={current}
         />
       )}
+
+      {/* 删除确认 Modal */}
+      <Modal
+        open={showDeleteConfirm}
+        onOpenChange={setShowDeleteConfirm}
+        title="删除项目"
+        description={`确认删除项目「${current?.name}」？此操作不可撤销。`}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setShowDeleteConfirm(false)}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                void confirmDeleteProject();
+              }}
+              data-testid="confirm-delete-project"
+            >
+              确认删除
+            </Button>
+          </>
+        }
+      >
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          项目下的所有模型、分享链接和直分享将一并删除。
+        </div>
+      </Modal>
     </div>
   );
 };
