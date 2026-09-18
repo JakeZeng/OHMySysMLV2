@@ -56,6 +56,26 @@ export const AuditLogPage: React.FC = () => {
   const [projectId, setProjectId] = React.useState('');
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
+
+  // M4.5 增量：日期范围过滤（client-side）
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+
+  const filteredLogs = React.useMemo(() => {
+    if (!dateFrom && !dateTo) return logs;
+    return logs.filter((l) => {
+      const t = new Date(l.createdAt).getTime();
+      if (dateFrom) {
+        const from = new Date(dateFrom).getTime();
+        if (t < from) return false;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo).getTime() + 24 * 60 * 60 * 1000; // 包含当天
+        if (t > to) return false;
+      }
+      return true;
+    });
+  }, [logs, dateFrom, dateTo]);
   const [exporting, setExporting] = React.useState(false);
 
   // M4.5 增量：归档清理
@@ -323,6 +343,44 @@ export const AuditLogPage: React.FC = () => {
                 </Button>
               </div>
             </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700">
+                  开始日期
+                </label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">
+                  结束日期
+                </label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
+              <div className="flex items-end">
+                {(dateFrom || dateTo) && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setDateFrom('');
+                      setDateTo('');
+                    }}
+                  >
+                    清除日期
+                  </Button>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -336,7 +394,7 @@ export const AuditLogPage: React.FC = () => {
           <div className="flex items-center justify-center py-12 text-sm text-gray-500">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
           </div>
-        ) : logs.length === 0 ? (
+        ) : filteredLogs.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               <ScrollText className="mb-3 h-8 w-8 text-gray-400" />
@@ -346,7 +404,7 @@ export const AuditLogPage: React.FC = () => {
         ) : (
           <Card>
             <ul className="divide-y divide-gray-100">
-              {logs.map((l) => (
+              {filteredLogs.map((l) => (
                 <li
                   key={l.id}
                   className="px-4 py-3 text-sm"
