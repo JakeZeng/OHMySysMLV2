@@ -218,6 +218,16 @@ func main() {
 			profilesGroup.POST("/export", h.ExportProfile)
 			profilesGroup.POST("/import", h.ImportProfile)
 		}
+
+		// M6：Webhook 事件通知（受保护）
+		webhooksGroup := v1.Group("/webhooks")
+		webhooksGroup.Use(middleware.AuthRequired())
+		{
+			webhooksGroup.POST("", h.CreateWebhook)
+			webhooksGroup.GET("", h.ListWebhooks)
+			webhooksGroup.DELETE("/:id", h.DeleteWebhook)
+			webhooksGroup.POST("/:id/test", h.TestWebhook)
+		}
 	}
 
 	srv := &http.Server{

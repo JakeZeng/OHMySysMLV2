@@ -17,6 +17,7 @@ import { AuditLogPage } from './pages/AuditLogPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TemplateMarketPage } from './pages/TemplateMarketPage';
+import { WebhookPage } from './pages/WebhookPage';
 import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
@@ -43,6 +44,7 @@ export const router = createBrowserRouter([
       { path: 'audit', element: <AuditLogPage /> },
       { path: 'profile', element: <ProfilePage /> },
       { path: 'templates', element: <TemplateMarketPage /> },
+      { path: 'webhooks', element: <WebhookPage /> },
     ],
   },
   { path: '*', element: <NotFound /> },
