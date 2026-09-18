@@ -4,6 +4,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -263,6 +264,13 @@ func (h *ShareHandler) GetSharedProject(c *gin.Context) {
 		// 仅日志，不影响主流程
 		c.Header("X-Share-View-Error", "1")
 	}
+	// M4.5 增量：速率监控 — 滑动窗口超阈值则写 link_abuse 审计
+	ip := c.ClientIP()
+	if defaultAbuseMonitor.recordAndCheck(res.LinkID, ip) {
+		writeAudit(c, h.repo, "link_abuse", model.AuditTargetLink, res.LinkID,
+			`{"ip":"`+escapeJSON(ip)+`","window":"60s","limit":30}`)
+		c.Header("X-Share-Abuse-Warning", "1")
+	}
 	project, err := h.repo.GetProject(c, res.ProjectID)
 	if err != nil {
 		notFound(c, "链接无效或已失效")
@@ -333,3 +341,67 @@ func permissionString(p Permission) string {
 	}
 	return "none"
 }
+
+// ─── M4.5 增量：公开端点速率监控 ───────────────────────────────────────
+//
+// 单进程滑动窗口：按 (linkID, IP) 记最近 60s 的访问时间戳。
+// 命中阈值（30 次/分钟）后写一条 link_abuse 审计，不阻断响应
+// （限流仍由 middleware.RateLimiter 20/min/IP 兜底）。
+//
+// 内存是软上限（map size ≪ 数十万），重启后丢失 — 监控作用足够，
+// 持久化留到 M5+。
+
+// abuseMonitor 是进程内的滑动窗口。
+type abuseMonitor struct {
+	mu       sync.Mutex
+	events   map[string][]time.Time // key = "<linkID>|<ip>"
+	limit    int                    // 窗口内允许的最大次数
+	window   time.Duration          // 滑动窗口长度
+	lastEmit map[string]time.Time   // 节流：相同 key 30s 内只 emit 一次
+}
+
+func newAbuseMonitor(limit int, window time.Duration) *abuseMonitor {
+	return &abuseMonitor{
+		events:   make(map[string][]time.Time),
+		lastEmit: make(map[string]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+}
+
+// recordAndCheck 记录一次访问；若超阈值返回 true（说明已触发 abuse 信号）。
+func (m *abuseMonitor) recordAndCheck(linkID, ip string) bool {
+	if linkID == "" || ip == "" {
+		return false
+	}
+	key := linkID + "|" + ip
+	now := time.Now()
+	cutoff := now.Add(-m.window)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ts := m.events[key]
+	// 滑动窗口：剔除 cutoff 之前的旧时间戳
+	keep := ts[:0]
+	for _, t := range ts {
+		if t.After(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	keep = append(keep, now)
+	m.events[key] = keep
+
+	if len(keep) < m.limit {
+		return false
+	}
+	// 节流：相同 key 30s 内只触发一次 emit
+	if last, ok := m.lastEmit[key]; ok && now.Sub(last) < 30*time.Second {
+		return false
+	}
+	m.lastEmit[key] = now
+	return true
+}
+
+// 默认监控器：30 次/分钟/（linkID, IP）。全局共享。
+var defaultAbuseMonitor = newAbuseMonitor(30, time.Minute)

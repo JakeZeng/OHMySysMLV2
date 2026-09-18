@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -457,5 +458,70 @@ func TestW45_LinkRotationRejectedAfterRevoke(t *testing.T) {
 	m := models[0].(map[string]any)
 	if got, _ := m["content"].(string); got != "package Vehicle { part engine; }" {
 		t.Errorf("content 应被公开暴露供 Monaco 只读渲染，实际 %q", got)
+	}
+}
+
+// TestW45_AbuseMonitorUnit：滑动窗口单独单测（不走 HTTP）。
+func TestW45_AbuseMonitorUnit(t *testing.T) {
+	m := newAbuseMonitor(5, time.Minute)
+	linkID, ip := "link-1", "1.2.3.4"
+	// 前 4 次不触发
+	for i := 0; i < 4; i++ {
+		if m.recordAndCheck(linkID, ip) {
+			t.Fatalf("第 %d 次不应触发 abuse", i+1)
+		}
+	}
+	// 第 5 次刚好达阈值，应触发
+	if !m.recordAndCheck(linkID, ip) {
+		t.Errorf("第 5 次应触发 abuse 信号")
+	}
+	// 节流：同 key 立即再访问不应再次触发
+	if m.recordAndCheck(linkID, ip) {
+		t.Errorf("节流期内同 key 不应再次触发")
+	}
+	// 不同 IP 独立计数
+	if m.recordAndCheck(linkID, "9.9.9.9") {
+		t.Errorf("不同 IP 应独立计数，不应触发 abuse")
+	}
+}
+
+// TestW45_LinkAbuseAuditOnExcess：M4.5 增量 — 公开端点超阈值后写 link_abuse 审计。
+func TestW45_LinkAbuseAuditOnExcess(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	token, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, token, "AbuseTest", "private")
+
+	wLink := doRequest(r, authedRequest("POST", "/api/v1/projects/"+projectID+"/links", token, gin.H{
+		"permission": "read",
+	}))
+	linkID := parseJSON(t, wLink.Body.Bytes())["data"].(map[string]any)["link"].(map[string]any)["id"].(string)
+	tokenStr := parseJSON(t, wLink.Body.Bytes())["data"].(map[string]any)["token"].(string)
+
+	// 临时调小阈值便于测试
+	prev := defaultAbuseMonitor
+	defaultAbuseMonitor = newAbuseMonitor(3, time.Minute)
+	t.Cleanup(func() { defaultAbuseMonitor = prev })
+
+	// 连访 5 次 — 触发一次 abuse（阈值 3，节流防重复）
+	for i := 0; i < 5; i++ {
+		w := doRequest(r, authedRequest("GET", "/api/v1/shared/"+tokenStr, "", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("第 %d 次访问公开页：%d", i+1, w.Code)
+		}
+	}
+
+	// 查询审计 — 应有 link_abuse 行（target=share_link.id）
+	wLogs := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?targetType=link&targetId="+linkID, token, nil))
+	logs := parseJSON(t, wLogs.Body.Bytes())["data"].([]any)
+	found := false
+	for _, l := range logs {
+		m := l.(map[string]any)
+		if m["action"] == "link_abuse" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("应产生 link_abuse 审计，实际：%v", logs)
 	}
 }

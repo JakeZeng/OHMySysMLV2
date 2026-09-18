@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `TBD`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `TBD`）
 
 | 项 | 内容 |
 |----|------|
@@ -28,6 +28,7 @@
 | ProjectDetail 活动标签 | 切到"活动"标签加载 projectId 视角审计（懒加载） |
 | 审计 RBAC 收紧 | handler 在拿到行后按调用方权限再过滤：project/model/share/link 要求项目 read；team/member/project_access 要求 team admin/owner；user 仅本人；自己作为 actor 的行永远可见 |
 | 审计 CSV 导出 | `GET /audit-logs/export?format=csv|json`（默认 csv，上限 1000 行），Content-Disposition 触发下载；前端 "导出 CSV" 按钮复用当前筛选条件 |
+| 公开端点速率监控 | abuseMonitor 滑动窗口（30 次/分钟/（linkID, IP）），超阈值写 link_abuse 审计 + X-Share-Abuse-Warning 响应头；30s 节流防刷屏 |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -142,4 +143,3 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 ## 后续优化建议（M5+）
 
 1. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
-2. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
