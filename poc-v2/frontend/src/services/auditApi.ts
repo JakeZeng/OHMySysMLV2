@@ -23,6 +23,8 @@ export const auditApi = {
     targetId?: string;
     /** M4.5 增量：把 project / model / share / link 关联日志收拢到该 project 视角 */
     projectId?: string;
+    /** M4.5 增量：按 team ID 过滤 team / member / project_access 日志 */
+    teamId?: string;
     limit?: number;
   } = {}): Promise<AuditLog[]> {
     const api = getApi();

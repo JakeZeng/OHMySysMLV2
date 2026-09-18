@@ -54,6 +54,7 @@ export const AuditLogPage: React.FC = () => {
   const [targetType, setTargetType] = React.useState('');
   const [targetId, setTargetId] = React.useState('');
   const [projectId, setProjectId] = React.useState('');
+  const [teamId, setTeamId] = React.useState('');
   const [autoRefresh, setAutoRefresh] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
 
@@ -180,12 +181,14 @@ export const AuditLogPage: React.FC = () => {
         targetType?: string;
         targetId?: string;
         projectId?: string;
+        teamId?: string;
         limit: number;
       } = { limit: 100 };
       if (actor.trim()) params.actor = actor.trim();
       if (targetType) params.targetType = targetType;
       if (targetId.trim()) params.targetId = targetId.trim();
       if (projectId.trim()) params.projectId = projectId.trim();
+      if (teamId.trim()) params.teamId = teamId.trim();
       const data = await auditApi.list(params);
       setLogs(data);
       setLastRefreshedAt(new Date());
@@ -194,7 +197,7 @@ export const AuditLogPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [actor, targetType, targetId, projectId]);
+  }, [actor, targetType, targetId, projectId, teamId]);
 
   React.useEffect(() => {
     void load();
@@ -335,6 +338,16 @@ export const AuditLogPage: React.FC = () => {
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
                   placeholder="收拢 project/model/share/link"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">
+                  Team ID
+                </label>
+                <Input
+                  value={teamId}
+                  onChange={(e) => setTeamId(e.target.value)}
+                  placeholder="team/member/project_access"
                 />
               </div>
               <div className="flex items-end">
