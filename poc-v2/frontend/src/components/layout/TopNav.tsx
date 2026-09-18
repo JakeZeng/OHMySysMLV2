@@ -29,6 +29,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
 import { GlobalSearch } from '../GlobalSearch';
+import { NotificationBell } from '../NotificationBell';
 
 // 主导航项（始终显示）
 const PRIMARY_NAV = [
@@ -190,9 +191,10 @@ export const TopNav: React.FC = () => {
         </DropdownMenu.Root>
       </nav>
 
-      {/* 右侧：搜索 + 主题 + 用户信息 + 用户菜单 */}
+      {/* 右侧：搜索 + 通知 + 主题 + 用户信息 + 用户菜单 */}
       <div className="flex items-center gap-3">
         <GlobalSearch />
+        <NotificationBell />
         <button
           type="button"
           onClick={toggleTheme}

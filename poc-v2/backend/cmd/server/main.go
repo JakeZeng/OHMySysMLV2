@@ -281,6 +281,16 @@ func main() {
 			modelsGroup.DELETE("/:id/comments/:commentId", h.DeleteComment)
 			modelsGroup.PUT("/:id/comments/:commentId/resolve", h.ResolveComment)
 		}
+
+		// 通知中心（受保护）
+		notifGroup := v1.Group("/notifications")
+		notifGroup.Use(middleware.AuthRequired())
+		{
+			notifGroup.GET("", h.ListNotifications)
+			notifGroup.GET("/unread", h.GetUnreadCount)
+			notifGroup.PUT("/:id/read", h.MarkAsRead)
+			notifGroup.PUT("/read-all", h.MarkAllAsRead)
+		}
 	}
 
 	srv := &http.Server{
