@@ -28,8 +28,10 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
   currentContent,
 }) => {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [compareId, setCompareId] = React.useState<string | null>(null);
   const [showDiff, setShowDiff] = React.useState(false);
   const selected = versions.find((v) => v.id === selectedId) ?? null;
+  const compare = versions.find((v) => v.id === compareId) ?? null;
 
   if (loading) {
     return (
@@ -56,33 +58,54 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
       {/* 左侧版本列表 */}
       <div className="w-48 overflow-auto border-r border-gray-200">
         {versions.map((v) => (
-          <button
+          <div
             key={v.id}
-            type="button"
-            onClick={() => setSelectedId(v.id)}
             className={cn(
-              'flex w-full flex-col px-3 py-2 text-left text-xs transition',
+              'flex items-center gap-1 px-2 py-2 text-xs transition',
               selectedId === v.id
-                ? 'bg-brand-50 text-brand-700'
+                ? 'bg-brand-50'
                 : 'hover:bg-gray-50',
             )}
-            data-testid={`version-item-${v.version}`}
           >
-            <div className="flex items-center justify-between">
-              <span className="font-medium">v{v.version}</span>
-              {v.version === currentVersion && (
-                <span className="rounded bg-green-100 px-1 py-0.5 text-[10px] text-green-700">
-                  当前
-                </span>
+            <button
+              type="button"
+              onClick={() => setSelectedId(v.id)}
+              className={cn(
+                'flex flex-1 flex-col text-left',
+                selectedId === v.id ? 'text-brand-700' : '',
               )}
-            </div>
-            <span className="text-gray-500">
-              {relativeTime(v.createdAt)}
-            </span>
-            {v.savedBy && (
-              <span className="truncate text-gray-400">{v.savedBy}</span>
+              data-testid={`version-item-${v.version}`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium">v{v.version}</span>
+                {v.version === currentVersion && (
+                  <span className="rounded bg-green-100 px-1 py-0.5 text-[10px] text-green-700">
+                    当前
+                  </span>
+                )}
+              </div>
+              <span className="text-gray-500">
+                {relativeTime(v.createdAt)}
+              </span>
+              {v.savedBy && (
+                <span className="truncate text-gray-400">{v.savedBy}</span>
+              )}
+            </button>
+            {selectedId && selectedId !== v.id && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCompareId(v.id);
+                  setShowDiff(true);
+                }}
+                title="与此版本对比"
+                className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                data-testid={`compare-version-${v.version}`}
+              >
+                ⇄
+              </button>
             )}
-          </button>
+          </div>
         ))}
       </div>
 
@@ -118,7 +141,15 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
                 )}
               </div>
             </div>
-            {showDiff && currentContent ? (
+            {showDiff && compare ? (
+              <ModelDiffView
+                original={selected.content}
+                modified={compare.content}
+                originalLabel={`v${selected.version}`}
+                modifiedLabel={`v${compare.version}`}
+                height={300}
+              />
+            ) : showDiff && currentContent ? (
               <ModelDiffView
                 original={selected.content}
                 modified={currentContent}
