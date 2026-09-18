@@ -47,3 +47,14 @@ type Model struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// ModelVersion 表示模型的一个历史版本（M4.5 增量）。
+// 每次 UpdateModel 时自动保存旧版本到 model_versions 表。
+type ModelVersion struct {
+	ID        string    `json:"id"`
+	ModelID   string    `json:"modelId"`
+	Content   string    `json:"content"`
+	Version   int       `json:"version"`
+	SavedBy   string    `json:"savedBy,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}

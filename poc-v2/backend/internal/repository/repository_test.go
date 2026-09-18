@@ -316,7 +316,7 @@ func TestModelCRUD(t *testing.T) {
 		}
 		m.Name = "CarBlock"
 		m.Content = "part def Car { };"
-		if err := repo.UpdateModel(ctx, m); err != nil {
+		if err := repo.UpdateModel(ctx, m, ""); err != nil {
 			t.Fatalf("UpdateModel: %v", err)
 		}
 
@@ -374,7 +374,7 @@ func TestModelVersionConflict(t *testing.T) {
 	// First update at version 1 should succeed.
 	m.Name = "M-updated"
 	m.Content = "v2"
-	if err := repo.UpdateModel(ctx, m); err != nil {
+	if err := repo.UpdateModel(ctx, m, ""); err != nil {
 		t.Fatalf("first UpdateModel: %v", err)
 	}
 	if m.Version != 2 {
@@ -386,7 +386,7 @@ func TestModelVersionConflict(t *testing.T) {
 		ID: "mdl-1", ProjectID: "proj-1", Name: "M-stale",
 		Content: "v-conflict", Version: 1,
 	}
-	err := repo.UpdateModel(ctx, stale)
+	err := repo.UpdateModel(ctx, stale, "")
 	if err != ErrVersionConflict {
 		t.Errorf("stale update: err = %v, want ErrVersionConflict", err)
 	}

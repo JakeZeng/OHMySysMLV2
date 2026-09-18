@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"github.com/sysmlv2/mbse-backend/internal/model"
@@ -227,6 +228,26 @@ CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
 	); err != nil {
 		return fmt.Errorf("创建 audit_logs created_at 索引失败: %w", err)
 	}
+
+	// M4.5 增量：模型版本历史表 — 每次 UpdateModel 时自动保存旧版本。
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS model_versions (
+			id         TEXT PRIMARY KEY,
+			model_id   TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			version    INTEGER NOT NULL,
+			saved_by   TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 model_versions 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_model_versions_model ON model_versions(model_id, version DESC)`,
+	); err != nil {
+		return fmt.Errorf("创建 model_versions 索引失败: %w", err)
+	}
+
 	return nil
 }
 
@@ -277,6 +298,33 @@ func (r *SQLiteRepository) GetUserByEmail(ctx context.Context, email string) (*m
 	}
 	u.IsAdmin = isAdmin == 1
 	return &u, nil
+}
+
+// ListModelVersions 返回模型的历史版本（M4.5 增量）。
+func (r *SQLiteRepository) ListModelVersions(
+	ctx context.Context, modelID string, limit int,
+) ([]*model.ModelVersion, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, model_id, content, version, COALESCE(saved_by, ''), created_at
+         FROM model_versions WHERE model_id = ? ORDER BY version DESC LIMIT ?`,
+		modelID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.ModelVersion
+	for rows.Next() {
+		var v model.ModelVersion
+		if err := rows.Scan(&v.ID, &v.ModelID, &v.Content, &v.Version, &v.SavedBy, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &v)
+	}
+	return out, rows.Err()
 }
 
 // GetUserByID 按 id 查用户；用于 /auth/me（M4.5 增量）。
@@ -476,8 +524,18 @@ func (r *SQLiteRepository) ListModelsByProject(ctx context.Context, projectID st
 }
 
 // UpdateModel 乐观锁：版本不匹配返回 ErrVersionConflict。
-func (r *SQLiteRepository) UpdateModel(ctx context.Context, m *model.Model) error {
+func (r *SQLiteRepository) UpdateModel(ctx context.Context, m *model.Model, savedBy string) error {
 	now := time.Now().UTC()
+
+	// M4.5 增量：保存旧版本到 model_versions（best-effort，不阻塞更新）
+	if m.Version > 0 {
+		_, _ = r.db.ExecContext(ctx,
+			`INSERT INTO model_versions (id, model_id, content, version, saved_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), m.ID, m.Content, m.Version, savedBy, now,
+		)
+	}
+
 	const q = `UPDATE models SET name = ?, content = ?, version = version + 1, updated_at = ?
               WHERE id = ? AND version = ?`
 	res, err := r.db.ExecContext(ctx, q, m.Name, m.Content, now, m.ID, m.Version)

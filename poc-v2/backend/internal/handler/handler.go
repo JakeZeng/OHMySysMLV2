@@ -387,7 +387,7 @@ func (h *Handler) UpdateModel(c *gin.Context) {
 	// 让 repo 的 WHERE version = ? 匹配上 m.Version，从而正确触发 409。
 	m.Version = req.Version
 	m.UpdatedAt = time.Now().UTC()
-	if err := h.repo.UpdateModel(c, m); err != nil {
+	if err := h.repo.UpdateModel(c, m, c.GetString("user_id")); err != nil {
 		if errors.Is(err, repository.ErrVersionConflict) {
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
 				"code":    "E_VERSION_CONFLICT",
