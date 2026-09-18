@@ -32,6 +32,8 @@ interface SysMLEditorProps {
   onPipelineResult?: (result: PipelineResult) => void;
   height?: string | number;
   readOnly?: boolean;
+  /** M4.5 增量：是否显示 minimap（默认 false） */
+  showMinimap?: boolean;
 }
 
 /** 暴露给父组件的操作接口 */
@@ -142,6 +144,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   onPipelineResult,
   height = '100%',
   readOnly = false,
+  showMinimap = false,
 }, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -249,7 +252,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
         fontSize: 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
         lineNumbers: 'on',
-        minimap: { enabled: false },
+        minimap: { enabled: showMinimap },
         scrollBeyondLastLine: false,
         wordWrap: 'on',
         tabSize: 2,
