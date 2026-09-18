@@ -168,6 +168,7 @@ export const ModelEditor: React.FC = () => {
   // M4.5 增量：键盘快捷键
   const [wordWrapEnabled, setWordWrapEnabled] = React.useState(true);
   const [minimapEnabled, setMinimapEnabled] = React.useState(false);
+  const [lineNumbersEnabled, setLineNumbersEnabled] = React.useState(true);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -228,6 +229,17 @@ export const ModelEditor: React.FC = () => {
         sysmlEditorRef.current
           ?.getEditor()
           ?.trigger('keyboard', 'editor.action.formatDocument', {});
+      }
+      // Ctrl+Shift+L 切换行号显示
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
+        e.preventDefault();
+        setLineNumbersEnabled((v) => {
+          const next = !v;
+          sysmlEditorRef.current
+            ?.getEditor()
+            ?.updateOptions({ lineNumbers: next ? 'on' : 'off' });
+          return next;
+        });
       }
     };
     window.addEventListener('keydown', onKey, { capture: true });
