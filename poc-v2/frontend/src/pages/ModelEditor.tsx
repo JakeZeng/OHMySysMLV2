@@ -165,8 +165,7 @@ export const ModelEditor: React.FC = () => {
     }
   };
 
-  // M4.5 增量：Ctrl+S 全局快捷键保存（捕获阶段，阻止浏览器默认行为）
-  // + "?" 打开快捷键帮助
+  // M4.5 增量：Ctrl+S 全局快捷键保存 + "?" 快捷键帮助 + Ctrl+F 聚焦搜索
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -184,6 +183,13 @@ export const ModelEditor: React.FC = () => {
         !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
       ) {
         setShowKeyboardShortcuts((v) => !v);
+      }
+      // Ctrl+H 打开 Monaco 的替换面板
+      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+        e.preventDefault();
+        sysmlEditorRef.current
+          ?.getEditor()
+          ?.trigger('keyboard', 'editor.action.startFindReplaceAction', {});
       }
     };
     window.addEventListener('keydown', onKey, { capture: true });
