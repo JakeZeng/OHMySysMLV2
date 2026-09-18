@@ -310,6 +310,12 @@ export const ModelEditor: React.FC = () => {
     return `${lines} 行 · ${chars} 字符`;
   }, [content]);
 
+  // M4.5 增量：记录上次保存时间
+  const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
+  React.useEffect(() => {
+    if (saved) setLastSavedAt(new Date());
+  }, [saved]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -413,6 +419,11 @@ export const ModelEditor: React.FC = () => {
         <span className="text-xs text-gray-400" data-testid="content-stats">
           {contentStats}
         </span>
+        {lastSavedAt && (
+          <span className="text-xs text-gray-400" data-testid="last-saved">
+            上次保存 {lastSavedAt.toLocaleTimeString()}
+          </span>
+        )}
         <div className="mx-1 h-5 w-px bg-gray-200" />
 
         {/* 状态徽章（可点击展开/折叠错误面板） */}
