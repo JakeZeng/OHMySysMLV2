@@ -228,6 +228,15 @@ func main() {
 			webhooksGroup.DELETE("/:id", h.DeleteWebhook)
 			webhooksGroup.POST("/:id/test", h.TestWebhook)
 		}
+
+		// M6：API Key 管理（受保护）
+		apiKeysGroup := v1.Group("/api-keys")
+		apiKeysGroup.Use(middleware.AuthRequired())
+		{
+			apiKeysGroup.POST("", h.CreateAPIKey)
+			apiKeysGroup.GET("", h.ListAPIKeys)
+			apiKeysGroup.DELETE("/:id", h.DeleteAPIKey)
+		}
 	}
 
 	srv := &http.Server{

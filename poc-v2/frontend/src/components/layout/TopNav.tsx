@@ -5,7 +5,7 @@
 import * as React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard, Store, Webhook } from 'lucide-react';
+import { LogOut, User as UserIcon, Settings, FolderKanban, Users, BookOpen, ScrollText, LayoutDashboard, Store, Webhook, Key } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
@@ -119,6 +119,19 @@ export const TopNav: React.FC = () => {
           }
         >
           <Webhook className="h-4 w-4" /> Webhook
+        </NavLink>
+        <NavLink
+          to="/api-keys"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+              isActive
+                ? 'bg-brand-50 text-brand-700'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+            )
+          }
+        >
+          <Key className="h-4 w-4" /> API Keys
         </NavLink>
         <NavLink
           to="/audit"
