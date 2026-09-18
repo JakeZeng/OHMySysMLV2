@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `f841610` / `0ea0556` / `54dd77f` / `d82c727` / `dc2564e` / `22d1427`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302` / `00f22ba` / `cdd8a67` / `fc8111e` / `4e5152b` / `33fa574` / `f841610` / `0ea0556` / `54dd77f` / `d82c727` / `dc2564e` / `22d1427` / `6bf8980` / `c6d4d85` / `5b9cc8b` / `06b7aa4` / `64a61fa` / `3ddaa79` / `31ba6af` / `bd33ef3` / `7124d0c`）
 
 | 项 | 内容 |
 |----|------|
@@ -30,6 +30,16 @@
 | 审计 CSV 导出 | `GET /audit-logs/export?format=csv|json`（默认 csv，上限 1000 行），Content-Disposition 触发下载；前端 "导出 CSV" 按钮复用当前筛选条件 |
 | 公开端点速率监控 | abuseMonitor 滑动窗口（30 次/分钟/（linkID, IP）），超阈值写 link_abuse 审计 + X-Share-Abuse-Warning 响应头；30s 节流防刷屏 |
 | 审计归档策略 | `DELETE /audit-logs/archive?olderThanDays=N[&dryRun=true]` — 安全护栏 N≥7；dry-run 返回计数；正式清理写一条 audit_archive 审计记录事件本身 |
+| /auth/me 端点 | `GET /auth/me` 返回当前用户（含 isAdmin）；前端 bootstrap 时刷新；审计归档 UI 按 admin 可见性门控 |
+| Admin 角色 | users.is_admin 列 + 首个注册用户自动 admin + TopNav admin 徽章 + 归档按钮仅 admin 可见 |
+| 审计归档前端 UI | AuditLogPage "归档清理" 按钮 → Modal 选天数（min 7） → dry-run 预览影响行数 → 确认后清理并刷新列表 |
+| audit_logs created_at 索引 | 加速归档清理 + 无过滤列表查询（避免全表扫描） |
+| /health 富化 | DB PingContext + counts 表（含 audit_logs 行数）便于探活监控 |
+| 项目列表搜索 | ProjectList 页搜索栏（client-side name + description 过滤 + "3/12 个"计数） |
+| 团队列表搜索 | TeamsPage 页搜索栏（client-side name + description 过滤 + "3/8 个"计数） |
+| Ctrl+S 保存快捷键 | ModelEditor 全局 Ctrl+S / Cmd+S 保存（捕获阶段拦截） |
+| 模型自动保存 | 内容变更后 5 秒无操作自动保存（仅已有模型，静默失败） |
+| 复制分享链接 | SharedProjectPage "复制链接"按钮 + 已复制反馈 |
 | 归档清理前端 UI | AuditLogPage "归档清理" 按钮 → Modal 选天数（min 7） → 打开即 dry-run 预览影响行数 → 确认后调用并刷新列表 |
 | audit_logs created_at 索引 | 加速归档清理 + 无过滤列表查询（避免全表扫描） |
 | admin 角色 | `users.is_admin` 列；首个注册用户自动 admin；`ArchiveAuditLogs` 仅 admin 可调用 |
