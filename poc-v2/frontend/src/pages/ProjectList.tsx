@@ -222,15 +222,15 @@ export const ProjectList: React.FC = () => {
   const filteredCount = groups.reduce((n, g) => n + g.items.length, 0);
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900">项目</h1>
-            <p className="mt-1 text-sm text-gray-500">
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">项目</h1>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               管理和查看你的所有 SysML v2 模型项目。
               {totalCount > 0 && (
-                <span className="ml-1 text-gray-400">
+                <span className="ml-1 text-gray-400 dark:text-gray-500">
                   · 共{' '}
                   {search.trim()
                     ? `${filteredCount}/${totalCount}`
@@ -251,13 +251,13 @@ export const ProjectList: React.FC = () => {
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="搜索项目…"
                     data-testid="project-search"
-                    className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 py-1.5 pl-8 pr-3 text-sm text-gray-900 dark:text-gray-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as 'updated' | 'name')}
-                  className="rounded-md border border-gray-300 bg-white py-1.5 px-2 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 py-1.5 px-2 text-xs text-gray-900 dark:text-gray-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   data-testid="project-sort"
                 >
                   <option value="updated">最近更新</option>
