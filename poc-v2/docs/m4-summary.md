@@ -7,7 +7,7 @@
 
 ## 交付清单
 
-### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0`）
+### M4.5 增量（commit `f3cca0c` / `c94f861` / `e8aa23a` / `c60144c` / `2a66f84` / `583f080` / `dae6a87` / `c081765` / `de500b1` / `283299e` / `797b1c0` / `23ad302`）
 
 | 项 | 内容 |
 |----|------|
@@ -19,9 +19,10 @@
 | Team access 显示项目名 | JOIN projects 显示项目名 + 可见性徽章（替换 raw UUID） |
 | 审计日志 backend | audit_logs 表 + GET /api/v1/audit-logs（actor / target 过滤） |
 | 审计日志 frontend | AuditLogPage（filter UI + 时间倒序列表 + 颜色编码） |
-| 审计日志覆盖范围 | share / unshare / link_create / link_revoke / team_create / member_add / member_role / member_del / grant / revoke / project CRUD / model CRUD / register / login / login_fail |
+| 审计日志覆盖范围 | share / unshare / link_create / link_revoke / team_create / member_add / member_role / member_del / grant / revoke / project CRUD / model CRUD / register / login / login_fail / link_rotate |
 | Share-link maxViews | `MaxViews *int`；超限后链接自动 404（与 revoked / expired uniform 响应） |
 | 公开页 Monaco 只读渲染 | SharedProjectPage 点模型行展开 SysMLEditor(readOnly=true) |
+| Share-link rotation API | `POST /projects/:id/links/:linkId/rotate`：撤销旧 token + 生成新 token，保留审计连续性 |
 
 ### W1 — 授权基础（commit `ae0ea15`）
 
@@ -135,9 +136,8 @@ poc-v2/frontend/src/routes.tsx                             # 加 /shared/:token 
 
 ## 后续优化建议（M5+）
 
-1. **share-link rotation API**：主动轮换 token 而非撤销重建（保留审计连续性）
-2. **审计前端实时性**：当前手动刷新；可加 polling（30s）
-3. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
-4. **audit-log 角色过滤**：当前任何登录用户可看所有审计，生产应按项目/团队成员关系收紧
-5. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
-6. **审计导出 CSV / SIEM 集成**：合规需要
+1. **审计前端实时性**：当前手动刷新；可加 polling（30s）
+2. **审计日志归档策略**：大表 + 时间分区 / 冷热分离
+3. **audit-log 角色过滤**：当前任何登录用户可看所有审计，生产应按项目/团队成员关系收紧
+4. **公开页速率监控**：监测 share-link 流量异常（爬虫 / 滥用）
+5. **审计导出 CSV / SIEM 集成**：合规需要
