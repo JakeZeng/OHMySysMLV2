@@ -332,6 +332,11 @@ export const ProjectDetail: React.FC = () => {
                 {current.description}
               </p>
             )}
+            {models.length > 0 && (
+              <p className="mt-1 text-xs text-gray-400">
+                {models.length} 个模型
+              </p>
+            )}
             {!isOwner && current && (
               <p
                 className="mt-2 text-xs text-gray-400"
