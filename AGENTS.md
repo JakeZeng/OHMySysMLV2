@@ -74,7 +74,13 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 - **M1 complete** (`a55612f`): parser (54 tests), validator (11 error codes), React Flow canvas, Monaco editor, Go backend + SQLite
 - **M2 complete** (`36f964e`): bidirectional sync, ELK.js layout, React Flow perf, AI syntax check (Go SSE + OpenAI/DeepSeek), JSON import/export, error panel jump
 - **M3 complete** (`m3/fix-dockerfile`): AI model generation (NL → SysML v2 via OpenAI/DeepSeek/Anthropic + FallbackChain), metamodel browser (28 SysML v2 elements), 3 industry templates (automotive/aerospace/software), security hardening (CSRF + CORS whitelist + rate limit + body size limit). See `poc-v2/docs/m3-summary.md` + 11 screenshots in `poc-v2/docs/screenshots/m3/`
-- **Next: M4** — collaboration + element extension (Stereotype)
+- **M4 complete** (`m4/team-space`, see `poc-v2/docs/m4-summary.md`): team space + model sharing (SHA-256 hashed share tokens), audit logs (RBAC-filtered + CSV export + archive), version history + diff, admin role, 50+ M4.5 supplements (dark mode, 13 keyboard shortcuts, i18n-ready, PNG export, autosave)
+- **M5 complete** (`c1a2dd6` + review fixes `0cb3666`/`47c33d7`/`b646353`): behavior/requirement/parametric views, template marketplace, Profile export, traceability links
+- **M6 core landed** (`6ddcd07`/`d10636c`/`389ddd6`/`821dab5`): webhook notifications, API key auth, domain template packs (medical/industrial/ADAS), Papyrus XML + Capella JSON import
+- **M7/M8 partial** (`fcdd49e`/`dd45cbf`/`13420c2`): design doc auto-generation, plugin system architecture, SaaS subscription tiers (Free/Pro/Enterprise)
+- **Beyond plan**: real-time presence + cursor sharing (`993214f`), code generation Python/C++ (`ff97fa2`), SVG export, notification center, model comments, global search, i18n (zh/en), onboarding tutorials
+- **Current**: integration testing / hardening pass (`218f7e3` 联调测试 — handler cleanup across 7 feature handlers + CSRF/security middleware); M6-M8 completion (OpenAPI spec, perf k6 report, security audit) still pending
+- **Next**: finish M6 verification items (OpenAPI 3.1 spec, k6 perf report, external security audit) then M7/M8 completion
 - Tech review (`tech_review_report.md`) scored 4.4/10 — read it before scoping new work
 - Go is the locked backend language; DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for production
 - AI syntax check requires `AI_API_KEY` + `AI_PROVIDER` env vars (supports `openai` / `deepseek`)
