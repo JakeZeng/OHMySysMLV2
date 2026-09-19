@@ -45,6 +45,9 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	r := gin.New()
 
 	r.GET("/health", h.Health)
+	// OpenAPI 3.1 规范（M6 验收项）：与 cmd/server/main.go 一致。
+	r.GET("/openapi.yaml", h.GetOpenAPIYAML)
+	r.GET("/openapi.json", h.GetOpenAPIJSON)
 
 	v1 := r.Group("/api/v1")
 	// Auth（公开路由）

@@ -85,6 +85,11 @@ func main() {
 	// 健康检查
 	r.GET("/health", h.Health)
 
+	// OpenAPI 3.1 规范 — M6 验收项。
+	// 嵌入在二进制中（embed.FS），无需额外部署文件。
+	r.GET("/openapi.yaml", h.GetOpenAPIYAML)
+	r.GET("/openapi.json", h.GetOpenAPIJSON)
+
 	// API v1
 	v1 := r.Group("/api/v1")
 	{

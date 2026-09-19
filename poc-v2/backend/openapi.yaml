@@ -1,0 +1,2088 @@
+openapi: 3.1.0
+info:
+  title: SysML v2 MBSE Backend API
+  version: 0.7.0
+  summary: RESTful API for the SysML v2 model-based systems engineering toolchain.
+  description: |
+    Backend service for the SysML v2 MBSE POC v2 project.
+    Exposes project / model CRUD, team collaboration, sharing links, AI-assisted
+    generation, metamodel browser, audit logs, webhooks, API keys and external
+    model import (Papyrus / Capella).
+
+    All `/api/v1/*` endpoints under a group marked "Auth: required" expect an
+    `Authorization: Bearer <jwt>` header (24h HS256 token issued by
+    `/auth/login` or `/auth/register`).
+  contact:
+    name: SysML v2 MBSE Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.mbse-system.com
+    description: Production (planned)
+
+tags:
+  - name: Auth
+    description: User registration, login, current-user lookup.
+  - name: Projects
+    description: Project CRUD and model collections under a project.
+  - name: Models
+    description: Standalone model CRUD, search, versions, comments.
+  - name: Teams
+    description: Team and membership management, project-access grants.
+  - name: Sharing
+    description: Project-level shares, share-link tokens, public access.
+  - name: Audit
+    description: Audit log query, CSV/JSON export, archive cleanup.
+  - name: AI
+    description: Syntax check (SSE stream) and NL-to-SysML generation.
+  - name: Metamodel
+    description: SysML v2 metamodel element browser and search.
+  - name: Templates
+    description: Industry template catalog (automotive / aerospace / etc).
+  - name: Profiles
+    description: SysML Profile export / import.
+  - name: Webhooks
+    description: Outbound webhook subscriptions for project events.
+  - name: API Keys
+    description: Long-lived API keys for machine-to-machine access.
+  - name: Import
+    description: Import models from Papyrus XML or Capella JSON.
+  - name: Reports
+    description: Auto-generate design documentation from a model.
+  - name: Plugins
+    description: Plugin registration and toggle (M7).
+  - name: Subscription
+    description: SaaS plan / subscription state.
+  - name: Notifications
+    description: In-app notification center.
+  - name: Codegen
+    description: Generate Python / C++ skeleton code from a model.
+  - name: Presence
+    description: Real-time presence heartbeat for collaborative editing.
+  - name: System
+    description: Health and metamodel diagnostics.
+
+# ─── Security ─────────────────────────────────────────────────────────────
+security:
+  - bearerAuth: []
+
+paths:
+  # ─── System ─────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness probe + DB / counts snapshot.
+      security: []
+      responses:
+        '200':
+          description: Server is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  db: { type: string, example: ok }
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer }
+
+  # ─── Auth ───────────────────────────────────────────────────────────────
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user (first user becomes admin).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '200':
+          description: User created, JWT returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TokenResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with username + password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TokenResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Return the currently logged-in user (incl. `isAdmin`).
+      responses:
+        '200':
+          description: Current user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ─── Projects ──────────────────────────────────────────────────────────
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects accessible to the caller.
+      responses:
+        '200':
+          description: Project list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Project' }
+    post:
+      tags: [Projects]
+      summary: Create a new project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/projects/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Projects]
+      summary: Get one project.
+      responses:
+        '200':
+          description: Project detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Projects]
+      summary: Update a project (owner only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+    delete:
+      tags: [Projects]
+      summary: Delete a project (owner only).
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/projects/{id}/models:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Projects]
+      summary: List models in a project.
+      responses:
+        '200':
+          description: Model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Model' }
+    post:
+      tags: [Projects]
+      summary: Create a model inside the project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateModelRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Model' }
+
+  /api/v1/projects/{id}/models/{modelId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/ModelID'
+    get:
+      tags: [Projects]
+      summary: Get one model inside a project.
+      responses:
+        '200':
+          description: Model detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Model' }
+    put:
+      tags: [Projects]
+      summary: Update a model (creates a new version).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateModelRequest' }
+      responses:
+        '200': { description: Updated. }
+    delete:
+      tags: [Projects]
+      summary: Delete a model.
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/projects/{id}/models/{modelId}/versions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/ModelID'
+    get:
+      tags: [Projects]
+      summary: List version history of a model in the project.
+      responses:
+        '200':
+          description: Version list (newest first).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModelVersion' }
+
+  /api/v1/projects/{id}/shares:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Sharing]
+      summary: List direct shares on a project.
+      responses:
+        '200':
+          description: Share list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProjectShare' }
+    post:
+      tags: [Sharing]
+      summary: Add a direct share (owner only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddShareRequest' }
+      responses:
+        '200': { description: Share added. }
+
+  /api/v1/projects/{id}/shares/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Sharing]
+      summary: Revoke a direct share (owner only).
+      responses:
+        '200': { description: Revoked. }
+
+  /api/v1/projects/{id}/links:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Sharing]
+      summary: List share-link tokens for a project.
+      responses:
+        '200':
+          description: Link list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ShareLink' }
+    post:
+      tags: [Sharing]
+      summary: Create a new share-link token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLinkRequest' }
+      responses:
+        '200':
+          description: Link created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      link: { $ref: '#/components/schemas/ShareLink' }
+                      token: { type: string, description: Plaintext token (only returned once). }
+
+  /api/v1/projects/{id}/links/{linkId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - name: linkId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Sharing]
+      summary: Revoke a share-link token.
+      responses:
+        '200': { description: Revoked. }
+
+  /api/v1/projects/{id}/links/{linkId}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - name: linkId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Sharing]
+      summary: Rotate the plaintext token of a share-link (invalidates the old one).
+      responses:
+        '200':
+          description: Rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      link: { $ref: '#/components/schemas/ShareLink' }
+
+  /api/v1/shared/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Sharing]
+      summary: Public read of a project via share-link token (no auth).
+      security: []
+      responses:
+        '200':
+          description: Public snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      project: { $ref: '#/components/schemas/Project' }
+                      models:
+                        type: array
+                        items: { $ref: '#/components/schemas/Model' }
+                      permission: { type: string, enum: [read, write] }
+        '404': { description: Token invalid, revoked, expired or max_views exceeded. }
+
+  # ─── Models (standalone) ───────────────────────────────────────────────
+  /api/v1/models:
+    get:
+      tags: [Models]
+      summary: List models visible to the caller (across projects).
+      responses:
+        '200':
+          description: Model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Model' }
+    post:
+      tags: [Models]
+      summary: Create a standalone model (requires `projectId` in body).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateModelRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Model' }
+
+  /api/v1/models/search:
+    get:
+      tags: [Models]
+      summary: Search models by name / content (across projects).
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10, maximum: 50 }
+      responses:
+        '200':
+          description: Matching models.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Model' }
+
+  /api/v1/models/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ModelID'
+    get:
+      tags: [Models]
+      summary: Get a model by id.
+      responses:
+        '200':
+          description: Model detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Model' }
+    put:
+      tags: [Models]
+      summary: Update a model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateModelRequest' }
+      responses:
+        '200': { description: Updated. }
+    delete:
+      tags: [Models]
+      summary: Delete a model.
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/models/{id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/ModelID'
+    get:
+      tags: [Models]
+      summary: List version history of a model.
+      responses:
+        '200':
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModelVersion' }
+
+  /api/v1/models/{id}/comments:
+    parameters:
+      - $ref: '#/components/parameters/ModelID'
+    get:
+      tags: [Models]
+      summary: List comments on a model.
+      responses:
+        '200':
+          description: Comment list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Comment' }
+    post:
+      tags: [Models]
+      summary: Add a comment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCommentRequest' }
+      responses:
+        '200': { description: Created. }
+
+  /api/v1/models/{id}/comments/{commentId}:
+    parameters:
+      - $ref: '#/components/parameters/ModelID'
+      - name: commentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Models]
+      summary: Delete a comment.
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/models/{id}/comments/{commentId}/resolve:
+    parameters:
+      - $ref: '#/components/parameters/ModelID'
+      - name: commentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Models]
+      summary: Mark a comment as resolved.
+      responses:
+        '200': { description: Resolved. }
+
+  # ─── Teams ─────────────────────────────────────────────────────────────
+  /api/v1/teams:
+    get:
+      tags: [Teams]
+      summary: List teams the caller belongs to.
+      responses:
+        '200':
+          description: Teams.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Team' }
+    post:
+      tags: [Teams]
+      summary: Create a team.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTeamRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Team' }
+
+  /api/v1/teams/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Teams]
+      summary: Get a team.
+      responses:
+        '200':
+          description: Team.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Team' }
+    put:
+      tags: [Teams]
+      summary: Update team name / description (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTeamRequest' }
+      responses:
+        '200': { description: Updated. }
+    delete:
+      tags: [Teams]
+      summary: Delete a team (admin only).
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/teams/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Teams]
+      summary: List members of a team.
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TeamMember' }
+    post:
+      tags: [Teams]
+      summary: Add a member by username (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddMemberRequest' }
+      responses:
+        '200': { description: Added. }
+
+  /api/v1/teams/{id}/members/{userId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Teams]
+      summary: Update a member's role (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [member, admin, owner] }
+      responses:
+        '200': { description: Updated. }
+    delete:
+      tags: [Teams]
+      summary: Remove a member (admin only).
+      responses:
+        '200': { description: Removed. }
+
+  /api/v1/teams/{id}/project-access:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Teams]
+      summary: List projects accessible to this team.
+      responses:
+        '200':
+          description: Project access list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TeamProjectAccess' }
+    post:
+      tags: [Teams]
+      summary: Grant a team access to a project (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantAccessRequest' }
+      responses:
+        '200': { description: Granted. }
+
+  /api/v1/teams/{id}/project-access/{projectId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: projectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Teams]
+      summary: Revoke a team's project access (admin only).
+      responses:
+        '200': { description: Revoked. }
+
+  # ─── Users ─────────────────────────────────────────────────────────────
+  /api/v1/users/search:
+    get:
+      tags: [Auth]
+      summary: Search users by username / email prefix (for share dialog).
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10, maximum: 50 }
+      responses:
+        '200':
+          description: User list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+
+  # ─── Audit ─────────────────────────────────────────────────────────────
+  /api/v1/audit-logs:
+    get:
+      tags: [Audit]
+      summary: List audit logs (RBAC filtered unless `actor=` is given).
+      parameters:
+        - name: actor
+          in: query
+          schema: { type: string, format: uuid }
+        - name: targetType
+          in: query
+          schema: { type: string }
+        - name: targetId
+          in: query
+          schema: { type: string }
+        - name: projectId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Audit log list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLog' }
+                  limit: { type: integer }
+                  offset: { type: integer }
+
+  /api/v1/audit-logs/export:
+    get:
+      tags: [Audit]
+      summary: Export audit logs (CSV stream or JSON).
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, json], default: csv }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 1000, maximum: 5000 }
+        - name: actor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: CSV (text/csv) or JSON stream.
+          content:
+            text/csv:
+              schema: { type: string }
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLog' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/audit-logs/archive:
+    delete:
+      tags: [Audit]
+      summary: Delete audit logs older than N days (admin only; supports `dryRun=true`).
+      parameters:
+        - name: olderThanDays
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: dryRun
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Number of rows deleted (or would-delete in dry-run).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted: { type: integer }
+                      dryRun: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ─── AI ────────────────────────────────────────────────────────────────
+  /api/v1/ai/check:
+    post:
+      tags: [AI]
+      summary: One-shot AI syntax check on a SysML source string.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AICheckRequest' }
+      responses:
+        '200':
+          description: Issues found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AICheckResponse' }
+
+  /api/v1/ai/check/stream:
+    post:
+      tags: [AI]
+      summary: Streaming AI syntax check (SSE, text/event-stream).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AICheckRequest' }
+      responses:
+        '200':
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /api/v1/ai/generate:
+    post:
+      tags: [AI]
+      summary: Generate SysML v2 from a natural-language description.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AIGenerateRequest' }
+      responses:
+        '200':
+          description: Generated SysML source.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AIGenerateResponse' }
+
+  /api/v1/ai/generate/stream:
+    post:
+      tags: [AI]
+      summary: Streaming SysML generation (SSE).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AIGenerateRequest' }
+      responses:
+        '200':
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  # ─── Metamodel ─────────────────────────────────────────────────────────
+  /api/v1/metamodel/elements:
+    get:
+      tags: [Metamodel]
+      summary: List metamodel elements (optionally filtered by kind).
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [classifier, feature, relationship, datatype, other]
+      responses:
+        '200':
+          description: Element list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items: { $ref: '#/components/schemas/MetaElementSummary' }
+                  count: { type: integer }
+
+  /api/v1/metamodel/elements/{qname}:
+    parameters:
+      - name: qname
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Metamodel]
+      summary: Get a single metamodel element by qualified name.
+      responses:
+        '200':
+          description: Element detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetaElement' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/metamodel/subtypes/{qname}:
+    parameters:
+      - name: qname
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Metamodel]
+      summary: List direct subtypes of a metamodel element.
+      responses:
+        '200':
+          description: Subtype list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  parent: { type: string }
+                  subtypes:
+                    type: array
+                    items: { type: string }
+                  count: { type: integer }
+
+  /api/v1/metamodel/edges/{qname}:
+    parameters:
+      - name: qname
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Metamodel]
+      summary: List relationships (edges) involving a metamodel element.
+      responses:
+        '200':
+          description: Edge list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  element: { type: string }
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+
+  /api/v1/metamodel/search:
+    get:
+      tags: [Metamodel]
+      summary: Search metamodel elements by name substring.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Matching elements.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: { type: string }
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/MetaElementSummary' }
+                  count: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  # ─── Templates ─────────────────────────────────────────────────────────
+  /api/v1/templates:
+    get:
+      tags: [Templates]
+      summary: List industry templates (public).
+      security: []
+      responses:
+        '200':
+          description: Template list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  templates:
+                    type: array
+                    items: { $ref: '#/components/schemas/Template' }
+
+  /api/v1/templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Templates]
+      summary: Get a single template by id (public).
+      security: []
+      responses:
+        '200':
+          description: Template detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateDetail' }
+
+  # ─── Profiles ──────────────────────────────────────────────────────────
+  /api/v1/profiles/export:
+    post:
+      tags: [Profiles]
+      summary: Export a SysML Profile JSON package from the current model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileExportRequest' }
+      responses:
+        '200':
+          description: Profile JSON.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileExportResponse' }
+
+  /api/v1/profiles/import:
+    post:
+      tags: [Profiles]
+      summary: Import a SysML Profile JSON package.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileImportRequest' }
+      responses:
+        '200': { description: Imported. }
+
+  # ─── Webhooks ──────────────────────────────────────────────────────────
+  /api/v1/webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhooks (owner only).
+      responses:
+        '200':
+          description: Webhook list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Webhook' }
+    post:
+      tags: [Webhooks]
+      summary: Register a webhook (owner only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWebhookRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Webhook' }
+
+  /api/v1/webhooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Webhooks]
+      summary: Delete a webhook.
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/webhooks/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Webhooks]
+      summary: Send a test event to a webhook.
+      responses:
+        '200': { description: Test sent. }
+
+  # ─── API Keys ──────────────────────────────────────────────────────────
+  /api/v1/api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys for the caller.
+      responses:
+        '200':
+          description: Keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+    post:
+      tags: [API Keys]
+      summary: Create a new API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIKeyRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/APIKeyWithSecret' }
+
+  /api/v1/api-keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [API Keys]
+      summary: Revoke an API key.
+      responses:
+        '200': { description: Revoked. }
+
+  # ─── Import ────────────────────────────────────────────────────────────
+  /api/v1/import/papyrus:
+    post:
+      tags: [Import]
+      summary: Import a Papyrus UML XML file and convert to SysML v2.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '200':
+          description: Converted SysML source.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      source: { type: string, description: SysML v2 source text. }
+                      warnings:
+                        type: array
+                        items: { type: string }
+
+  /api/v1/import/capella:
+    post:
+      tags: [Import]
+      summary: Import a Capella JSON model and convert to SysML v2.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '200':
+          description: Converted SysML source.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      source: { type: string }
+                      warnings:
+                        type: array
+                        items: { type: string }
+
+  # ─── Reports ───────────────────────────────────────────────────────────
+  /api/v1/reports/generate:
+    post:
+      tags: [Reports]
+      summary: Generate a design document (Markdown) from a model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateReportRequest' }
+      responses:
+        '200':
+          description: Report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      markdown: { type: string }
+                      title: { type: string }
+
+  # ─── Plugins ───────────────────────────────────────────────────────────
+  /api/v1/plugins:
+    get:
+      tags: [Plugins]
+      summary: List registered plugins.
+      responses:
+        '200':
+          description: Plugins.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Plugin' }
+    post:
+      tags: [Plugins]
+      summary: Register a new plugin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePluginRequest' }
+      responses:
+        '200':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Plugin' }
+
+  /api/v1/plugins/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Plugins]
+      summary: Unregister a plugin.
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/plugins/{id}/toggle:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Plugins]
+      summary: Toggle a plugin's enabled flag.
+      responses:
+        '200': { description: Toggled. }
+
+  # ─── Subscription ─────────────────────────────────────────────────────
+  /api/v1/subscription/plans:
+    get:
+      tags: [Subscription]
+      summary: List available SaaS plans.
+      responses:
+        '200':
+          description: Plans.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Plan' }
+
+  /api/v1/subscription:
+    get:
+      tags: [Subscription]
+      summary: Get the caller's current subscription.
+      responses:
+        '200':
+          description: Subscription.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Subscription' }
+
+  /api/v1/subscription/upgrade:
+    post:
+      tags: [Subscription]
+      summary: Upgrade / change plan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpgradeSubscriptionRequest' }
+      responses:
+        '200': { description: Upgraded. }
+
+  # ─── Notifications ────────────────────────────────────────────────────
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for the caller.
+      responses:
+        '200':
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+
+  /api/v1/notifications/unread:
+    get:
+      tags: [Notifications]
+      summary: Get the unread-notification count.
+      responses:
+        '200':
+          description: Count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      unread: { type: integer }
+
+  /api/v1/notifications/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Notifications]
+      summary: Mark a notification as read.
+      responses:
+        '200': { description: Marked. }
+
+  /api/v1/notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: Mark all notifications as read.
+      responses:
+        '200': { description: Marked all. }
+
+  # ─── Codegen ───────────────────────────────────────────────────────────
+  /api/v1/codegen/generate:
+    post:
+      tags: [Codegen]
+      summary: Generate source code (Python / C++) from a model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodegenRequest' }
+      responses:
+        '200':
+          description: Generated source.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      language: { type: string, enum: [python, cpp] }
+                      files:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path: { type: string }
+                            content: { type: string }
+
+  # ─── Presence ──────────────────────────────────────────────────────────
+  /api/v1/presence/heartbeat:
+    post:
+      tags: [Presence]
+      summary: Send a presence heartbeat for a model (caller is editing).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresenceHeartbeatRequest' }
+      responses:
+        '200': { description: Recorded. }
+
+  /api/v1/presence/{modelId}:
+    parameters:
+      - name: modelId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Presence]
+      summary: List online users for a model.
+      responses:
+        '200':
+          description: Online users.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PresenceUser' }
+    delete:
+      tags: [Presence]
+      summary: Explicitly leave a model (clears the caller's heartbeat).
+      responses:
+        '200': { description: Left. }
+
+# ─── Components ──────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProjectID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ModelID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Validation error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Authenticated but lacks permission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: E_BAD_REQUEST }
+            message: { type: string }
+            details: { type: string }
+
+    # ─── Auth ─────────────────────────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 32 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+
+    TokenResponse:
+      type: object
+      properties:
+        token: { type: string, description: JWT (24h). }
+        expires: { type: string, format: date-time }
+        user: { $ref: '#/components/schemas/User' }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email }
+        isAdmin: { type: boolean, description: True for the first registered user (bootstrap admin). }
+        createdAt: { type: string, format: date-time }
+
+    # ─── Projects ─────────────────────────────────────────────────────────
+    Project:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        ownerId: { type: string, format: uuid }
+        visibility:
+          type: string
+          enum: [private, team, public]
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [private, team, public]
+          default: private
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [private, team, public]
+
+    # ─── Models ───────────────────────────────────────────────────────────
+    Model:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        name: { type: string }
+        content: { type: string, description: SysML v2 source text. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateModelRequest:
+      type: object
+      required: [projectId, name]
+      properties:
+        projectId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        content: { type: string, default: "" }
+
+    UpdateModelRequest:
+      type: object
+      properties:
+        name: { type: string }
+        content: { type: string }
+        description: { type: string }
+
+    ModelVersion:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        modelId: { type: string, format: uuid }
+        version: { type: integer }
+        content: { type: string }
+        message: { type: string, description: Optional commit-style message. }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    Comment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        modelId: { type: string, format: uuid }
+        authorId: { type: string, format: uuid }
+        body: { type: string }
+        resolved: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    AddCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1 }
+        anchor:
+          type: object
+          description: Optional source-location anchor (line/column).
+          properties:
+            line: { type: integer }
+            column: { type: integer }
+
+    # ─── Sharing ──────────────────────────────────────────────────────────
+    ProjectShare:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        permission: { type: string, enum: [read, write] }
+        createdAt: { type: string, format: date-time }
+
+    AddShareRequest:
+      type: object
+      required: [userId, permission]
+      properties:
+        userId: { type: string, format: uuid }
+        permission: { type: string, enum: [read, write] }
+
+    ShareLink:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        permission: { type: string, enum: [read, write] }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        revokedAt: { type: string, format: date-time, nullable: true }
+        viewCount: { type: integer }
+        maxViews: { type: integer, nullable: true }
+
+    CreateLinkRequest:
+      type: object
+      required: [permission]
+      properties:
+        permission: { type: string, enum: [read, write] }
+        expiresInHours: { type: integer, minimum: 1 }
+        maxViews: { type: integer, minimum: 1, description: After this many views the link auto-revokes. }
+
+    # ─── Teams ────────────────────────────────────────────────────────────
+    Team:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        ownerId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    CreateTeamRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string }
+
+    UpdateTeamRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+
+    TeamMember:
+      type: object
+      properties:
+        teamId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        username: { type: string }
+        role: { type: string, enum: [member, admin, owner] }
+        joinedAt: { type: string, format: date-time }
+
+    AddMemberRequest:
+      type: object
+      required: [username, role]
+      properties:
+        username: { type: string }
+        role: { type: string, enum: [member, admin] }
+
+    TeamProjectAccess:
+      type: object
+      properties:
+        teamId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        permission: { type: string, enum: [read, write] }
+        grantedAt: { type: string, format: date-time }
+
+    GrantAccessRequest:
+      type: object
+      required: [projectId, permission]
+      properties:
+        projectId: { type: string, format: uuid }
+        permission: { type: string, enum: [read, write] }
+
+    # ─── Audit ────────────────────────────────────────────────────────────
+    AuditLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        actorId: { type: string, format: uuid, description: Empty string for anonymous actions. }
+        action: { type: string, example: project_create }
+        targetType: { type: string, example: project }
+        targetId: { type: string }
+        metadata: { type: string, description: JSON-encoded metadata. }
+        ip: { type: string }
+        userAgent: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    # ─── AI ───────────────────────────────────────────────────────────────
+    AICheckRequest:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, description: SysML v2 source text. }
+
+    AICheckResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            issues:
+              type: array
+              items:
+                type: object
+                properties:
+                  severity: { type: string, enum: [error, warning, info] }
+                  message: { type: string }
+                  line: { type: integer }
+                  column: { type: integer }
+
+    AIGenerateRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt: { type: string, description: Natural-language description. }
+        language: { type: string, enum: [zh, en], default: zh }
+
+    AIGenerateResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            source: { type: string, description: Generated SysML v2 source. }
+            explanation: { type: string, description: Short rationale. }
+
+    # ─── Metamodel ────────────────────────────────────────────────────────
+    MetaElementSummary:
+      type: object
+      properties:
+        name: { type: string }
+        qname: { type: string }
+        kind: { type: string, enum: [classifier, feature, relationship, datatype, other] }
+        superType: { type: string, nullable: true }
+
+    MetaElement:
+      allOf:
+        - $ref: '#/components/schemas/MetaElementSummary'
+        - type: object
+          properties:
+            attributes:
+              type: array
+              items: { type: object, additionalProperties: true }
+            documentation: { type: string }
+
+    # ─── Templates ────────────────────────────────────────────────────────
+    Template:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        industry: { type: string }
+        description: { type: string }
+        partDefCount: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+
+    TemplateDetail:
+      allOf:
+        - $ref: '#/components/schemas/Template'
+        - type: object
+          properties:
+            source: { type: string, description: Full SysML v2 source for the template. }
+
+    # ─── Profiles ─────────────────────────────────────────────────────────
+    ProfileExportRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId: { type: string, format: uuid }
+
+    ProfileExportResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            profile:
+              type: object
+              description: Profile JSON object.
+
+    ProfileImportRequest:
+      type: object
+      required: [projectId, profile]
+      properties:
+        projectId: { type: string, format: uuid }
+        profile:
+          type: object
+          description: Profile JSON.
+
+    # ─── Webhooks ─────────────────────────────────────────────────────────
+    Webhook:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items: { type: string }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    CreateWebhookRequest:
+      type: object
+      required: [url, events]
+      properties:
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items: { type: string, example: project.create }
+
+    # ─── API Keys ─────────────────────────────────────────────────────────
+    APIKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: First 8 chars of the key, for identification. }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+
+    APIKeyWithSecret:
+      allOf:
+        - $ref: '#/components/schemas/APIKey'
+        - type: object
+          properties:
+            secret: { type: string, description: Plaintext key, only shown once at creation. }
+
+    CreateAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    # ─── Import ───────────────────────────────────────────────────────────
+    ImportRequest:
+      type: object
+      required: [projectId, payload]
+      properties:
+        projectId: { type: string, format: uuid }
+        payload:
+          type: string
+          description: Source XML (Papyrus) or JSON (Capella) as a string.
+
+    # ─── Reports ──────────────────────────────────────────────────────────
+    GenerateReportRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId: { type: string, format: uuid }
+        format: { type: string, enum: [markdown, html], default: markdown }
+
+    # ─── Plugins ──────────────────────────────────────────────────────────
+    Plugin:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        version: { type: string }
+        enabled: { type: boolean }
+        manifest: { type: object, additionalProperties: true }
+
+    CreatePluginRequest:
+      type: object
+      required: [name, version, manifest]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        manifest: { type: object, additionalProperties: true }
+
+    # ─── Subscription ─────────────────────────────────────────────────────
+    Plan:
+      type: object
+      properties:
+        id: { type: string, enum: [free, pro, enterprise] }
+        name: { type: string }
+        priceMonthly: { type: number, format: float }
+        features:
+          type: array
+          items: { type: string }
+
+    Subscription:
+      type: object
+      properties:
+        planId: { type: string, enum: [free, pro, enterprise] }
+        status: { type: string, enum: [active, past_due, canceled] }
+        renewsAt: { type: string, format: date-time, nullable: true }
+
+    UpgradeSubscriptionRequest:
+      type: object
+      required: [planId]
+      properties:
+        planId: { type: string, enum: [free, pro, enterprise] }
+
+    # ─── Notifications ────────────────────────────────────────────────────
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        title: { type: string }
+        body: { type: string }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    # ─── Codegen ──────────────────────────────────────────────────────────
+    CodegenRequest:
+      type: object
+      required: [modelId, language]
+      properties:
+        modelId: { type: string, format: uuid }
+        language: { type: string, enum: [python, cpp] }
+
+    # ─── Presence ─────────────────────────────────────────────────────────
+    PresenceHeartbeatRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId: { type: string, format: uuid }
+        cursor:
+          type: object
+          properties:
+            line: { type: integer }
+            column: { type: integer }
+
+    PresenceUser:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        username: { type: string }
+        lastSeenAt: { type: string, format: date-time }
+        cursor:
+          type: object
+          nullable: true
