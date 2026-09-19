@@ -118,7 +118,7 @@ func (h *Handler) GetPlans(c *gin.Context) {
 
 // GetSubscription 获取当前订阅
 func (h *Handler) GetSubscription(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	sub, ok := subscriptions[userID]
 	if !ok {
@@ -176,7 +176,7 @@ func (h *Handler) UpgradeSubscription(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 	sub := &Subscription{
 		ID:        "sub_" + userID,
 		UserID:    userID,

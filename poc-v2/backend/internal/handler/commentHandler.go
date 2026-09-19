@@ -48,7 +48,7 @@ type AddCommentRequest struct {
 // AddComment 添加评论
 func (h *Handler) AddComment(c *gin.Context) {
 	modelID := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	var req AddCommentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -98,7 +98,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 func (h *Handler) DeleteComment(c *gin.Context) {
 	modelID := c.Param("id")
 	commentID := c.Param("commentId")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	modelComments := comments[modelID]
 	for i, comment := range modelComments {

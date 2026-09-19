@@ -6,9 +6,9 @@
 
 import * as React from 'react';
 import { Users } from 'lucide-react';
-import axios from 'axios';
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface UserPresence {
   userId: string;
@@ -35,9 +35,9 @@ export const PresenceIndicator: React.FC<PresenceIndicatorProps> = ({ modelId, o
 
     const poll = async () => {
       try {
-        const { data } = await api.get<{ data: UserPresence[] }>(`/presence/${modelId}`);
-        setUsers(data.data ?? []);
-        onCursorUpdate?.(data.data ?? []);
+        const { data } = await api.get<UserPresence[]>(`/presence/${modelId}`);
+        setUsers(data ?? []);
+        onCursorUpdate?.(data ?? []);
       } catch {
         // silent
       }

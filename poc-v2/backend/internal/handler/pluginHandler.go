@@ -80,7 +80,7 @@ func (h *Handler) CreatePlugin(c *gin.Context) {
 	pluginIDCounter++
 	p := &Plugin{
 		ID:          fmt.Sprintf("plugin_%d", pluginIDCounter),
-		UserID:      c.GetString("userID"),
+		UserID:      c.GetString("user_id"),
 		Name:        req.Name,
 		Description: req.Description,
 		Version:     req.Version,
@@ -98,7 +98,7 @@ func (h *Handler) CreatePlugin(c *gin.Context) {
 
 // ListPlugins 列出已注册插件
 func (h *Handler) ListPlugins(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 	var result []*Plugin
 	for _, p := range plugins {
 		if p.UserID == userID {
@@ -111,7 +111,7 @@ func (h *Handler) ListPlugins(c *gin.Context) {
 // DeletePlugin 删除插件
 func (h *Handler) DeletePlugin(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	p, ok := plugins[id]
 	if !ok || p.UserID != userID {
@@ -126,7 +126,7 @@ func (h *Handler) DeletePlugin(c *gin.Context) {
 // TogglePlugin 启用/禁用插件
 func (h *Handler) TogglePlugin(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	p, ok := plugins[id]
 	if !ok || p.UserID != userID {

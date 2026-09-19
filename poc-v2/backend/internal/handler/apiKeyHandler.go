@@ -64,7 +64,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 	apiKeyIDCounter++
 	ak := &APIKey{
 		ID:        fmt.Sprintf("ak_%d", apiKeyIDCounter),
-		UserID:    c.GetString("userID"),
+		UserID:    c.GetString("user_id"),
 		Name:      req.Name,
 		Key:       fullKey,
 		KeyPrefix: fullKey[:10] + "...",
@@ -83,7 +83,7 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 
 // ListAPIKeys 列出当前用户的 API Keys
 func (h *Handler) ListAPIKeys(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 	var result []*APIKey
 	for _, ak := range apiKeys {
 		if ak.UserID == userID {
@@ -99,7 +99,7 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 // DeleteAPIKey 撤销 API Key
 func (h *Handler) DeleteAPIKey(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	ak, ok := apiKeys[id]
 	if !ok || ak.UserID != userID {
@@ -141,7 +141,7 @@ func (h *Handler) APIKeyAuth() gin.HandlerFunc {
 				// 更新最后使用时间
 				ak.LastUsed = time.Now()
 				// 设置用户信息到 context
-				c.Set("userID", ak.UserID)
+				c.Set("user_id", ak.UserID)
 				c.Set("authMethod", "api_key")
 				c.Set("apiScopes", ak.Scopes)
 				c.Next()

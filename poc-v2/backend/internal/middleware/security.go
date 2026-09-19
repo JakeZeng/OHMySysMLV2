@@ -66,6 +66,29 @@ func DefaultCSRFConfig() CSRFConfig {
 			// M4.5 补充：审计日志
 			"/api/v1/audit-logs",
 			"/api/v1/audit-logs/*",
+			// M4 实时协同：高频轮询 + 挂载即发心跳，JWT header 已认证；
+			// 且心跳 POST 与首次 GET 并行，cookie 引导存在竞态
+			"/api/v1/presence",
+			"/api/v1/presence/*",
+			// M5+ 增量补齐（同 projects/models 理由：JWT + CORS 已提供跨域保护）
+			"/api/v1/notifications",
+			"/api/v1/notifications/*",
+			"/api/v1/profiles",
+			"/api/v1/profiles/*",
+			"/api/v1/webhooks",
+			"/api/v1/webhooks/*",
+			"/api/v1/api-keys",
+			"/api/v1/api-keys/*",
+			"/api/v1/import",
+			"/api/v1/import/*",
+			"/api/v1/reports",
+			"/api/v1/reports/*",
+			"/api/v1/plugins",
+			"/api/v1/plugins/*",
+			"/api/v1/subscription",
+			"/api/v1/subscription/*",
+			"/api/v1/codegen",
+			"/api/v1/codegen/*",
 		},
 		MaxAge: 24 * time.Hour,
 	}
@@ -149,7 +172,7 @@ func CSRF(cfg CSRFConfig) gin.HandlerFunc {
 		if err != nil || cookie == "" {
 			// 首次访问：签发 token 到 cookie
 			token := randomToken(cfg.TokenLength)
-			c.SetCookie(cfg.CookieName, token, int(cfg.MaxAge.Seconds()), "/", "", false, true)
+			c.SetCookie(cfg.CookieName, token, int(cfg.MaxAge.Seconds()), "/", "", false, false)
 			if isMutating(c.Request.Method) {
 				// mutating 请求但无 cookie → 拒绝
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{

@@ -424,6 +424,9 @@ func TestW45_LinkRotationRejectedAfterRevoke(t *testing.T) {
 		t.Errorf("已撤销 link rotate 应 400，实际 %d", wRot.Code)
 	}
 }
+
+// TestW45_SharedReadOnlyViewExposesContent：只读共享链接应暴露模型 content 供 Monaco 渲染。
+func TestW45_SharedReadOnlyViewExposesContent(t *testing.T) {
 	r, _ := setupTestRouter(t)
 	token, _, _, _ := registerTwoUsers(t, r)
 	projectID := createProject(t, r, token, "ReadOnlyView", "private")

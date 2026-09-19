@@ -81,7 +81,7 @@ func (h *Handler) CreateWebhook(c *gin.Context) {
 	webhookIDCounter++
 	wh := &WebhookSubscription{
 		ID:        fmt.Sprintf("wh_%d", webhookIDCounter),
-		UserID:    c.GetString("userID"),
+		UserID:    c.GetString("user_id"),
 		URL:       req.URL,
 		Events:    req.Events,
 		Secret:    req.Secret,
@@ -95,7 +95,7 @@ func (h *Handler) CreateWebhook(c *gin.Context) {
 
 // ListWebhooks 列出当前用户的 webhooks
 func (h *Handler) ListWebhooks(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 	var result []*WebhookSubscription
 	for _, wh := range webhooks {
 		if wh.UserID == userID {
@@ -108,7 +108,7 @@ func (h *Handler) ListWebhooks(c *gin.Context) {
 // DeleteWebhook 删除 webhook
 func (h *Handler) DeleteWebhook(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	wh, ok := webhooks[id]
 	if !ok || wh.UserID != userID {
@@ -123,7 +123,7 @@ func (h *Handler) DeleteWebhook(c *gin.Context) {
 // TestWebhook 发送测试事件
 func (h *Handler) TestWebhook(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	wh, ok := webhooks[id]
 	if !ok || wh.UserID != userID {

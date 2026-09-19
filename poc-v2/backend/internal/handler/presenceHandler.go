@@ -75,7 +75,7 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	// 获取用户名
 	user, err := h.repo.GetUserByID(c, userID)
@@ -111,7 +111,7 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 // GetPresence 获取模型的在线用户列表
 func (h *Handler) GetPresence(c *gin.Context) {
 	modelID := c.Param("modelId")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	modelPresences := presences[modelID]
 	var result []*UserPresence
@@ -135,7 +135,7 @@ func (h *Handler) GetPresence(c *gin.Context) {
 // LeavePresence 离开模型（清理状态）
 func (h *Handler) LeavePresence(c *gin.Context) {
 	modelID := c.Param("modelId")
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	if presences[modelID] != nil {
 		delete(presences[modelID], userID)

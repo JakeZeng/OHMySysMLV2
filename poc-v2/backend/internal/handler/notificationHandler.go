@@ -39,7 +39,7 @@ var notificationIDCounter = 0
 
 // ListNotifications 获取当前用户的通知
 func (h *Handler) ListNotifications(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	userNotifications := notifications[userID]
 	if userNotifications == nil {
@@ -51,7 +51,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 
 // MarkAsRead 标记通知为已读
 func (h *Handler) MarkAsRead(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 	notificationID := c.Param("id")
 
 	userNotifications := notifications[userID]
@@ -68,7 +68,7 @@ func (h *Handler) MarkAsRead(c *gin.Context) {
 
 // MarkAllAsRead 全部标记已读
 func (h *Handler) MarkAllAsRead(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	userNotifications := notifications[userID]
 	for _, n := range userNotifications {
@@ -80,7 +80,7 @@ func (h *Handler) MarkAllAsRead(c *gin.Context) {
 
 // GetUnreadCount 获取未读通知数量
 func (h *Handler) GetUnreadCount(c *gin.Context) {
-	userID := c.GetString("userID")
+	userID := c.GetString("user_id")
 
 	count := 0
 	for _, n := range notifications[userID] {

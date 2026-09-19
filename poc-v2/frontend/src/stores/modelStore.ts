@@ -246,6 +246,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   async saveModel() {
+    // 并发保护：避免自动保存与手动保存同时用同一 version 发请求导致 409
+    if (get().saving) return;
     const { projectId, modelId, name, description, content, version } = get();
     if (!projectId) {
       set({ error: '缺少 projectId，无法保存' });
@@ -278,7 +280,18 @@ export const useModelStore = create<ModelState>((set, get) => ({
         set((s) => (s.saved ? { saved: false } : s));
       }, 2000);
     } catch (e) {
-      set({ saving: false, error: (e as Error).message });
+      const err = e as { code?: string; message?: string } & Error;
+      // 版本冲突：自动重载最新 version，让用户可重试
+      if (err.code === 'E_VERSION_CONFLICT' && modelId) {
+        try {
+          await get().loadModel(projectId, modelId);
+        } catch {
+          /* ignore reload error */
+        }
+        set({ saving: false, error: '版本冲突，已刷新至最新版本，请重新保存' });
+      } else {
+        set({ saving: false, error: err.message ?? '保存失败' });
+      }
       throw e;
     }
   },
