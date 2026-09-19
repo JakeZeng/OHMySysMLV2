@@ -198,7 +198,7 @@ func TestImportPapyrusEndToEnd(t *testing.T) {
 		"package ImportedSysML",
 		"package Components",
 		"part def Sensor",
-		"port dataOut",
+		"port dataOut : String",
 		"attribute serial",
 	} {
 		if !strings.Contains(body2.Data.Model.Content, want) {
@@ -253,7 +253,7 @@ func TestImportCapellaEndToEnd(t *testing.T) {
 				Name    string `json:"name"`
 				Content string `json:"content"`
 			} `json:"model"`
-			Source  string `json:"source"`
+			Source string `json:"source"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &body2); err != nil {
@@ -262,7 +262,7 @@ func TestImportCapellaEndToEnd(t *testing.T) {
 	for _, want := range []string{
 		"package CapellaImported",
 		"part def ComputeBoard",
-		"port ioBus",
+		"port ioBus : String",
 		"attribute cpuLoad",
 	} {
 		if !strings.Contains(body2.Data.Model.Content, want) {
@@ -357,7 +357,7 @@ func TestStripXMLNamespacePrefixes(t *testing.T) {
 </uml:Model>`
 	out := string(stripXMLNamespacePrefixes([]byte(in)))
 	for _, want := range []string{
-		`<Model `,                    // root 没 xmlns 前缀
+		`<Model `, // root 没 xmlns 前缀
 		`name="X"`,
 		`<packagedElement type="Package"`, // type 前缀剥了
 	} {

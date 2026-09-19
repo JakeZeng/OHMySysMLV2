@@ -201,6 +201,25 @@ describe('Parser - 复杂结构', () => {
     const pd = r.model.packages[0].members[0] as any;
     expect(pd.isAbstract).toBe(true);
   });
+
+  it('12b. 解析空体 part def（分号结尾，外部工具导出形式）', () => {
+    const r = parse(`
+      package P {
+        part def Engine;
+        part def Motor : Engine;
+      }
+    `);
+    expect(r.ok).toBe(true);
+    const engine = r.model.packages[0].members[0] as any;
+    expect(engine.kind).toBe('partDef');
+    expect(engine.name).toBe('Engine');
+    expect(engine.body).toEqual([]);
+    // 带特化的空定义也应被接受
+    const motor = r.model.packages[0].members[1] as any;
+    expect(motor.name).toBe('Motor');
+    expect(motor.inherits).toEqual(['Engine']);
+    expect(motor.body).toEqual([]);
+  });
 });
 
 describe('Parser - 嵌套与包', () => {

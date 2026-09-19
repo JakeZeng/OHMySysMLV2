@@ -81,7 +81,6 @@ func (h *Handler) ImportPapyrus(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// 读取文件内容
 	content, err := io.ReadAll(file)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
@@ -105,10 +104,8 @@ func (h *Handler) ImportPapyrus(c *gin.Context) {
 		}
 	}
 
-	// 转换为 SysML v2 文本
 	sysmlText := convertPapyrusToSysMLv2(papyrus)
 
-	// 创建模型（与 CreateModel handler 一致：UUID + 时间戳 + version=1）
 	now := time.Now().UTC()
 	m := &model.Model{
 		ID:        uuid.NewString(),
@@ -204,7 +201,9 @@ func convertPapyrusToSysMLv2(p PapyrusModel) string {
 				case "Class", "Component":
 					sb.WriteString(fmt.Sprintf("    part def %s;\n", sanitizeName(elem.Name)))
 				case "Port":
-					sb.WriteString(fmt.Sprintf("    port %s;\n", sanitizeName(elem.Name)))
+					// M6 修复：SysML v2 port 用法必须有类型引用。
+					// Papyrus Port 默认指向 UML Port（SysML v2 内置），用 String 占位。
+					sb.WriteString(fmt.Sprintf("    port %s : String;\n", sanitizeName(elem.Name)))
 				case "Property":
 					sb.WriteString(fmt.Sprintf("    attribute %s : String;\n", sanitizeName(elem.Name)))
 				}
@@ -223,14 +222,13 @@ func convertCapellaToSysMLv2(c CapellaModel) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("package %s {\n", sanitizeName(c.Name)))
 
-	// M6: 端口 / 属性在 Capella JSON 中通常是 package 的直接子元素（与 part def 同级），
-	// 全部缩进 2 空格。原实现误用 4 空格，会让 SysML v2 解析器报缩进错误。
+	// M6 修复：Capella 端口必须有类型引用；属性保持 : String 类型。
 	for _, elem := range c.Elements {
 		switch strings.ToLower(elem.Type) {
 		case "class", "component", "part":
 			sb.WriteString(fmt.Sprintf("  part def %s;\n", sanitizeName(elem.Name)))
 		case "port":
-			sb.WriteString(fmt.Sprintf("  port %s;\n", sanitizeName(elem.Name)))
+			sb.WriteString(fmt.Sprintf("  port %s : String;\n", sanitizeName(elem.Name)))
 		case "property", "attribute":
 			sb.WriteString(fmt.Sprintf("  attribute %s : String;\n", sanitizeName(elem.Name)))
 		}
@@ -255,8 +253,8 @@ func sanitizeName(name string) string {
 // encoding/xml 自动推断命名空间，但当上游工具导出缺 xmlns 时仍能解析。
 //
 // 实现：
-//   1. 用正则删所有 xmlns[:prefix]=... 或 xmlns="..." 声明（含前导空白）
-//   2. 在 tag 区内识别 element / attr name（首字母 + 字母数字_-:.），截掉 prefix
+//  1. 用正则删所有 xmlns[:prefix]=... 或 xmlns="..." 声明（含前导空白）
+//  2. 在 tag 区内识别 element / attr name（首字母 + 字母数字_-:.），截掉 prefix
 func stripXMLNamespacePrefixes(content []byte) []byte {
 	s := string(content)
 	// 1. 删 xmlns 声明。匹配 " xmlns[:prefix]=["']...["']"（含前导空白）

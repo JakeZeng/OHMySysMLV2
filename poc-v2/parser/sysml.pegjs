@@ -171,7 +171,7 @@ ImportSuffix
 // ─── Part Definition ───────────────────────────────────────────────────
 
 PartDef
-  = isAbstract:(AbstractKw WS)? "part" WS "def" WS name:Identifier specialization:PartDefSpecialization? OPEN _ body:(_ PartBodyMember)* CLOSE
+  = isAbstract:(AbstractKw WS)? "part" WS "def" WS name:Identifier specialization:PartDefSpecialization? body:PartDefBody
     {
       return {
         kind: 'partDef',
@@ -179,13 +179,20 @@ PartDef
         name,
         isAbstract: !!isAbstract,
         inherits: specialization || undefined,
-        body: body.map(b => b[1]),
+        body,
         location: locationOf(location().start.offset),
       };
     }
 
 PartDefSpecialization
   = WS ":" WS inh:QualifiedNames { return inh; }
+
+// 定义体两种写法（均为标准 SysML v2）：
+//   part def Name { ... }  —— 带成员
+//   part def Name;         —— 空定义（Papyrus/Capella 等外部工具与 AI 导出常见）
+PartDefBody
+  = OPEN _ members:(_ PartBodyMember)* CLOSE { return members.map(m => m[1]); }
+  / _ ";" { return []; }
 
 PartBodyMember
   = PartUsage
