@@ -39,27 +39,27 @@ export function serialize(model: SysMLModel): string {
   }
 
   // 顶层 connect（不在任何 package 内）
-  for (const conn of model.connections) {
+  for (const conn of model.connections ?? []) {
     serializeConnection(conn, 0, lines);
   }
 
   // M5: 顶层状态机
-  for (const sm of model.stateMachines) {
+  for (const sm of model.stateMachines ?? []) {
     serializeStateMachine(sm, 0, lines);
   }
 
   // M5: 顶层活动
-  for (const act of model.activities) {
+  for (const act of model.activities ?? []) {
     serializeActivity(act, 0, lines);
   }
 
   // M5: 顶层需求
-  for (const req of model.requirements) {
+  for (const req of model.requirements ?? []) {
     serializeRequirement(req, 0, lines);
   }
 
   // M5: 顶层约束块
-  for (const cb of model.constraintBlocks) {
+  for (const cb of model.constraintBlocks ?? []) {
     serializeConstraintBlock(cb, 0, lines);
   }
 

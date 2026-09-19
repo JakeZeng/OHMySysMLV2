@@ -56,9 +56,13 @@ func (r *SQLiteRepository) ListAuditLogs(
 		q += ` AND actor_id = ?`
 		args = append(args, filterActor)
 	}
-	if filterTargetType != "" && filterTargetID != "" {
-		q += ` AND target_type = ? AND target_id = ?`
-		args = append(args, filterTargetType, filterTargetID)
+	if filterTargetType != "" {
+		q += ` AND target_type = ?`
+		args = append(args, filterTargetType)
+		if filterTargetID != "" {
+			q += ` AND target_id = ?`
+			args = append(args, filterTargetID)
+		}
 	}
 	if filterProjectID != "" {
 		// 用 OR 收拢多种 target_type 的 project 关联日志

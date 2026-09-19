@@ -134,6 +134,9 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
+	// 在调用 writeAudit 前注入 user_id（注册时无 JWT，context user_id 为空）。
+	// 这样注册日志 actor 与新用户一致，便于按用户聚合审计。
+	c.Set("user_id", user.ID)
 	writeAudit(c, h.repo, "register", "user", user.ID,
 		`{"username":"`+escapeJSON(user.Username)+`","email":"`+escapeJSON(user.Email)+`"}`)
 
@@ -164,13 +167,17 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	if !checkPassword(req.Password, user.PasswordHash) {
-		// 登录失败也记录审计（IP + 尝试的用户名），用于异常检测
-		writeAudit(c, h.repo, "login_fail", "user", "",
+		// 登录失败也记录审计（IP + 尝试的用户名），用于异常检测。
+		// actorID 用 user.ID 便于按用户聚合异常登录尝试。
+		c.Set("user_id", user.ID)
+		writeAudit(c, h.repo, "login_fail", "user", user.ID,
 			`{"username":"`+escapeJSON(req.Username)+`"}`)
 		badRequest(c, "用户名或密码错误", nil)
 		return
 	}
 
+	// 登录成功：把 user_id 注入 context，让后续 writeAudit 记录 actor。
+	c.Set("user_id", user.ID)
 	writeAudit(c, h.repo, "login", "user", user.ID,
 		`{"username":"`+escapeJSON(user.Username)+`"}`)
 

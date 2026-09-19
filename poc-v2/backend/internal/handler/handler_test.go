@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/sysmlv2/mbse-backend/internal/metamodel"
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
 )
@@ -35,13 +36,21 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	shareH := NewShareHandler(repo)
 	userH := NewUserHandler(repo)
 	auditH := NewAuditHandler(repo)
+	aiH := NewAIHandler()
+	metaReg, err := metamodel.NewMockRegistry()
+	if err != nil {
+		t.Fatalf("failed to build mock metamodel: %v", err)
+	}
+	metaH := NewMetaHandler(metaReg)
 	r := gin.New()
 
 	r.GET("/health", h.Health)
 
 	v1 := r.Group("/api/v1")
+	// Auth（公开路由）
 	v1.POST("/auth/register", h.Register)
 	v1.POST("/auth/login", h.Login)
+	v1.GET("/auth/me", middleware.AuthRequired(), h.Me)
 
 	projects := v1.Group("/projects")
 	projects.Use(middleware.AuthRequired())
@@ -57,6 +66,8 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		projects.GET("/:id/models/:modelId", h.GetModel)
 		projects.PUT("/:id/models/:modelId", h.UpdateModel)
 		projects.DELETE("/:id/models/:modelId", h.DeleteModel)
+		// M4.5 增量：模型版本历史
+		projects.GET("/:id/models/:modelId/versions", h.ListModelVersions)
 
 		// M4 W3：项目级分享（owner 才能管）
 		projects.POST("/:id/shares", shareH.AddShare)
@@ -76,12 +87,41 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 	models := v1.Group("/models")
 	models.Use(middleware.AuthRequired())
 	{
+		// M4.5 增量：跨项目模型搜索（放在 /:id 之前避免路由冲突）
+		models.GET("/search", h.SearchModels)
 		models.GET("", h.ListModels)
 		models.POST("", h.CreateModel)
 		models.GET("/:id", h.GetModel)
 		models.PUT("/:id", h.UpdateModel)
 		models.DELETE("/:id", h.DeleteModel)
+		// M4.5 增量：模型版本历史
+		models.GET("/:id/versions", h.ListModelVersions)
 	}
+
+	// AI endpoints（受保护）
+	aiGroup := v1.Group("/ai")
+	aiGroup.Use(middleware.AuthRequired())
+	{
+		aiGroup.POST("/check", aiH.CheckSyntax)
+		aiGroup.POST("/check/stream", aiH.CheckSyntaxStream)
+		aiGroup.POST("/generate", aiH.Generate)
+		aiGroup.POST("/generate/stream", aiH.GenerateStream)
+	}
+
+	// M3 新增：元模型查询（受保护）
+	metaGroup := v1.Group("/metamodel")
+	metaGroup.Use(middleware.AuthRequired())
+	{
+		metaGroup.GET("/elements", metaH.ListElements)
+		metaGroup.GET("/elements/:qname", metaH.GetElement)
+		metaGroup.GET("/subtypes/:qname", metaH.SubTypes)
+		metaGroup.GET("/edges/:qname", metaH.Edges)
+		metaGroup.GET("/search", metaH.Search)
+	}
+
+	// M3 新增：行业模板（公开）
+	v1.GET("/templates", h.ListTemplates)
+	v1.GET("/templates/:id", h.GetTemplate)
 
 	teams := v1.Group("/teams")
 	teams.Use(middleware.AuthRequired())
@@ -108,10 +148,110 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		users.GET("/search", userH.SearchUsers)
 	}
 
+	// M4.5 补充：审计日志查询（受保护）
 	audit := v1.Group("/audit-logs")
 	audit.Use(middleware.AuthRequired())
 	{
 		audit.GET("", auditH.ListAuditLogs)
+		audit.GET("/export", auditH.ExportAuditLogs)
+		audit.DELETE("/archive", auditH.ArchiveAuditLogs)
+	}
+
+	// M5：Profile 导出/导入（受保护）
+	profilesGroup := v1.Group("/profiles")
+	profilesGroup.Use(middleware.AuthRequired())
+	{
+		profilesGroup.POST("/export", h.ExportProfile)
+		profilesGroup.POST("/import", h.ImportProfile)
+	}
+
+	// M6：Webhook 事件通知（受保护）
+	webhooksGroup := v1.Group("/webhooks")
+	webhooksGroup.Use(middleware.AuthRequired())
+	{
+		webhooksGroup.POST("", h.CreateWebhook)
+		webhooksGroup.GET("", h.ListWebhooks)
+		webhooksGroup.DELETE("/:id", h.DeleteWebhook)
+		webhooksGroup.POST("/:id/test", h.TestWebhook)
+	}
+
+	// M6：API Key 管理（受保护）
+	apiKeysGroup := v1.Group("/api-keys")
+	apiKeysGroup.Use(middleware.AuthRequired())
+	{
+		apiKeysGroup.POST("", h.CreateAPIKey)
+		apiKeysGroup.GET("", h.ListAPIKeys)
+		apiKeysGroup.DELETE("/:id", h.DeleteAPIKey)
+	}
+
+	// M6：外部模型导入（受保护）
+	importGroup := v1.Group("/import")
+	importGroup.Use(middleware.AuthRequired())
+	{
+		importGroup.POST("/papyrus", h.ImportPapyrus)
+		importGroup.POST("/capella", h.ImportCapella)
+	}
+
+	// M7：设计文档生成（受保护）
+	reportsGroup := v1.Group("/reports")
+	reportsGroup.Use(middleware.AuthRequired())
+	{
+		reportsGroup.POST("/generate", h.GenerateReport)
+	}
+
+	// M7：插件系统（受保护）
+	pluginsGroup := v1.Group("/plugins")
+	pluginsGroup.Use(middleware.AuthRequired())
+	{
+		pluginsGroup.POST("", h.CreatePlugin)
+		pluginsGroup.GET("", h.ListPlugins)
+		pluginsGroup.DELETE("/:id", h.DeletePlugin)
+		pluginsGroup.POST("/:id/toggle", h.TogglePlugin)
+	}
+
+	// M8：订阅管理（受保护）
+	subGroup := v1.Group("/subscription")
+	subGroup.Use(middleware.AuthRequired())
+	{
+		subGroup.GET("/plans", h.GetPlans)
+		subGroup.GET("", h.GetSubscription)
+		subGroup.POST("/upgrade", h.UpgradeSubscription)
+	}
+
+	// 模型评论（受保护）
+	modelsGroup := v1.Group("/models")
+	modelsGroup.Use(middleware.AuthRequired())
+	{
+		modelsGroup.POST("/:id/comments", h.AddComment)
+		modelsGroup.GET("/:id/comments", h.ListComments)
+		modelsGroup.DELETE("/:id/comments/:commentId", h.DeleteComment)
+		modelsGroup.PUT("/:id/comments/:commentId/resolve", h.ResolveComment)
+	}
+
+	// 通知中心（受保护）
+	notifGroup := v1.Group("/notifications")
+	notifGroup.Use(middleware.AuthRequired())
+	{
+		notifGroup.GET("", h.ListNotifications)
+		notifGroup.GET("/unread", h.GetUnreadCount)
+		notifGroup.PUT("/:id/read", h.MarkAsRead)
+		notifGroup.PUT("/read-all", h.MarkAllAsRead)
+	}
+
+	// 代码生成（受保护）
+	codegenGroup := v1.Group("/codegen")
+	codegenGroup.Use(middleware.AuthRequired())
+	{
+		codegenGroup.POST("/generate", h.GenerateCode)
+	}
+
+	// 实时协同 — 在线状态（受保护）
+	presenceGroup := v1.Group("/presence")
+	presenceGroup.Use(middleware.AuthRequired())
+	{
+		presenceGroup.POST("/heartbeat", h.Heartbeat)
+		presenceGroup.GET("/:modelId", h.GetPresence)
+		presenceGroup.DELETE("/:modelId", h.LeavePresence)
 	}
 
 	return r, repo
@@ -667,7 +807,7 @@ func TestHealth(t *testing.T) {
 // TestHealthEnriched：M4.5 增量 — /health 包含 db 状态 + counts。
 func TestHealthEnriched(t *testing.T) {
 	r, _ := setupTestRouter(t)
-	w := doRequest(r, authedRequest("GET", "/api/v1/../health", "", nil))
+	w := doRequest(r, authedRequest("GET", "/health", "", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("health: %d", w.Code)
 	}

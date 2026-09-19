@@ -232,16 +232,17 @@ export function validate(model: SysMLModel): ValidationResult {
   }
 
   // W209: 空 body 警告
+  // 收集所有 partUsage 的 typeRef（包括嵌套在 partDef/partUsage body 内的），
+  // 这样 `part def Car { part engine : Engine; }` 中的 Engine 也算被引用。
+  const referencedTypes = new Set<string>();
+  for (const [, usage] of scope.partUsages) {
+    referencedTypes.add(usage.typeRef);
+  }
+  collectPartUsageTypeRefs(model, referencedTypes);
   for (const [qname, sym] of scope.partDefs) {
     if (sym.ports.size === 0) {
-      // 检查是否有子部件（通过 partUsage 引用）
-      let hasChildren = false;
-      for (const [, usage] of scope.partUsages) {
-        if (usage.typeRef === sym.name || usage.typeRef === qname) {
-          hasChildren = true;
-          break;
-        }
-      }
+      const hasChildren =
+        referencedTypes.has(sym.name) || referencedTypes.has(qname);
       if (!hasChildren && sym.ports.size === 0) {
         issues.push({
           code: 'W209_EMPTY_BODY',
@@ -1145,5 +1146,42 @@ function collectM5Elements(
         collectM5Elements(m, scope, issues);
         break;
     }
+  }
+}
+
+// ─── 递归收集所有 partUsage.typeRef（用于 W209 children 判断）─────────
+//
+// partUsage 可以嵌套在 partDef / partUsage 的 body 中，
+// 这些用法没有进入 scope.partUsages，但 W209 需要识别它们作为对
+// 对应 part def 的引用，以避免误报"空 body"。
+function collectPartUsageTypeRefs(model: SysMLModel, out: Set<string>): void {
+  for (const pkg of model.packages) {
+    collectPartUsageTypeRefsInPackage(pkg, out);
+  }
+}
+
+function collectPartUsageTypeRefsInPackage(pkg: Package, out: Set<string>): void {
+  for (const m of pkg.members) {
+    collectPartUsageTypeRefsInMember(m, out);
+  }
+}
+
+function collectPartUsageTypeRefsInMember(m: NamespaceMember, out: Set<string>): void {
+  switch (m.kind) {
+    case 'package':
+      collectPartUsageTypeRefsInPackage(m, out);
+      break;
+    case 'partDef':
+      for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
+      break;
+    case 'partUsage':
+      out.add(m.typeRef);
+      for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
+      break;
+    case 'portDef':
+      for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
+      break;
+    default:
+      break;
   }
 }

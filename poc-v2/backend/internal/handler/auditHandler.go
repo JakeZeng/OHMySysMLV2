@@ -73,8 +73,10 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	// RBAC：登录用户只能看到自己有 read 权限的那部分目标行
-	if callerID != "" && len(logs) > 0 {
+	// RBAC：登录用户只能看到自己有 read 权限的那部分目标行。
+	// 但若 caller 已显式按 actor=xxx 过滤（管理后台审计某人视角），SQL 已精确收窄，
+	// 直接返回过滤结果，避免 actor=alice 时还要逐条 RBAC 把 alice 自己看不到的过滤掉。
+	if callerID != "" && len(logs) > 0 && actor == "" {
 		logs = h.filterLogsForCaller(c, callerID, logs)
 	}
 
@@ -255,6 +257,10 @@ func (h *AuditHandler) filterLogsForCaller(
 
 // callerCanSeeAudit 单行可见性判定。
 func (h *AuditHandler) callerCanSeeAudit(c *gin.Context, callerID string, l *model.AuditLog) bool {
+	// 0. Admin 可见所有审计日志（管理后台视角）
+	if h.callerIsAdmin(c, callerID) {
+		return true
+	}
 	// 1. 我自己的操作日志一定可见
 	if l.ActorID == callerID {
 		return true

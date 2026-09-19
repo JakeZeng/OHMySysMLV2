@@ -277,11 +277,15 @@ func resolveShareToken(repo *repository.SQLiteRepository, token string) (Anonymo
 		expiresAt sql.NullTime
 		revokedAt sql.NullTime
 	)
+	var (
+		viewCount int
+		maxViews  sql.NullInt64
+	)
 	err := repo.DB().QueryRow(
-		`SELECT id, project_id, permission, expires_at, revoked_at
+		`SELECT id, project_id, permission, expires_at, revoked_at, view_count, max_views
          FROM share_links WHERE token_hash = ?`,
 		hashToken(token),
-	).Scan(&linkID, &projectID, &permStr, &expiresAt, &revokedAt)
+	).Scan(&linkID, &projectID, &permStr, &expiresAt, &revokedAt, &viewCount, &maxViews)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
@@ -292,6 +296,10 @@ func resolveShareToken(repo *repository.SQLiteRepository, token string) (Anonymo
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
 	if expiresAt.Valid && expiresAt.Time.Before(time.Now().UTC()) {
+		return AnonymousAccessResult{}, repository.ErrNotFound
+	}
+	// max_views 超限检查：超过后视同失效（不暴露原因）
+	if maxViews.Valid && int64(viewCount) >= maxViews.Int64 {
 		return AnonymousAccessResult{}, repository.ErrNotFound
 	}
 	return AnonymousAccessResult{

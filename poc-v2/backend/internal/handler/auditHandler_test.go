@@ -58,9 +58,6 @@ func TestW45_AuditShareAndLink(t *testing.T) {
 		t.Fatalf("list logs: %d %s", wLogs.Code, wLogs.Body.String())
 	}
 	logs := parseJSON(t, wLogs.Body.Bytes())["data"].([]any)
-	if len(logs) != 4 {
-		t.Fatalf("应 4 条审计日志，实际 %d", len(logs))
-	}
 	// 4 个 action 都应出现（顺序非确定性，因 TIMESTAMP 列秒精度）。
 	want := map[string]bool{
 		"share":       true,
@@ -74,6 +71,10 @@ func TestW45_AuditShareAndLink(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("缺少 action: %v", want)
+	}
+	// 同时至少应有这 4 条（加上可能的其他如 register/project_create）
+	if len(logs) < 4 {
+		t.Fatalf("应 ≥ 4 条审计日志，实际 %d", len(logs))
 	}
 }
 
@@ -93,21 +94,26 @@ func TestW45_AuditFilterByActor(t *testing.T) {
 		"userId": idA, "permission": "write",
 	}))
 
-	// 查询 actor=A 应 1 条
-	wA := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?actor="+idA, tokenA, nil))
+	// 查询 actor=A 应至少 1 条 share（可能还有 register / project_create 等其他操作）
+	wA := doRequest(r, authedRequest("GET",
+		"/api/v1/audit-logs?actor="+idA+"&targetType=share", tokenA, nil))
 	logsA := parseJSON(t, wA.Body.Bytes())["data"].([]any)
 	if len(logsA) != 1 {
-		t.Errorf("alice 应 1 条日志，实际 %d", len(logsA))
+		t.Errorf("alice 应 1 条 share 日志，实际 %d", len(logsA))
 	}
 	if logsA[0].(map[string]any)["actorId"] != idA {
 		t.Errorf("actorId 不匹配")
 	}
+	if logsA[0].(map[string]any)["action"] != "share" {
+		t.Errorf("action 应 share，实际 %v", logsA[0].(map[string]any)["action"])
+	}
 
-	// 查询 actor=B 应 1 条
-	wB := doRequest(r, authedRequest("GET", "/api/v1/audit-logs?actor="+idB, tokenA, nil))
+	// 查询 actor=B 应 1 条 share
+	wB := doRequest(r, authedRequest("GET",
+		"/api/v1/audit-logs?actor="+idB+"&targetType=share", tokenA, nil))
 	logsB := parseJSON(t, wB.Body.Bytes())["data"].([]any)
 	if len(logsB) != 1 {
-		t.Errorf("bob 应 1 条日志，实际 %d", len(logsB))
+		t.Errorf("bob 应 1 条 share 日志，实际 %d", len(logsB))
 	}
 }
 
@@ -365,8 +371,20 @@ func TestW45_AuditExportCSV(t *testing.T) {
 	if !strings.HasPrefix(body, "created_at,actor_id,action,target_type,target_id") {
 		t.Errorf("CSV 头缺失，实际前 80 字节：%q", body[:minLen(80, len(body))])
 	}
-	if !strings.Contains(body, "project_create") || !strings.Contains(body, "model_create") {
-		t.Errorf("CSV 应含 project_create + model_create 行，实际：%s", body)
+	// CSV 列：action,target_type 分开；"project_create" 模式匹配为
+	// 同一行里 action=create 紧邻 target_type=project。
+	hasProjCreate := false
+	hasMdlCreate := false
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, ",create,project,") {
+			hasProjCreate = true
+		}
+		if strings.Contains(line, ",create,model,") {
+			hasMdlCreate = true
+		}
+	}
+	if !hasProjCreate || !hasMdlCreate {
+		t.Errorf("CSV 应含 (create,project) + (create,model) 行，实际：%s", body)
 	}
 }
 
@@ -636,7 +654,7 @@ func TestW45_AuditArchiveAdminAllowed(t *testing.T) {
 // TestW45_FirstUserIsAdmin：注册首用户后 is_admin=1；第二个=0。
 func TestW45_FirstUserIsAdmin(t *testing.T) {
 	r, repo := setupTestRouter(t)
-	idA, idB, _, _ := registerTwoUsers(t, r)
+	_, _, idA, idB := registerTwoUsers(t, r)
 	var a, b int
 	repo.DB().QueryRow(`SELECT is_admin FROM users WHERE id=?`, idA).Scan(&a)
 	repo.DB().QueryRow(`SELECT is_admin FROM users WHERE id=?`, idB).Scan(&b)
