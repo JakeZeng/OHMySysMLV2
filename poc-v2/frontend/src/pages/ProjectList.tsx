@@ -26,6 +26,7 @@ import { ProjectCardSkeleton } from '../components/ui/Skeleton';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/useI18n';
 import type { Project, ProjectVisibility } from '../services/projectApi';
 
 interface ProjectGroup {
@@ -84,6 +85,7 @@ export const ProjectList: React.FC = () => {
   const fetchProjects = useProjectStore((s) => s.fetch);
   const createProject = useProjectStore((s) => s.create);
   const { showToast } = useToast();
+  const { t, isZh } = useI18n();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
 
@@ -226,7 +228,7 @@ export const ProjectList: React.FC = () => {
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">项目</h1>
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">{t('nav.projects')}</h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               管理和查看你的所有 SysML v2 模型项目。
               {totalCount > 0 && (
