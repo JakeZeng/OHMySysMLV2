@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -67,9 +68,22 @@ func main() {
 	r.Use(middleware.BodySizeLimit(1 << 20))
 	r.Use(middleware.CORS(middleware.DefaultCORSConfig()))
 
-	// 限流器：60 req/min/IP（写操作更严：可加 rate limit per route）
-	rateLimiter := middleware.NewRateLimiter(60, time.Minute)
-	r.Use(middleware.RateLimit(rateLimiter))
+	// 限流器：默认 60 req/min/IP；可通过环境变量调整。
+	//   RATE_LIMIT_DISABLE=1  完全关闭（性能压测时用）
+	//   RATE_LIMIT_RPM=N     自定义每分钟请求数（默认 60）
+	rateLimitRPM := 60
+	if s := os.Getenv("RATE_LIMIT_RPM"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			rateLimitRPM = n
+		}
+	}
+	if os.Getenv("RATE_LIMIT_DISABLE") != "1" {
+		rateLimiter := middleware.NewRateLimiter(rateLimitRPM, time.Minute)
+		r.Use(middleware.RateLimit(rateLimiter))
+		log.Printf("  · Rate limit: %d req/min/IP（关闭：RATE_LIMIT_DISABLE=1）", rateLimitRPM)
+	} else {
+		log.Printf("  · Rate limit DISABLED (RATE_LIMIT_DISABLE=1)")
+	}
 
 	r.Use(requestLogger())
 

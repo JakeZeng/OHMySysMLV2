@@ -1,0 +1,376 @@
+{
+  "metrics": {
+    "http_reqs": {
+      "values": {
+        "count": 5609,
+        "rate": 224.36
+      }
+    },
+    "http_req_failed": {
+      "values": {
+        "rate": 0,
+        "count": 0
+      }
+    },
+    "http_req_duration": {
+      "values": {
+        "avg": 7.0510492244606695,
+        "min": 0.5398999999997613,
+        "max": 173.2663,
+        "p50": 3.0046999999976833,
+        "p90": 18.39731999999958,
+        "p95": 23.227840000000732,
+        "p99": 40.651371999999114
+      }
+    },
+    "iteration_duration": {
+      "values": {
+        "avg": 7.0510492244606695
+      }
+    }
+  },
+  "root_group": {
+    "name": "full",
+    "path": "",
+    "groups": {
+      "health": {
+        "name": "health",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 816,
+              "rate": 32.64
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 7.8991519607843275,
+              "min": 1.3996999999999389,
+              "max": 161.4188999999999,
+              "p50": 4.281900000000405,
+              "p90": 17.806000000001404,
+              "p95": 23.253000000001293,
+              "p99": 42.9871750000007
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "list_teams": {
+        "name": "list_teams",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 619,
+              "rate": 24.76
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 3.9097694668820138,
+              "min": 0.9583000000020547,
+              "max": 141.29700000000003,
+              "p50": 2.293499999999767,
+              "p90": 7.366460000000009,
+              "p95": 10.00832000000064,
+              "p99": 23.8069759999978
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "openapi_json": {
+        "name": "openapi_json",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 604,
+              "rate": 24.16
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 20.295776986754955,
+              "min": 9.23830000000089,
+              "max": 163.42189999999982,
+              "p50": 18.479049999999916,
+              "p90": 28.5583800000004,
+              "p95": 37.284685000000806,
+              "p99": 51.87118299999929
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "list_projects": {
+        "name": "list_projects",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 555,
+              "rate": 22.2
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 4.686380000000032,
+              "min": 1.4354999999995925,
+              "max": 113.03790000000004,
+              "p50": 3.1377000000002226,
+              "p90": 8.23202000000165,
+              "p95": 12.303969999999385,
+              "p99": 27.37526399999895
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "metamodel": {
+        "name": "metamodel",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 552,
+              "rate": 22.08
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 2.537896014492733,
+              "min": 0.714799999997922,
+              "max": 31.01299999999901,
+              "p50": 1.877649999998539,
+              "p90": 4.628450000000523,
+              "p95": 6.862320000001996,
+              "p99": 12.271157999999502
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "openapi_yaml": {
+        "name": "openapi_yaml",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 563,
+              "rate": 22.52
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 3.1754486678507807,
+              "min": 0.9351999999998952,
+              "max": 16.457500000000437,
+              "p50": 2.4953000000004977,
+              "p90": 5.497460000000138,
+              "p95": 7.62903000000005,
+              "p99": 13.440837999999346
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "list_templates": {
+        "name": "list_templates",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 805,
+              "rate": 32.2
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 2.2817345341614272,
+              "min": 0.5398999999997613,
+              "max": 18.206800000000158,
+              "p50": 1.753100000001723,
+              "p90": 4.055780000000232,
+              "p95": 5.901660000000083,
+              "p99": 10.83390800000049
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "metamodel_search": {
+        "name": "metamodel_search",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 547,
+              "rate": 21.88
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 2.5922667276051286,
+              "min": 0.6423999999969965,
+              "max": 17.954399999998714,
+              "p50": 1.9042000000008557,
+              "p90": 4.839639999999966,
+              "p95": 6.83569999999963,
+              "p99": 13.087902000001437
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "audit_logs": {
+        "name": "audit_logs",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 275,
+              "rate": 11
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 15.315148363636267,
+              "min": 2.346499999999992,
+              "max": 78.98610000000008,
+              "p50": 10.799699999999575,
+              "p90": 32.15864000000001,
+              "p95": 40.07789999999916,
+              "p99": 61.008449999999044
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "create_project": {
+        "name": "create_project",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 273,
+              "rate": 10.92
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 18.933191941391904,
+              "min": 10.538799999999924,
+              "max": 173.2663,
+              "p50": 14.780899999999974,
+              "p90": 28.061740000000466,
+              "p95": 35.57963999999918,
+              "p99": 68.08399999999935
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "_overall": {
+        "name": "_overall",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 5609,
+              "rate": 224.36
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 7.0510492244606695,
+              "min": 0.5398999999997613,
+              "max": 173.2663,
+              "p50": 3.0046999999976833,
+              "p90": 18.39731999999958,
+              "p95": 23.227840000000732,
+              "p99": 40.651371999999114
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "options": {
+    "vus": 15,
+    "duration": "25s",
+    "scenario": "full"
+  },
+  "state": {
+    "testRunDurationMs": 25106.0432
+  }
+}

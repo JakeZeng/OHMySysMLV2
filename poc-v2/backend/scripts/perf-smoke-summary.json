@@ -1,0 +1,256 @@
+{
+  "metrics": {
+    "http_reqs": {
+      "values": {
+        "count": 3102,
+        "rate": 155.1
+      }
+    },
+    "http_req_failed": {
+      "values": {
+        "rate": 0,
+        "count": 0
+      }
+    },
+    "http_req_duration": {
+      "values": {
+        "avg": 3.353809477756282,
+        "min": 0.6904999999987922,
+        "max": 44.52880000000005,
+        "p50": 2.0865499999999884,
+        "p90": 6.754700000000601,
+        "p95": 12.451370000001086,
+        "p99": 21.445842999998813
+      }
+    },
+    "iteration_duration": {
+      "values": {
+        "avg": 3.353809477756282
+      }
+    }
+  },
+  "root_group": {
+    "name": "smoke",
+    "path": "",
+    "groups": {
+      "openapi_yaml": {
+        "name": "openapi_yaml",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 434,
+              "rate": 21.7
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 2.4359502304148077,
+              "min": 1.1010000000005675,
+              "max": 14.390500000001339,
+              "p50": 2.1154999999998836,
+              "p90": 3.524299999999834,
+              "p95": 4.28209499999957,
+              "p99": 7.282883999999312
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "list_templates": {
+        "name": "list_templates",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 732,
+              "rate": 36.6
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 1.8669692622950456,
+              "min": 0.6904999999987922,
+              "max": 14.46849999999904,
+              "p50": 1.6079500000000735,
+              "p90": 3.0300999999997655,
+              "p95": 3.587664999999468,
+              "p99": 6.372749000000391
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "register": {
+        "name": "register",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 171,
+              "rate": 8.55
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 14.852839766081862,
+              "min": 10.144900000001144,
+              "max": 44.46419999999853,
+              "p50": 12.757699999998295,
+              "p90": 22.639800000000832,
+              "p95": 26.087249999999585,
+              "p99": 35.80118000000049
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "list_projects": {
+        "name": "list_projects",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 635,
+              "rate": 31.75
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 2.756509133858234,
+              "min": 1.021600000000035,
+              "max": 22.95180000000255,
+              "p50": 2.0821999999989202,
+              "p90": 4.312219999999071,
+              "p95": 7.0886500000000865,
+              "p99": 12.22484200000001
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "health": {
+        "name": "health",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 649,
+              "rate": 32.45
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 4.237010169491539,
+              "min": 1.3947000000007392,
+              "max": 44.52880000000005,
+              "p50": 2.8290999999990163,
+              "p90": 9.65591999999961,
+              "p95": 13.518380000000437,
+              "p99": 23.787019999999494
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "metamodel": {
+        "name": "metamodel",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 481,
+              "rate": 24.05
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 1.953543866943839,
+              "min": 0.7285999999999149,
+              "max": 14.046999999998661,
+              "p50": 1.541200000000572,
+              "p90": 3.0913999999993393,
+              "p95": 4.034899999999652,
+              "p99": 9.031079999999562
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      },
+      "_overall": {
+        "name": "_overall",
+        "path": "",
+        "checks": [],
+        "metrics": {
+          "request_count": {
+            "values": {
+              "count": 3102,
+              "rate": 155.1
+            }
+          },
+          "request_duration": {
+            "values": {
+              "avg": 3.353809477756282,
+              "min": 0.6904999999987922,
+              "max": 44.52880000000005,
+              "p50": 2.0865499999999884,
+              "p90": 6.754700000000601,
+              "p95": 12.451370000001086,
+              "p99": 21.445842999998813
+            }
+          },
+          "request_failed": {
+            "values": {
+              "rate": 0,
+              "count": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "options": {
+    "vus": 10,
+    "duration": "20s",
+    "scenario": "smoke"
+  },
+  "state": {
+    "testRunDurationMs": 20078.9668
+  }
+}
