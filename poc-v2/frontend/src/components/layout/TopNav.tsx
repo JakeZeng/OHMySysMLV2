@@ -30,6 +30,7 @@ import { useThemeStore } from '../../stores/themeStore';
 import { cn } from '../../lib/utils';
 import { GlobalSearch } from '../GlobalSearch';
 import { NotificationBell } from '../NotificationBell';
+import { LanguageSwitcher } from '../LanguageSwitcher';
 
 // 主导航项（始终显示）
 const PRIMARY_NAV = [
@@ -195,6 +196,7 @@ export const TopNav: React.FC = () => {
       <div className="flex items-center gap-3">
         <GlobalSearch />
         <NotificationBell />
+        <LanguageSwitcher />
         <button
           type="button"
           onClick={toggleTheme}
