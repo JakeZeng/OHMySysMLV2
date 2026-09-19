@@ -78,7 +78,7 @@ export const SharedProjectPage: React.FC = () => {
   }, [token]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="mx-auto max-w-4xl px-6 py-8">
         <Link
           to="/login"
@@ -95,7 +95,7 @@ export const SharedProjectPage: React.FC = () => {
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <ShieldAlert className="mb-3 h-10 w-10 text-red-400" />
-              <p className="text-base font-medium text-gray-900">
+              <p className="text-base font-medium text-gray-900 dark:text-gray-100">
                 链接无效或已失效
               </p>
               <p className="mt-2 text-xs text-gray-500">
@@ -107,7 +107,7 @@ export const SharedProjectPage: React.FC = () => {
           <>
             <header className="mb-6">
               <div className="flex items-center gap-2">
-                <h1 className="truncate text-2xl font-semibold text-gray-900">
+                <h1 className="truncate text-2xl font-semibold text-gray-900 dark:text-gray-100">
                   {view.project.name}
                 </h1>
                 <span
@@ -116,7 +116,7 @@ export const SharedProjectPage: React.FC = () => {
                     'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ' +
                     (view.permission === 'write'
                       ? 'border-amber-200 bg-amber-50 text-amber-700'
-                      : 'border-gray-200 bg-gray-50 text-gray-600')
+                      : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400')
                   }
                 >
                   <Eye className="h-3 w-3" />
@@ -137,7 +137,7 @@ export const SharedProjectPage: React.FC = () => {
                   type="button"
                   onClick={handleCopyLink}
                   data-testid="copy-share-link"
-                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs text-gray-600 dark:text-gray-400 transition hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
                 >
                   {copied ? (
                     <>
@@ -152,7 +152,7 @@ export const SharedProjectPage: React.FC = () => {
               </div>
             </header>
 
-            <h2 className="mb-2 text-sm font-semibold text-gray-900">
+            <h2 className="mb-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
               模型列表（只读）
             </h2>
             {view.models.length === 0 ? (

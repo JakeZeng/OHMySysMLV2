@@ -42,9 +42,9 @@ const ROLE_LABEL: Record<TeamRole, string> = {
 };
 
 const ROLE_CLS: Record<TeamRole, string> = {
-  owner: 'border-amber-200 bg-amber-50 text-amber-700',
-  admin: 'border-blue-200 bg-blue-50 text-blue-700',
-  member: 'border-gray-200 bg-gray-50 text-gray-600',
+  owner: 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
+  admin: 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
+  member: 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
 };
 
 export const TeamDetailPage: React.FC = () => {
@@ -227,17 +227,17 @@ export const TeamDetailPage: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-5xl">
         <Link
           to="/teams"
-          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
         >
           <ArrowLeft className="h-3 w-3" /> 返回团队列表
         </Link>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-500">
+          <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
           </div>
         ) : currentTeam ? (
@@ -245,7 +245,7 @@ export const TeamDetailPage: React.FC = () => {
             <div className="mb-6 flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-semibold text-gray-900">
+                  <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
                     {currentTeam.name}
                   </h1>
                   {myRole && (

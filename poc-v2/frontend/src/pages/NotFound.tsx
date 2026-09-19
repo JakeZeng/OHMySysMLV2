@@ -9,10 +9,10 @@ import { Button } from '../components/ui/Button';
 
 export const NotFound: React.FC = () => {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-4 text-center">
-      <Compass className="mb-3 h-12 w-12 text-gray-300" />
-      <h1 className="text-2xl font-semibold text-gray-900">页面不存在</h1>
-      <p className="mt-2 text-sm text-gray-500">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-4 text-center">
+      <Compass className="mb-3 h-12 w-12 text-gray-300 dark:text-gray-600" />
+      <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">页面不存在</h1>
+      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
         你访问的页面已被移动或不存在。
       </p>
       <Link to="/" className="mt-6">
