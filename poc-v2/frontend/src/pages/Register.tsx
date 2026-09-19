@@ -8,10 +8,12 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useAuthStore } from '../stores/authStore';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/useI18n';
 
 export const Register: React.FC = () => {
   const register = useAuthStore((s) => s.register);
   const { showToast } = useToast();
+  const { t, isZh } = useI18n();
   const navigate = useNavigate();
 
   const [email, setEmail] = React.useState('');
@@ -24,15 +26,18 @@ export const Register: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
-    if (!email.trim()) return setFormError('请输入邮箱');
-    if (!username.trim()) return setFormError('请输入用户名');
-    if (password.length < 6) return setFormError('密码至少 6 个字符');
-    if (password !== confirm) return setFormError('两次输入的密码不一致');
+    if (!email.trim()) return setFormError(isZh ? '请输入邮箱' : 'Please enter email');
+    if (!username.trim()) return setFormError(isZh ? '请输入用户名' : 'Please enter username');
+    if (password.length < 6) return setFormError(isZh ? '密码至少 6 个字符' : 'Password must be at least 6 characters');
+    if (password !== confirm) return setFormError(isZh ? '两次输入的密码不一致' : 'Passwords do not match');
 
     setSubmitting(true);
     try {
       await register(email.trim(), username.trim(), password);
-      showToast({ title: '注册成功', variant: 'success' });
+      showToast({
+        title: isZh ? '注册成功' : 'Registration successful',
+        variant: 'success',
+      });
       navigate('/', { replace: true });
     } catch (err) {
       setFormError((err as Error).message);
@@ -48,8 +53,8 @@ export const Register: React.FC = () => {
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded bg-brand-600 text-base font-bold text-white">
             S
           </div>
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">注册</h1>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">创建你的 SysML v2 账号</p>
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('auth.register')}</h1>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{isZh ? '创建你的 SysML v2 账号' : 'Create your SysML v2 account'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -58,7 +63,7 @@ export const Register: React.FC = () => {
               htmlFor="reg-email"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              邮箱
+              {t('auth.email')}
             </label>
             <Input
               id="reg-email"
@@ -75,7 +80,7 @@ export const Register: React.FC = () => {
               htmlFor="reg-username"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              用户名
+              {t('auth.username')}
             </label>
             <Input
               id="reg-username"
@@ -91,7 +96,7 @@ export const Register: React.FC = () => {
               htmlFor="reg-password"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              密码
+              {t('auth.password')}
             </label>
             <Input
               id="reg-password"
@@ -108,7 +113,7 @@ export const Register: React.FC = () => {
               htmlFor="reg-confirm"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              确认密码
+              {t('auth.confirmPassword')}
             </label>
             <Input
               id="reg-confirm"
@@ -127,14 +132,14 @@ export const Register: React.FC = () => {
             </div>
           )}
           <Button type="submit" disabled={submitting} className="w-full">
-            {submitting ? '注册中…' : '注册'}
+            {submitting ? (isZh ? '注册中…' : 'Signing up...') : t('auth.registerButton')}
           </Button>
         </form>
 
         <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-          已有账号？{' '}
+          {t('auth.hasAccount')}{' '}
           <Link to="/login" className="text-brand-600 dark:text-brand-400 hover:underline">
-            登录
+            {t('auth.loginButton')}
           </Link>
         </p>
       </div>
