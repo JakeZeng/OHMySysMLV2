@@ -94,27 +94,41 @@ func (h *Handler) ImportProfile(c *gin.Context) {
 		return
 	}
 
-	// 逐个导入模板为模型
+	// 逐个导入模板为模型，记录每个失败原因便于调试
+	type ImportFailure struct {
+		Name  string `json:"name"`
+		Error string `json:"error"`
+	}
+	var failures []ImportFailure
 	imported := 0
 	for _, tpl := range req.Profile.Templates {
 		m := &model.Model{
-			ID:        fmt.Sprintf("profile-%d", imported),
+			ID:        fmt.Sprintf("profile-%d-%s", imported, tpl.Name),
 			ProjectID: req.ProjectID,
 			Name:      tpl.Name,
 			Content:   tpl.Content,
 			Version:   1,
 		}
 		if err := h.repo.CreateModel(c, m); err != nil {
-			continue // 跳过失败的
+			failures = append(failures, ImportFailure{
+				Name:  tpl.Name,
+				Error: err.Error(),
+			})
+			continue
 		}
 		imported++
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"data": gin.H{
 			"imported": imported,
 			"total":    len(req.Profile.Templates),
 			"profile":  req.Profile.Name,
+			"failed":   len(failures),
 		},
-	})
+	}
+	if len(failures) > 0 {
+		resp["data"].(gin.H)["failures"] = failures
+	}
+	c.JSON(http.StatusOK, resp)
 }
