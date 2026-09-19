@@ -3,7 +3,7 @@
 // POST /api/v1/import/papyrus — 导入 Papyrus/SysML v1 XML
 // POST /api/v1/import/capella — 导入 Capella JSON
 //
-// 导入流程：上传文件 → 解析 → 转换为 SysML v2 AST → 序列化为文本 → 创建模型
+// 导入流程：上传文件 → 解析 → 转换为 SysML v2 文本 → 创建 Model。
 
 package handler
 
@@ -13,33 +13,40 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/sysmlv2/mbse-backend/internal/model"
 )
 
 // ─── Papyrus XML 解析 ─────────────────────────────────────────────
 
 // PapyrusModel Papyrus UML/SysML v1 XML 模型
+//
+// XML tag 不写前缀，因为我们先剥掉 xmlns 声明 + element/attr prefix 再 unmarshal。
+// 这样无论上游工具导出带不带 xmlns 都能解析，且 attribute 值里的
+// "xmi:type=\"uml:Package\"" 也会变 "type=\"Package\""，方便 switch。
 type PapyrusModel struct {
-	XMLName  xml.Name         `xml:"uml:Model"`
+	XMLName  xml.Name         `xml:"Model"`
 	Name     string           `xml:"name,attr"`
 	Packages []PapyrusPackage `xml:"packagedElement"`
 }
 
 // PapyrusPackage 包
 type PapyrusPackage struct {
-	Type       string           `xml:"xmi:type,attr"`
-	Name       string           `xml:"name,attr"`
-	Elements   []PapyrusElement `xml:"packagedElement"`
+	Type     string           `xml:"type,attr"`
+	Name     string           `xml:"name,attr"`
+	Elements []PapyrusElement `xml:"packagedElement"`
 }
 
 // PapyrusElement 元素
 type PapyrusElement struct {
-	Type   string `xml:"xmi:type,attr"`
+	Type   string `xml:"type,attr"`
 	Name   string `xml:"name,attr"`
-	ID     string `xml:"xmi:id,attr"`
+	ID     string `xml:"id,attr"`
 	IsLeaf bool   `xml:"isLeaf,attr"`
 }
 
@@ -47,7 +54,7 @@ type PapyrusElement struct {
 
 // CapellaModel Capella JSON 模型
 type CapellaModel struct {
-	Name     string          `json:"name"`
+	Name     string           `json:"name"`
 	Elements []CapellaElement `json:"elements"`
 }
 
@@ -81,22 +88,36 @@ func (h *Handler) ImportPapyrus(c *gin.Context) {
 		return
 	}
 
-	// 解析 XML
+	// 解析 XML。
+	// Papyrus 文件使用 xmlns:uml="..." 等命名空间前缀；Go 的 encoding/xml 会
+	// 把 attribute value 里的 "uml:Package" 保留为 prefix:localname 形式。
+	// 这里总是先剥掉 xmlns 声明 + element/attr prefix 再 unmarshal，保证
+	// attribute value 是裸的 "Package"/"Class"/"Component" 等。
 	var papyrus PapyrusModel
-	if err := xml.Unmarshal(content, &papyrus); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("XML 解析失败: %v", err)})
-		return
+	stripped := stripXMLNamespacePrefixes(content)
+	if err := xml.Unmarshal(stripped, &papyrus); err != nil {
+		// 容错：直接尝试 unmarshal 原 content（理论上 XML 本身合法时 strip + unmarshal 总会成功）
+		if err2 := xml.Unmarshal(content, &papyrus); err2 != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("XML 解析失败: %v（已尝试剥离命名空间前缀）", err2),
+			})
+			return
+		}
 	}
 
 	// 转换为 SysML v2 文本
 	sysmlText := convertPapyrusToSysMLv2(papyrus)
 
-	// 创建模型
+	// 创建模型（与 CreateModel handler 一致：UUID + 时间戳 + version=1）
+	now := time.Now().UTC()
 	m := &model.Model{
-		Name:     strings.TrimSuffix(header.Filename, ".xml"),
-		Content:  sysmlText,
+		ID:        uuid.NewString(),
+		Name:      strings.TrimSuffix(header.Filename, ".xml"),
+		Content:   sysmlText,
 		ProjectID: projectID,
-		Version:  1,
+		Version:   1,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if err := h.repo.CreateModel(c, m); err != nil {
@@ -143,11 +164,15 @@ func (h *Handler) ImportCapella(c *gin.Context) {
 
 	sysmlText := convertCapellaToSysMLv2(capella)
 
+	now := time.Now().UTC()
 	m := &model.Model{
-		Name:     strings.TrimSuffix(header.Filename, ".json"),
-		Content:  sysmlText,
+		ID:        uuid.NewString(),
+		Name:      strings.TrimSuffix(header.Filename, ".json"),
+		Content:   sysmlText,
 		ProjectID: projectID,
-		Version:  1,
+		Version:   1,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if err := h.repo.CreateModel(c, m); err != nil {
@@ -171,20 +196,21 @@ func convertPapyrusToSysMLv2(p PapyrusModel) string {
 	sb.WriteString(fmt.Sprintf("package %s {\n", sanitizeName(p.Name)))
 
 	for _, pkg := range p.Packages {
-		if pkg.Type == "uml:Package" || pkg.Type == "" {
+		switch pkg.Type {
+		case "Package", "":
 			sb.WriteString(fmt.Sprintf("  package %s {\n", sanitizeName(pkg.Name)))
 			for _, elem := range pkg.Elements {
 				switch elem.Type {
-				case "uml:Class", "uml:Component":
+				case "Class", "Component":
 					sb.WriteString(fmt.Sprintf("    part def %s;\n", sanitizeName(elem.Name)))
-				case "uml:Port":
+				case "Port":
 					sb.WriteString(fmt.Sprintf("    port %s;\n", sanitizeName(elem.Name)))
-				case "uml:Property":
+				case "Property":
 					sb.WriteString(fmt.Sprintf("    attribute %s : String;\n", sanitizeName(elem.Name)))
 				}
 			}
 			sb.WriteString("  }\n")
-		} else if pkg.Type == "uml:Class" || pkg.Type == "uml:Component" {
+		case "Class", "Component":
 			sb.WriteString(fmt.Sprintf("  part def %s;\n", sanitizeName(pkg.Name)))
 		}
 	}
@@ -197,14 +223,16 @@ func convertCapellaToSysMLv2(c CapellaModel) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("package %s {\n", sanitizeName(c.Name)))
 
+	// M6: 端口 / 属性在 Capella JSON 中通常是 package 的直接子元素（与 part def 同级），
+	// 全部缩进 2 空格。原实现误用 4 空格，会让 SysML v2 解析器报缩进错误。
 	for _, elem := range c.Elements {
 		switch strings.ToLower(elem.Type) {
 		case "class", "component", "part":
 			sb.WriteString(fmt.Sprintf("  part def %s;\n", sanitizeName(elem.Name)))
 		case "port":
-			sb.WriteString(fmt.Sprintf("    port %s;\n", sanitizeName(elem.Name)))
+			sb.WriteString(fmt.Sprintf("  port %s;\n", sanitizeName(elem.Name)))
 		case "property", "attribute":
-			sb.WriteString(fmt.Sprintf("    attribute %s : String;\n", sanitizeName(elem.Name)))
+			sb.WriteString(fmt.Sprintf("  attribute %s : String;\n", sanitizeName(elem.Name)))
 		}
 	}
 
@@ -220,4 +248,64 @@ func sanitizeName(name string) string {
 		return "unnamed"
 	}
 	return name
+}
+
+// stripXMLNamespacePrefixes 把 "<uml:Model xmlns:uml=...>" 之类的带前缀 XML
+// 简单剥成 "<Model>"。这是宽松回退：真实 Papyrus 文件应保留 xmlns，让 Go
+// encoding/xml 自动推断命名空间，但当上游工具导出缺 xmlns 时仍能解析。
+//
+// 实现：
+//   1. 用正则删所有 xmlns[:prefix]=... 或 xmlns="..." 声明（含前导空白）
+//   2. 在 tag 区内识别 element / attr name（首字母 + 字母数字_-:.），截掉 prefix
+func stripXMLNamespacePrefixes(content []byte) []byte {
+	s := string(content)
+	// 1. 删 xmlns 声明。匹配 " xmlns[:prefix]=["']...["']"（含前导空白）
+	xmlnsRe := regexp.MustCompile(`\s+xmlns(?::[A-Za-z_][\w.-]*)?\s*=\s*(?:"[^"]*"|'[^']*')`)
+	s = xmlnsRe.ReplaceAllString(s, "")
+	// 2. 删 element / attr name 上的 prefix。
+	var out strings.Builder
+	out.Grow(len(s))
+	i := 0
+	inTag := false
+	for i < len(s) {
+		c := s[i]
+		if c == '<' {
+			inTag = true
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if c == '>' {
+			inTag = false
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if inTag {
+			// 在 tag 内：识别 name（字母/下划线开头的 token），把 prefix: 去掉
+			if isNameStart(c) {
+				start := i
+				for i < len(s) && isNameChar(s[i]) {
+					i++
+				}
+				name := s[start:i]
+				if eq := strings.Index(name, ":"); eq > 0 {
+					name = name[eq+1:]
+				}
+				out.WriteString(name)
+				continue
+			}
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return []byte(out.String())
+}
+
+func isNameStart(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == ':'
+}
+
+func isNameChar(c byte) bool {
+	return isNameStart(c) || (c >= '0' && c <= '9') || c == '-' || c == '.'
 }
