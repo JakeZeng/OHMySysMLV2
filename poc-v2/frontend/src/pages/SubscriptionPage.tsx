@@ -8,6 +8,7 @@ import * as React from 'react';
 import { Check, Loader2, Crown, Zap, Building2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/useI18n';
 import axios from 'axios';
 
 const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
@@ -44,6 +45,7 @@ const PLAN_COLORS: Record<string, string> = {
 
 export const SubscriptionPage: React.FC = () => {
   const { showToast } = useToast();
+  const { t } = useI18n();
 
   const [plans, setPlans] = React.useState<Plan[]>([]);
   const [current, setCurrent] = React.useState<Subscription | null>(null);
@@ -92,13 +94,13 @@ export const SubscriptionPage: React.FC = () => {
   return (
     <div className="mx-auto max-w-5xl p-6">
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">选择您的计划</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('subscription.selectPlan')}</h1>
         <p className="mt-2 text-sm text-gray-500">
           从免费开始，随时升级以解锁更多功能
         </p>
         {current && (
-          <p className="mt-1 text-xs text-blue-600">
-            当前计划: <strong>{current.plan.name}</strong>
+          <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
+            {t('subscription.currentPlan')}: <strong>{current.plan.name}</strong>
           </p>
         )}
       </div>
@@ -161,7 +163,7 @@ export const SubscriptionPage: React.FC = () => {
               <div className="mt-6">
                 {isCurrent ? (
                   <Button disabled className="w-full" variant="ghost">
-                    当前计划
+                    {t('subscription.currentPlan')}
                   </Button>
                 ) : (
                   <Button
