@@ -303,11 +303,11 @@ export const ProjectDetail: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 p-6">
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-gray-900 p-6">
       <div className="mx-auto max-w-5xl">
         <Link
           to="/projects"
-          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          className="mb-4 inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
         >
           <ArrowLeft className="h-3 w-3" /> 返回项目列表
         </Link>
@@ -354,7 +354,7 @@ export const ProjectDetail: React.FC = () => {
                 </form>
               ) : (
                 <h1
-                  className="group flex cursor-pointer items-center gap-2 truncate text-2xl font-semibold text-gray-900"
+                  className="group flex cursor-pointer items-center gap-2 truncate text-2xl font-semibold text-gray-900 dark:text-gray-100"
                   onClick={() => {
                     if (isOwner && current) {
                       setEditName(current.name);
@@ -389,7 +389,7 @@ export const ProjectDetail: React.FC = () => {
             </div>
             {editingName ? null : current?.description ? (
               <p
-                className="group mt-1 cursor-pointer text-sm text-gray-500"
+                className="group mt-1 cursor-pointer text-sm text-gray-500 dark:text-gray-400"
                 onClick={() => {
                   if (isOwner && current) {
                     setEditName(current.name);
@@ -411,7 +411,7 @@ export const ProjectDetail: React.FC = () => {
                   setEditDesc('');
                   setEditingName(true);
                 }}
-                className="mt-1 text-xs text-gray-400 hover:text-gray-600"
+                className="mt-1 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 + 添加描述
               </button>
@@ -496,7 +496,7 @@ export const ProjectDetail: React.FC = () => {
               'border-b-2 px-3 py-1.5 text-sm transition ' +
               (tab === 'models'
                 ? 'border-brand-500 text-brand-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700')
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200')
             }
             data-testid="tab-models"
           >
@@ -510,7 +510,7 @@ export const ProjectDetail: React.FC = () => {
               'border-b-2 px-3 py-1.5 text-sm transition ' +
               (tab === 'activity'
                 ? 'border-brand-500 text-brand-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700')
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200')
             }
             data-testid="tab-activity"
           >
@@ -546,14 +546,14 @@ export const ProjectDetail: React.FC = () => {
             {models.length > 3 && (
               <div className="mb-3">
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
                   <input
                     type="text"
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
                     placeholder="搜索模型…"
                     data-testid="model-search"
-                    className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 py-1.5 pl-8 pr-3 text-sm text-gray-900 dark:text-gray-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
               </div>
@@ -562,14 +562,14 @@ export const ProjectDetail: React.FC = () => {
         ) : null}
         {tab === 'models' ? (
           loading ? (
-            <div className="flex items-center justify-center py-12 text-sm text-gray-500">
+            <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中…
             </div>
           ) : models.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                <FileCode2 className="mb-3 h-10 w-10 text-gray-400" />
-                <p className="text-sm text-gray-500">该项目下还没有模型</p>
+                <FileCode2 className="mb-3 h-10 w-10 text-gray-400 dark:text-gray-500" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">该项目下还没有模型</p>
                 <p className="mt-1 text-xs text-gray-400">
                   点击"新建模型"开始编写 SysML v2 代码
                 </p>
@@ -609,7 +609,7 @@ export const ProjectDetail: React.FC = () => {
                             data-testid={`select-model-${m.id}`}
                             className="rounded border-gray-300"
                           />
-                          <FileCode2 className="h-4 w-4 text-gray-400" />
+                          <FileCode2 className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                           {m.name}
                         </CardTitle>
                         <div className="flex items-center gap-1">
@@ -657,9 +657,9 @@ export const ProjectDetail: React.FC = () => {
           ) : activity.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <Activity className="mb-3 h-8 w-8 text-gray-400" />
-                <p className="text-sm text-gray-500">该项目暂无活动记录</p>
-                <p className="mt-1 text-xs text-gray-400">
+                <Activity className="mb-3 h-8 w-8 text-gray-400 dark:text-gray-500" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">该项目暂无活动记录</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                   模型增删、成员变更、分享链接变动都会出现在这里
                 </p>
               </CardContent>
@@ -683,7 +683,7 @@ export const ProjectDetail: React.FC = () => {
                         >
                           {l.action}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
                           {l.targetType}
                         </span>
                         <code className="truncate rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
