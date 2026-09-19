@@ -1,37 +1,98 @@
 /**
- * 路由表。
+ * 路由表 — 使用 React.lazy 懒加载页面组件，减少首屏加载体积。
  */
 
 import * as React from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import { Login } from './pages/Login';
-import { Register } from './pages/Register';
-import { ProjectList } from './pages/ProjectList';
-import { ProjectDetail } from './pages/ProjectDetail';
-import { ModelEditor } from './pages/ModelEditor';
-import { MetamodelPage } from './pages/MetamodelPage';
-import { TeamsPage } from './pages/TeamsPage';
-import { TeamDetailPage } from './pages/TeamDetailPage';
-import { SharedProjectPage } from './pages/SharedProjectPage';
-import { AuditLogPage } from './pages/AuditLogPage';
-import { ProfilePage } from './pages/ProfilePage';
-import { DashboardPage } from './pages/DashboardPage';
-import { TemplateMarketPage } from './pages/TemplateMarketPage';
-import { WebhookPage } from './pages/WebhookPage';
-import { APIKeysPage } from './pages/APIKeysPage';
-import { ImportPage } from './pages/ImportPage';
-import { ReportPage } from './pages/ReportPage';
-import { PluginsPage } from './pages/PluginsPage';
-import { SubscriptionPage } from './pages/SubscriptionPage';
-import { CodeGenPage } from './pages/CodeGenPage';
-import { NotFound } from './pages/NotFound';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
+
+// 关键页面（首屏必需）— 同步加载
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
+import { DashboardPage } from './pages/DashboardPage';
+import { NotFound } from './pages/NotFound';
+
+// 其他页面 — 懒加载
+const ProjectList = React.lazy(() =>
+  import('./pages/ProjectList').then((m) => ({ default: m.ProjectList }))
+);
+const ProjectDetail = React.lazy(() =>
+  import('./pages/ProjectDetail').then((m) => ({ default: m.ProjectDetail }))
+);
+const ModelEditor = React.lazy(() =>
+  import('./pages/ModelEditor').then((m) => ({ default: m.ModelEditor }))
+);
+const MetamodelPage = React.lazy(() =>
+  import('./pages/MetamodelPage').then((m) => ({ default: m.MetamodelPage }))
+);
+const TeamsPage = React.lazy(() =>
+  import('./pages/TeamsPage').then((m) => ({ default: m.TeamsPage }))
+);
+const TeamDetailPage = React.lazy(() =>
+  import('./pages/TeamDetailPage').then((m) => ({ default: m.TeamDetailPage }))
+);
+const SharedProjectPage = React.lazy(() =>
+  import('./pages/SharedProjectPage').then((m) => ({ default: m.SharedProjectPage }))
+);
+const AuditLogPage = React.lazy(() =>
+  import('./pages/AuditLogPage').then((m) => ({ default: m.AuditLogPage }))
+);
+const ProfilePage = React.lazy(() =>
+  import('./pages/ProfilePage').then((m) => ({ default: m.ProfilePage }))
+);
+const TemplateMarketPage = React.lazy(() =>
+  import('./pages/TemplateMarketPage').then((m) => ({ default: m.TemplateMarketPage }))
+);
+const WebhookPage = React.lazy(() =>
+  import('./pages/WebhookPage').then((m) => ({ default: m.WebhookPage }))
+);
+const APIKeysPage = React.lazy(() =>
+  import('./pages/APIKeysPage').then((m) => ({ default: m.APIKeysPage }))
+);
+const ImportPage = React.lazy(() =>
+  import('./pages/ImportPage').then((m) => ({ default: m.ImportPage }))
+);
+const ReportPage = React.lazy(() =>
+  import('./pages/ReportPage').then((m) => ({ default: m.ReportPage }))
+);
+const PluginsPage = React.lazy(() =>
+  import('./pages/PluginsPage').then((m) => ({ default: m.PluginsPage }))
+);
+const SubscriptionPage = React.lazy(() =>
+  import('./pages/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage }))
+);
+const CodeGenPage = React.lazy(() =>
+  import('./pages/CodeGenPage').then((m) => ({ default: m.CodeGenPage }))
+);
+
+// Suspense fallback
+const PageLoader = () => (
+  <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-gray-900">
+    <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+      <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+      加载中...
+    </div>
+  </div>
+);
+
+const LazyRoute = ({ Component }: { Component: React.LazyExoticComponent<React.ComponentType> }) => (
+  <React.Suspense fallback={<PageLoader />}>
+    <Component />
+  </React.Suspense>
+);
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   { path: '/register', element: <Register /> },
-  { path: '/shared/:token', element: <SharedProjectPage /> },
+  {
+    path: '/shared/:token',
+    element: (
+      <React.Suspense fallback={<PageLoader />}>
+        <SharedProjectPage />
+      </React.Suspense>
+    ),
+  },
   {
     path: '/',
     element: (
@@ -41,22 +102,22 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: 'projects', element: <ProjectList /> },
-      { path: 'projects/:projectId', element: <ProjectDetail /> },
-      { path: 'models/:modelId', element: <ModelEditor /> },
-      { path: 'metamodel', element: <MetamodelPage /> },
-      { path: 'teams', element: <TeamsPage /> },
-      { path: 'teams/:teamId', element: <TeamDetailPage /> },
-      { path: 'audit', element: <AuditLogPage /> },
-      { path: 'profile', element: <ProfilePage /> },
-      { path: 'templates', element: <TemplateMarketPage /> },
-      { path: 'webhooks', element: <WebhookPage /> },
-      { path: 'api-keys', element: <APIKeysPage /> },
-      { path: 'import', element: <ImportPage /> },
-      { path: 'reports', element: <ReportPage /> },
-      { path: 'plugins', element: <PluginsPage /> },
-      { path: 'subscription', element: <SubscriptionPage /> },
-      { path: 'codegen', element: <CodeGenPage /> },
+      { path: 'projects', element: <LazyRoute Component={ProjectList} /> },
+      { path: 'projects/:projectId', element: <LazyRoute Component={ProjectDetail} /> },
+      { path: 'models/:modelId', element: <LazyRoute Component={ModelEditor} /> },
+      { path: 'metamodel', element: <LazyRoute Component={MetamodelPage} /> },
+      { path: 'teams', element: <LazyRoute Component={TeamsPage} /> },
+      { path: 'teams/:teamId', element: <LazyRoute Component={TeamDetailPage} /> },
+      { path: 'audit', element: <LazyRoute Component={AuditLogPage} /> },
+      { path: 'profile', element: <LazyRoute Component={ProfilePage} /> },
+      { path: 'templates', element: <LazyRoute Component={TemplateMarketPage} /> },
+      { path: 'webhooks', element: <LazyRoute Component={WebhookPage} /> },
+      { path: 'api-keys', element: <LazyRoute Component={APIKeysPage} /> },
+      { path: 'import', element: <LazyRoute Component={ImportPage} /> },
+      { path: 'reports', element: <LazyRoute Component={ReportPage} /> },
+      { path: 'plugins', element: <LazyRoute Component={PluginsPage} /> },
+      { path: 'subscription', element: <LazyRoute Component={SubscriptionPage} /> },
+      { path: 'codegen', element: <LazyRoute Component={CodeGenPage} /> },
     ],
   },
   { path: '*', element: <NotFound /> },
