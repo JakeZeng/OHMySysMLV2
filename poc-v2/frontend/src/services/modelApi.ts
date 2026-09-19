@@ -5,9 +5,25 @@
  * 旧版本用于 POC v2 端到端测试，新接口关联到项目。
  */
 
-import { getApi } from './api';
-import { modelApi as legacyModelApi } from '../api/modelApi';
-import type { ModelRecord, SaveModelRequest } from '../api/modelApi';
+import { getApi, ApiError } from './api';
+
+export interface ModelRecord {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveModelRequest {
+  id?: string;
+  name: string;
+  description?: string;
+  content: string;
+  version?: number;
+}
 
 export interface ModelListItem {
   id: string;
@@ -28,6 +44,69 @@ export interface ModelVersion {
   savedBy?: string;
   createdAt: string;
 }
+
+// ─── 老版实现（直挂 /api/v1/models，无 project）— 仅供 POC v2 端到端使用 ───
+// 用原生 fetch 实现，无 JWT/CSRF 拦截器；保留以兼容历史 e2e 与 App.tsx。
+// 后续如果不再使用，可整体移除。
+
+const LEGACY_API_BASE = '/api/v1';
+
+async function legacyRequest<T>(
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const res = await fetch(`${LEGACY_API_BASE}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text || res.statusText, `HTTP_${res.status}`);
+  }
+
+  return res.json();
+}
+
+export const legacyModelApi = {
+  /** 创建新模型 */
+  create: (req: SaveModelRequest): Promise<ModelRecord> =>
+    legacyRequest<ModelRecord>('/models', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  /** 获取模型 */
+  get: (id: string): Promise<ModelRecord> =>
+    legacyRequest<ModelRecord>(`/models/${id}`),
+
+  /** 更新模型（带版本号乐观锁） */
+  update: (id: string, req: SaveModelRequest): Promise<ModelRecord> =>
+    legacyRequest<ModelRecord>(`/models/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    }),
+
+  /** 删除模型 */
+  delete: (id: string): Promise<void> =>
+    legacyRequest<void>(`/models/${id}`, { method: 'DELETE' }),
+
+  /** 列出所有模型 */
+  list: (): Promise<ModelRecord[]> =>
+    legacyRequest<ModelRecord[]>('/models'),
+
+  /** 验证（前端已做，后端可用于服务端二次验证） */
+  validate: (content: string): Promise<{ valid: boolean; errors: string[] }> =>
+    legacyRequest<{ valid: boolean; errors: string[] }>('/models/validate', {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
+};
+
+// ─── 新版实现（axios + JWT/CSRF + /projects/:projectId/models/*） ───
 
 export const modelApi = {
   /** 列出某项目下的所有模型 */
@@ -99,8 +178,9 @@ export const modelApi = {
     return data?.data ?? [];
   },
 
-  /** 旧版接口（直挂 /api/v1/models，无 project）— 仅供 POC v2 端到端使用 */
+  /**
+   * 旧版接口（直挂 /api/v1/models，无 project）— 仅供 POC v2 端到端使用
+   * 暴露为 legacy 字段，便于 App.tsx 等历史代码访问。
+   */
   legacy: legacyModelApi,
 };
-
-export type { ModelRecord, SaveModelRequest } from '../api/modelApi';

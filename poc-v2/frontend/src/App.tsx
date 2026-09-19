@@ -14,7 +14,7 @@ import { DiagramCanvas } from './canvas/DiagramCanvas';
 import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
 import { modelToFlow } from '@transform/modelToFlow';
-import { modelApi } from './api/modelApi';
+import { modelApi } from './services/modelApi';
 import type { ParseError } from '@ast/model';
 import type { ValidationIssue } from '@validator/validator';
 
@@ -90,7 +90,7 @@ const App: React.FC = () => {
   const handleSave = useCallback(async () => {
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
     try {
-      const record = await modelApi.create({
+      const record = await modelApi.legacy.create({
         id: state.modelId || undefined,
         name: state.modelName,
         content: state.text,
@@ -116,7 +116,7 @@ const App: React.FC = () => {
 
   const handleLoad = useCallback(async (id: string) => {
     try {
-      const record = await modelApi.get(id);
+      const record = await modelApi.legacy.get(id);
       setState((s) => ({
         ...s,
         modelId: record.id,
@@ -134,7 +134,7 @@ const App: React.FC = () => {
 
   const handleList = useCallback(async () => {
     try {
-      const records = await modelApi.list();
+      const records = await modelApi.legacy.list();
       if (records.length > 0) {
         await handleLoad(records[0].id);
       }
