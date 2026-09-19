@@ -1051,7 +1051,25 @@ function validateTraceLink(
   scope: Scope,
   issues: ValidationIssue[]
 ): void {
-  // E205: 追溯目标必须存在（在 partDefs / partUsages 中查找）
+  // E205a: 追溯源必须存在（在 requirements 中查找）
+  // 收集已注册需求名
+  const reqNames = new Set<string>();
+  for (const sm of scope.partDefs.values()) {
+    // partDefs 集合中也包含我们的需求（通过 namespace）
+    // 这里只检查需求名是否出现在 requirement def 中
+  }
+  for (const pkg of getAllPackages(scope)) {
+    collectRequirementNames(pkg, reqNames);
+  }
+  if (!reqNames.has(trace.source)) {
+    issues.push({
+      code: 'E205_TRACE_TARGET_NOT_FOUND',
+      message: `追溯源 \`${trace.source}\` 未定义（应为 requirement def 名称）`,
+      location: trace.location,
+      severity: 'error',
+    });
+  }
+  // E205b: 追溯目标必须存在（在 partDefs / partUsages 中查找）
   const targetSym = lookupPartByName(scope, trace.target);
   if (!targetSym) {
     issues.push({
@@ -1060,6 +1078,22 @@ function validateTraceLink(
       location: trace.location,
       severity: 'error',
     });
+  }
+}
+
+// 辅助：从所有 packages 中递归收集已注册的需求名称
+function getAllPackages(scope: Scope): Package[] {
+  // M5+ 简化：从 scope 中重建 packages 列表
+  return Array.from(scope.packages?.values() ?? []);
+}
+
+function collectRequirementNames(pkg: Package, names: Set<string>): void {
+  for (const m of pkg.members) {
+    if (m.kind === 'requirement') {
+      names.add(m.name);
+    } else if (m.kind === 'package') {
+      collectRequirementNames(m, names);
+    }
   }
 }
 
