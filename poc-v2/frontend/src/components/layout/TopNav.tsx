@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useThemeStore } from '../../stores/themeStore';
+import { useI18n } from '../../i18n/useI18n';
 import { cn } from '../../lib/utils';
 import { GlobalSearch } from '../GlobalSearch';
 import { NotificationBell } from '../NotificationBell';
@@ -34,27 +35,28 @@ import { LanguageSwitcher } from '../LanguageSwitcher';
 
 // 主导航项（始终显示）
 const PRIMARY_NAV = [
-  { to: '/', icon: LayoutDashboard, label: '概览', end: true },
-  { to: '/projects', icon: FolderKanban, label: '项目' },
-  { to: '/teams', icon: Users, label: '团队' },
-  { to: '/metamodel', icon: BookOpen, label: '元模型' },
+  { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', end: true },
+  { to: '/projects', icon: FolderKanban, labelKey: 'nav.projects' },
+  { to: '/teams', icon: Users, labelKey: 'nav.teams' },
+  { to: '/metamodel', icon: BookOpen, labelKey: 'nav.metamodel' },
 ];
 
 // 工具菜单项（下拉菜单）
 const TOOL_ITEMS = [
-  { to: '/templates', icon: Store, label: '模板市场', group: 'marketplace' },
-  { to: '/reports', icon: FileText, label: '文档生成', group: 'tools' },
-  { to: '/plugins', icon: Puzzle, label: '插件系统', group: 'tools' },
-  { to: '/import', icon: FileUp, label: '导入模型', group: 'tools' },
-  { to: '/webhooks', icon: Webhook, label: 'Webhook', group: 'integration' },
-  { to: '/api-keys', icon: Key, label: 'API Keys', group: 'integration' },
-  { to: '/subscription', icon: CreditCard, label: '订阅管理', group: 'account' },
-  { to: '/audit', icon: ScrollText, label: '审计日志', group: 'admin' },
+  { to: '/templates', icon: Store, labelKey: 'nav.templates', group: 'marketplace' },
+  { to: '/reports', icon: FileText, labelKey: 'nav.reports', group: 'tools' },
+  { to: '/plugins', icon: Puzzle, labelKey: 'nav.plugins', group: 'tools' },
+  { to: '/import', icon: FileUp, labelKey: 'nav.import', group: 'tools' },
+  { to: '/webhooks', icon: Webhook, labelKey: 'nav.webhooks', group: 'integration' },
+  { to: '/api-keys', icon: Key, labelKey: 'nav.apiKeys', group: 'integration' },
+  { to: '/subscription', icon: CreditCard, labelKey: 'nav.subscription', group: 'account' },
+  { to: '/audit', icon: ScrollText, labelKey: 'nav.audit', group: 'admin' },
 ];
 
 export const TopNav: React.FC = () => {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const { t } = useI18n();
   const navigate = useNavigate();
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -97,7 +99,7 @@ export const TopNav: React.FC = () => {
               )
             }
           >
-            <item.icon className="h-4 w-4" /> {item.label}
+            <item.icon className="h-4 w-4" /> {t(item.labelKey)}
           </NavLink>
         ))}
 
@@ -134,7 +136,7 @@ export const TopNav: React.FC = () => {
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
-                  {item.label}
+                  {t(item.labelKey)}
                 </DropdownMenu.Item>
               ))}
 
@@ -151,7 +153,7 @@ export const TopNav: React.FC = () => {
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
-                  {item.label}
+                  {t(item.labelKey)}
                 </DropdownMenu.Item>
               ))}
 
@@ -168,7 +170,7 @@ export const TopNav: React.FC = () => {
                   className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                 >
                   <item.icon className="h-4 w-4" />
-                  {item.label}
+                  {t(item.labelKey)}
                 </DropdownMenu.Item>
               ))}
 
@@ -183,7 +185,7 @@ export const TopNav: React.FC = () => {
                     className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-700"
                   >
                     <item.icon className="h-4 w-4" />
-                    {item.label}
+                    {t(item.labelKey)}
                   </DropdownMenu.Item>
                 )
               )}
