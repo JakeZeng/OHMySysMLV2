@@ -8,6 +8,7 @@ import * as React from 'react';
 import { Plus, Trash2, Send, Loader2, Webhook, ExternalLink } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/useI18n';
 import axios from 'axios';
 
 const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
@@ -31,6 +32,7 @@ const AVAILABLE_EVENTS = [
 
 export const WebhookPage: React.FC = () => {
   const { showToast } = useToast();
+  const { t, isZh } = useI18n();
 
   const [webhooks, setWebhooks] = React.useState<WebhookSubscription[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -103,7 +105,7 @@ export const WebhookPage: React.FC = () => {
     <div className="mx-auto max-w-4xl p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Webhook 管理</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Webhook {isZh ? '管理' : 'Management'}</h1>
           <p className="mt-1 text-sm text-gray-500">
             配置 HTTP 回调，在模型或项目变更时接收通知
           </p>
