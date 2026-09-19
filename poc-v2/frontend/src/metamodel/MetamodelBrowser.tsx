@@ -22,9 +22,9 @@ export function MetamodelBrowser(_props: MetamodelBrowserProps) {
   const [selectedQname, setSelectedQname] = useState<string | null>(null);
 
   return (
-    <div className="metamodel-browser flex h-full" data-testid="metamodel-browser">
+    <div className="metamodel-browser flex h-full bg-white dark:bg-gray-900" data-testid="metamodel-browser">
       {/* 左：搜索 + 树形 */}
-      <div className="w-1/3 border-r overflow-y-auto" data-testid="metamodel-tree-panel">
+      <div className="w-1/3 border-r border-gray-200 dark:border-gray-700 overflow-y-auto" data-testid="metamodel-tree-panel">
         <MetamodelSearch onSearch={setSearchQuery} />
         <MetamodelTree
           searchQuery={searchQuery}
@@ -38,7 +38,7 @@ export function MetamodelBrowser(_props: MetamodelBrowserProps) {
         {selectedQname ? (
           <MetamodelDetail qname={selectedQname} />
         ) : (
-          <div className="p-4 text-sm text-gray-500">选择左侧元素查看详情</div>
+          <div className="p-4 text-sm text-gray-500 dark:text-gray-400">选择左侧元素查看详情</div>
         )}
       </div>
     </div>

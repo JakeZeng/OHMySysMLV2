@@ -39,19 +39,19 @@ export function MetamodelTree({ searchQuery, selectedQname, onSelect }: Metamode
   }, [filtered]);
 
   if (isLoading) {
-    return <div className="p-4 text-sm text-gray-500">加载中...</div>;
+    return <div className="p-4 text-sm text-gray-500 dark:text-gray-400">加载中...</div>;
   }
 
   if (error) {
     return (
-      <div className="p-4 text-sm text-red-500">
+      <div className="p-4 text-sm text-red-500 dark:text-red-400">
         加载失败: {(error as Error).message}
       </div>
     );
   }
 
   if (filtered.length === 0) {
-    return <div className="p-4 text-sm text-gray-500">无匹配元素</div>;
+    return <div className="p-4 text-sm text-gray-500 dark:text-gray-400">无匹配元素</div>;
   }
 
   return (
@@ -61,7 +61,7 @@ export function MetamodelTree({ searchQuery, selectedQname, onSelect }: Metamode
         if (items.length === 0) return null;
         return (
           <details key={kind} open className="border-b">
-            <summary className="px-3 py-2 bg-gray-50 cursor-pointer text-sm font-medium">
+            <summary className="px-3 py-2 bg-gray-50 dark:bg-gray-800 cursor-pointer text-sm font-medium text-gray-900 dark:text-gray-100">
               {KIND_DISPLAY_NAME[kind]} ({items.length})
             </summary>
             <ul>

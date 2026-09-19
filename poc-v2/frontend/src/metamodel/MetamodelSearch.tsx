@@ -24,7 +24,7 @@ export function MetamodelSearch({ onSearch, placeholder = '搜索元素（不区
   }, [value, onSearch]);
 
   return (
-    <div className="p-2 border-b">
+    <div className="p-2 border-b border-gray-200 dark:border-gray-700">
       <Input
         type="search"
         placeholder={placeholder}
