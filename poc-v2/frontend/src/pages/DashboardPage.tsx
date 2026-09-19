@@ -38,9 +38,11 @@ import { useTeamStore } from '../stores/teamStore';
 import { useModelStore } from '../stores/modelStore';
 import { modelApi, type ModelListItem } from '../services/modelApi';
 import { relativeTime } from '../lib/relativeTime';
+import { useI18n } from '../i18n/useI18n';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const user = useAuthStore((s) => s.user);
   const projects = useProjectStore((s) => s.list);
   const recentIds = useProjectStore((s) => s.recentIds);
@@ -126,10 +128,10 @@ export const DashboardPage: React.FC = () => {
       <div className="mx-auto max-w-5xl">
         <header className="mb-6">
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-            欢迎回来，{user?.username ?? '用户'}
+            {t('dashboard.welcome')}，{user?.username ?? (t('common.appName').includes('MBSE') ? '用户' : 'User')}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            SysML v2 MBSE 工作台概览
+            {t('dashboard.overview')}
           </p>
         </header>
 
@@ -142,7 +144,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.projects}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">个项目</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('dashboard.statsProjects')}</div>
               </div>
             </CardContent>
           </Card>
@@ -153,7 +155,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.models}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">个模型</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('dashboard.statsModels')}</div>
               </div>
             </CardContent>
           </Card>
@@ -164,7 +166,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {stats.teams}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">个团队</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('dashboard.statsTeams')}</div>
               </div>
             </CardContent>
           </Card>
@@ -175,7 +177,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="text-sm font-bold text-gray-900 dark:text-gray-100">
                   {stats.lastActivity ?? '—'}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">最近活动</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('dashboard.statsLastActivity')}</div>
               </div>
             </CardContent>
           </Card>
@@ -188,28 +190,28 @@ export const DashboardPage: React.FC = () => {
             className="justify-start"
             onClick={() => navigate('/')}
           >
-            <FolderKanban className="mr-2 h-4 w-4" /> 所有项目
+            <FolderKanban className="mr-2 h-4 w-4" /> {t('dashboard.allProjects')}
           </Button>
           <Button
             variant="secondary"
             className="justify-start"
             onClick={() => navigate('/teams')}
           >
-            <Users className="mr-2 h-4 w-4" /> 团队管理
+            <Users className="mr-2 h-4 w-4" /> {t('dashboard.teamManage')}
           </Button>
           <Button
             variant="secondary"
             className="justify-start"
             onClick={() => navigate('/audit')}
           >
-            <ScrollText className="mr-2 h-4 w-4" /> 审计日志
+            <ScrollText className="mr-2 h-4 w-4" /> {t('dashboard.auditLog')}
           </Button>
           <Button
             variant="secondary"
             className="justify-start"
             onClick={() => navigate('/metamodel')}
           >
-            <Activity className="mr-2 h-4 w-4" /> 元模型
+            <Activity className="mr-2 h-4 w-4" /> {t('dashboard.metamodelBrowse')}
           </Button>
         </div>
 
