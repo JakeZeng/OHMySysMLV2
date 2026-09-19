@@ -8,6 +8,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { useAuthStore } from '../stores/authStore';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/useI18n';
 
 interface LocationState {
   from?: string;
@@ -17,6 +18,7 @@ export const Login: React.FC = () => {
   const login = useAuthStore((s) => s.login);
   const error = useAuthStore((s) => s.error);
   const { showToast } = useToast();
+  const { t, isZh } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const from =
@@ -31,17 +33,20 @@ export const Login: React.FC = () => {
     e.preventDefault();
     setFormError(null);
     if (!username.trim()) {
-      setFormError('请输入用户名');
+      setFormError(isZh ? '请输入用户名' : 'Please enter username');
       return;
     }
     if (!password) {
-      setFormError('请输入密码');
+      setFormError(isZh ? '请输入密码' : 'Please enter password');
       return;
     }
     setSubmitting(true);
     try {
       await login(username.trim(), password);
-      showToast({ title: '登录成功', variant: 'success' });
+      showToast({
+        title: isZh ? '登录成功' : 'Login successful',
+        variant: 'success',
+      });
       navigate(from, { replace: true });
     } catch (err) {
       setFormError((err as Error).message);
@@ -57,8 +62,8 @@ export const Login: React.FC = () => {
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded bg-brand-600 text-base font-bold text-white">
             S
           </div>
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">登录</h1>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">SysML v2 MBSE 工作台</p>
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('auth.login')}</h1>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('common.appName')} 工作台</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -67,7 +72,7 @@ export const Login: React.FC = () => {
               htmlFor="username"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              用户名
+              {t('auth.username')}
             </label>
             <Input
               id="username"
@@ -85,7 +90,7 @@ export const Login: React.FC = () => {
               htmlFor="password"
               className="block text-xs font-medium text-gray-700 dark:text-gray-300"
             >
-              密码
+              {t('auth.password')}
             </label>
             <Input
               id="password"
@@ -103,18 +108,18 @@ export const Login: React.FC = () => {
             </div>
           )}
           <Button type="submit" disabled={submitting} className="w-full">
-            {submitting ? '登录中…' : '登录'}
+            {submitting ? (isZh ? '登录中…' : 'Logging in...') : t('auth.loginButton')}
           </Button>
         </form>
 
         <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-          还没有账号？{' '}
+          {t('auth.noAccount')}{' '}
           <Link to="/register" className="text-brand-600 dark:text-brand-400 hover:underline">
-            注册
+            {t('auth.registerButton')}
           </Link>
         </p>
         <p className="mt-2 text-center text-[11px] text-gray-400 dark:text-gray-500">
-          首个注册的用户自动获得管理员权限。
+          {t('auth.firstUserAdmin')}
         </p>
       </div>
     </div>
