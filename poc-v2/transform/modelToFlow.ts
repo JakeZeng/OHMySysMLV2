@@ -29,6 +29,7 @@ import type {
   ConstraintBlock,
   EnumDefinition,
   CommentBlock,
+  TraceLink,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
@@ -164,8 +165,11 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   }
 
   // 3d. 节点构造（M5 需求）
+  // name -> requirement node id 映射（用于 trace 边）
+  const reqNameToId = new Map<string, string>();
   for (const req of requirements) {
     const id = `req:${req.id}`;
+    reqNameToId.set(req.name, id);
     nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text));
   }
 
@@ -173,6 +177,38 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   for (const cb of constraintBlocks) {
     const id = `cb:${cb.id}`;
     nodes.push(makeConstraintBlockNode(id, cb.name, cb.constraint));
+  }
+
+  // 3f. 追溯边（M5）— 修复：trace links 现在生成实际边
+  const allTraceLinks = [
+    ...model.traceLinks,
+    ...Array.from(collectTraceLinksFromPackages(model.packages)),
+  ];
+  // name -> any element id 映射（用于追溯）
+  const elementNameToId = new Map<string, string>();
+  for (const [qname, sym] of Array.from(nameToPartId.entries())) {
+    const shortName = qname.split('::').pop() ?? qname;
+    elementNameToId.set(shortName, sym);
+  }
+  for (const trace of allTraceLinks) {
+    const sourceId = reqNameToId.get(trace.source);
+    const targetId = elementNameToId.get(trace.target) ?? nameToPartId.get(trace.target);
+    if (sourceId && targetId) {
+      const strokeColor =
+        trace.relation === 'satisfy' ? '#52c41a' :
+        trace.relation === 'verify' ? '#1890ff' :
+        trace.relation === 'refine' ? '#722ed1' :
+        '#8c8c8c';
+      edges.push({
+        id: `trace:${trace.id}`,
+        source: sourceId,
+        target: targetId,
+        type: 'straight',
+        label: trace.relation,
+        animated: false,
+        style: { stroke: strokeColor, strokeWidth: 1.5, strokeDasharray: '4 4' },
+      });
+    }
   }
 
   // 4. 边（结构视图的 connect）
@@ -467,4 +503,22 @@ function makeConstraintBlockNode(id: string, name: string, constraint?: string):
       constraint,
     },
   };
+}
+
+// ─── M5: 收集 Package 内的追溯链接 ─────────────────────────────────────
+
+function* collectTraceLinksFromPackages(packages: Package[]): Generator<TraceLink> {
+  for (const pkg of packages) {
+    yield* collectTraceLinksFromPackage(pkg);
+  }
+}
+
+function* collectTraceLinksFromPackage(pkg: Package): Generator<TraceLink> {
+  for (const m of pkg.members) {
+    if (m.kind === 'trace') {
+      yield m;
+    } else if (m.kind === 'package') {
+      yield* collectTraceLinksFromPackage(m);
+    }
+  }
 }
