@@ -4,7 +4,7 @@
 // POST /api/v1/ai/generate/stream    流式 SSE：边生成边推送
 //
 // 复用 M3 c1 重构后的 Provider 接口；通过 FallbackChain 自动切主备供应商。
-// 设计稿：m3-ai-provider-design.md §5、m3-prompt-engineering.md。
+// 设计稿：../../../../docs/archive/m3-design/m3-ai-provider-design.md §5、../../../../docs/archive/m3-design/m3-prompt-engineering.md。
 package handler
 
 import (
@@ -280,7 +280,7 @@ func buildMessages(content string) []ai.Message {
 
 // buildGenerateMessages 构造生成 prompt（M3 W2）。
 //
-// 借鉴 m3-prompt-engineering.md §3 few-shot 示例 + 行业提示。
+// 借鉴 ../../../../docs/archive/m3-design/m3-prompt-engineering.md §3 few-shot 示例 + 行业提示。
 func buildGenerateMessages(req aiGenerateReq) []ai.Message {
 	const fence = "```"
 	systemPrompt := "你是一个 SysML v2 建模专家。根据用户提供的自然语言描述，生成对应的 SysML v2 代码。\n\n" +

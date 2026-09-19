@@ -59,7 +59,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// M3 安全加固（m3-security-checklist.md §A01-A05）：
+	// M3 安全加固（../../../docs/archive/m3-design/m3-security-checklist.md §A01-A05）：
 	//   - 1 MB 请求体大小限制（OWASP A03）
 	//   - CORS 白名单化（OWASP A05；移除 * 通配）
 	//   - CSRF token（OWASP A01）

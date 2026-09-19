@@ -1,7 +1,7 @@
 /**
  * M3 元模型 TanStack Query hooks
  *
- * 设计稿: m3-metamodel-ui.md §3.5
+ * 设计稿: ../../../../../docs/archive/m3-design/m3-metamodel-ui.md §3.5
  * - useMetamodelElements: 列表
  * - useMetamodelElement: 单个详情
  * - useMetamodelSearch: 模糊搜索

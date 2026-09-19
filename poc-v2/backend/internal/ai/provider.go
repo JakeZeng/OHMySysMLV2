@@ -1,7 +1,7 @@
 // Package ai 提供统一的 AI Provider 抽象。
 //
 // 业务方只依赖 Provider 接口；OpenAI / DeepSeek / Anthropic 的协议差异
-// 隐藏在各自实现里。设计目标见 m3-ai-provider-design.md §2。
+// 隐藏在各自实现里。设计目标见 ../../../../docs/archive/m3-design/m3-ai-provider-design.md §2。
 //
 // 演进时间线：
 //   - M2: client.go（OpenAI-compatible 单一 struct）— 仍保留作 M2 兼容

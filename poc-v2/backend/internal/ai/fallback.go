@@ -9,7 +9,7 @@ import (
 // FallbackChain 是 Provider 链式 fallback 包装器。
 //
 // 设计动机：当主 Provider 失败时自动切到备选，避免单供应商宕机阻塞业务。
-// 详细设计见 m3-ai-fallback-design.md。
+// 详细设计见 ../../../../docs/archive/m3-design/m3-ai-fallback-design.md。
 //
 // 与 ChatWithRetry 的关系：retry 在**同一个 Provider** 内重试 3 次；
 // fallback 在 retry 全部失败后**切换 Provider** 重试。

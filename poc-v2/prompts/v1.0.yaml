@@ -1,5 +1,5 @@
 # M3 AI Prompt v1.0 Baseline
-# 配合 m3-prompt-engineering.md 使用
+# 配合 ../../../docs/archive/m3-design/m3-prompt-engineering.md 使用
 # 字段顺序：system → schema_summary → few_shots → user
 
 version: 1.0

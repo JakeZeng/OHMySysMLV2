@@ -139,7 +139,7 @@ function combineSignals(s1: AbortSignal, s2: AbortSignal): AbortSignal {
 
 // ────────────────────────────────────────────────────────────────────────
 // M3: AI 模型生成（NL → SysML v2）
-// 设计稿: m3-launch-package §1.1 A1, m3-prompt-engineering.md §3
+// 设计稿: ../../../../../docs/archive/m3-design/m3-launch-package.md §1.1 A1, ../../../../../docs/archive/m3-design/m3-prompt-engineering.md §3
 // ────────────────────────────────────────────────────────────────────────
 
 export interface GenerateRequest {

@@ -14,7 +14,7 @@ import (
 
 // OpenAIProvider 实现了 OpenAI Chat Completions 协议。
 // 兼容 OpenAI 官方 API + DeepSeek（DeepSeek 兼容 OpenAI 协议）。
-// 详细差异见 m3-ai-provider-design.md §1.2。
+// 详细差异见 ../../../../docs/archive/m3-design/m3-ai-provider-design.md §1.2。
 type OpenAIProvider struct {
 	config Config
 	http   *http.Client

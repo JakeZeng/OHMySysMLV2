@@ -8,7 +8,7 @@ import (
 
 // AnthropicProvider 实现 Anthropic Messages API。
 // 协议与 OpenAI Chat Completions 不兼容：独立 endpoint / header / request body。
-// 详细差异见 m3-ai-provider-design.md §1.2。
+// 详细差异见 ../../../../docs/archive/m3-design/m3-ai-provider-design.md §1.2。
 //
 // c1 状态：骨架 + 接口签名 + mock-ready
 // c2 实施：HTTP 调用 + SSE 多 event 解析 + system 字段处理
@@ -87,4 +87,4 @@ func (p *AnthropicProvider) ChatStream(ctx context.Context, messages []Message, 
 //      - message_stop → 流结束
 //   4. 错误响应：{"error": {"type": "...", "message": "..."}}，529 表示 overloaded
 //
-// 详见 m3-ai-provider-design.md §4.2
+// 详见 ../../../../docs/archive/m3-design/m3-ai-provider-design.md §4.2

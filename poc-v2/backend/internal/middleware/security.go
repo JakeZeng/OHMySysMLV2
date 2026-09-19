@@ -1,4 +1,4 @@
-// Package middleware — M3 安全加固（m3-security-checklist.md）。
+// Package middleware — M3 安全加固（../../../../docs/archive/m3-design/m3-security-checklist.md）。
 //
 // 提供：
 //   - CSRF token（OWASP A01 修复）

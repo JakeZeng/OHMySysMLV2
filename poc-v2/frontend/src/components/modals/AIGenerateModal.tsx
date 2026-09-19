@@ -1,7 +1,7 @@
 /**
  * M3 AI 生成 Modal（NL → SysML v2）
  *
- * 设计稿: m3-launch-package §2.3 Week 2 / m3-prompt-engineering.md §3
+ * 设计稿: ../../../../../../docs/archive/m3-design/m3-launch-package.md §2.3 Week 2 / ../../../../../../docs/archive/m3-design/m3-prompt-engineering.md §3
  * - 输入自然语言描述（可选行业提示 + 已有上下文）
  * - 点击生成 → 流式展示 AI 输出
  * - 点击"插入到编辑器" → 把代码块注入当前 content

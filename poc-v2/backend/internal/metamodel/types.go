@@ -1,6 +1,6 @@
 // Package metamodel 加载并提供 SysML v2 元模型查询。
 //
-// 设计目标见 m3-metamodel-loader-design.md。
+// 设计目标见 ../../../../docs/archive/m3-design/m3-metamodel-loader-design.md。
 // 演进时间线：
 //   - M3 W1 c1-d3: 本文件（types）+ registry.go + loader.go
 //   - M3 W1 c1-d4: HTTP handler（5 个 endpoint）

@@ -1,7 +1,7 @@
 /**
  * M3 元模型浏览器主组件
  *
- * 设计稿: m3-metamodel-ui.md §3.1
+ * 设计稿: ../../../../../docs/archive/m3-design/m3-metamodel-ui.md §3.1
  * - 左侧：搜索框 + 树形列表
  * - 右侧：详情面板
  *

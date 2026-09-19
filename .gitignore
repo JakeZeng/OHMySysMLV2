@@ -75,8 +75,3 @@ Thumbs.db
 # Local smoke-test scratch
 _smoke.ts
 .poc-tests*.log
-
-# Deprecated prototype (v1) — kept on disk as a reference but not part of
-# the M0/M1 codebase. Uncomment the next line if you want to keep it out of
-# git history entirely.
-# poc.deprecated.bak/

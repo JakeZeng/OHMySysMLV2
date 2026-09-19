@@ -1,8 +1,8 @@
 /**
  * M3 W3 D13 元模型浏览器类型定义
  *
- * 配套后端: m3-metamodel-loader-design.md §4.3
- * 设计稿: m3-metamodel-ui.md §3.5
+ * 配套后端: ../../../../../docs/archive/m3-design/m3-metamodel-loader-design.md §4.3
+ * 设计稿: ../../../../../docs/archive/m3-design/m3-metamodel-ui.md §3.5
  *
  * 注意：本文件 M3 阶段手写 + 注释 "auto-gen in M3 W3"；
  * M3 末用 scripts/gen-metamodel-types.ts 从 Go 内存对象生成。

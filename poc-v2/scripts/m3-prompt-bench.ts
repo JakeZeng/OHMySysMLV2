@@ -8,7 +8,7 @@
  *     --output reports/v1.0-baseline.md
  *
  * 当前 v0.1：mock AI 调用，用 fixtures 测评分逻辑。
- * 真实 AI 接入留 M3 W2 D11 之后（按 m3-prompt-engineering.md §3）。
+ * 真实 AI 接入留 M3 W2 D11 之后（按 ../../../docs/archive/m3-design/m3-prompt-engineering.md §3）。
  */
 
 import * as fs from 'node:fs';
