@@ -31,7 +31,9 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: (getStoredToken() ? getStoredUser() : null) as User | null,
   token: getStoredToken(),
-  status: getStoredToken() ? 'unauthenticated' : 'idle',
+  // 修复：有 token 时初始状态必须是 'loading'，让 RequireAuth 在 bootstrap 完成
+  // 前不跳转 login；否则会出现"刷新任意页面 → 被踢回 /login"的竞态。
+  status: getStoredToken() ? 'loading' : 'idle',
   error: null,
 
   isAuthenticated: () => {
