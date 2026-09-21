@@ -202,11 +202,12 @@ export const TopNav: React.FC = () => {
         <button
           type="button"
           onClick={toggleTheme}
-          className="rounded-md p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+          className="rounded-md p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
           title={theme === 'light' ? '切换深色模式' : '切换浅色模式'}
+          aria-label={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
           data-testid="theme-toggle"
         >
-          {theme === 'light' ? '🌙' : '☀️'}
+          <span aria-hidden="true">{theme === 'light' ? '🌙' : '☀️'}</span>
         </button>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500 dark:text-gray-400">

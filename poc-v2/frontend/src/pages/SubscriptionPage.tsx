@@ -9,9 +9,9 @@ import { Check, Loader2, Crown, Zap, Building2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useI18n } from '../i18n/useI18n';
-import axios from 'axios';
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface Plan {
   id: string;
@@ -55,29 +55,38 @@ export const SubscriptionPage: React.FC = () => {
   React.useEffect(() => {
     const load = async () => {
       try {
+        // M9.x 修复：getApi() 已解包 { data: T }，直接读 res.data
         const [plansRes, subRes] = await Promise.all([
-          api.get<{ data: Plan[] }>('/subscription/plans'),
-          api.get<{ data: Subscription }>('/subscription'),
+          api.get<Plan[]>('/subscription/plans'),
+          api.get<Subscription>('/subscription'),
         ]);
-        setPlans(plansRes.data.data);
-        setCurrent(subRes.data.data);
-      } catch {
-        // silent
+        setPlans(plansRes.data);
+        setCurrent(subRes.data);
+      } catch (e) {
+        showToast({
+          title: '加载订阅失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
       } finally {
         setLoading(false);
       }
     };
     void load();
-  }, []);
+  }, [showToast]);
 
   const handleUpgrade = async (planId: string) => {
     setUpgrading(planId);
     try {
-      const { data } = await api.post<{ data: Subscription }>('/subscription/upgrade', { planId });
-      setCurrent(data.data);
+      const { data } = await api.post<Subscription>('/subscription/upgrade', { planId });
+      setCurrent(data);
       showToast({ title: '订阅已升级', variant: 'success' });
-    } catch (e: any) {
-      showToast({ title: '升级失败', description: e.message, variant: 'error' });
+    } catch (e) {
+      showToast({
+        title: '升级失败',
+        description: (e as Error).message,
+        variant: 'error',
+      });
     } finally {
       setUpgrading(null);
     }
@@ -87,6 +96,25 @@ export const SubscriptionPage: React.FC = () => {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (plans.length === 0) {
+    return (
+      <div className="mx-auto max-w-5xl p-6">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            {t('subscription.selectPlan')}
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            从免费开始，随时升级以解锁更多功能
+          </p>
+        </div>
+        <div className="mt-12 rounded-lg border border-dashed border-gray-300 p-12 text-center">
+          <p className="text-sm text-gray-500">暂无可用订阅计划</p>
+          <p className="mt-1 text-xs text-gray-400">请联系管理员或稍后重试</p>
+        </div>
       </div>
     );
   }

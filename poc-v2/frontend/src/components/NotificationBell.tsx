@@ -10,9 +10,9 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { cn } from '../lib/utils';
 import { relativeTime } from '../lib/relativeTime';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface Notification {
   id: string;

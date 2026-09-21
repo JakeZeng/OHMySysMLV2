@@ -1,5 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // M9.x 修复：启用 class 策略，让 useThemeStore() 通过给 <html> 切换 .dark 类
+  // 真正驱动 dark:* 变体（默认 media 策略会被 OS 偏好覆盖，无法手动切换）。
+  darkMode: 'class',
   content: [
     './index.html',
     './src/**/*.{ts,tsx}',
