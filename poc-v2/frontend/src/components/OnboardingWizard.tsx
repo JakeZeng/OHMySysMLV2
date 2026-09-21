@@ -101,18 +101,33 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ forceShow })
     navigate(to);
   };
 
+  // M9.x 修复：点击 overlay（卡片外区域）也能关闭向导，避免遮罩拦截 TopNav 等
+  // 全局控件（主题切换、通知、语言切换）。点击卡片本身时不会触发。
+  const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) handleComplete();
+  };
+
   if (!show) return null;
 
   const currentStep = ONBOARDING_STEPS[step];
   const isLast = step === ONBOARDING_STEPS.length - 1;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="relative w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="onboarding-title"
+      onClick={handleOverlayClick}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
+      <div
+        className="relative w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-800 dark:text-gray-100"
+      >
         {/* 关闭按钮 */}
         <button
           onClick={handleComplete}
-          className="absolute right-3 top-3 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="absolute right-3 top-3 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          aria-label="关闭引导"
         >
           <X className="h-4 w-4" />
         </button>
@@ -124,7 +139,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ forceShow })
               key={i}
               className={cn(
                 'h-1 flex-1 rounded-full transition',
-                i <= step ? 'bg-blue-500' : 'bg-gray-200'
+                i <= step ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-600'
               )}
             />
           ))}
@@ -133,8 +148,10 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ forceShow })
         {/* 内容 */}
         <div className="text-center">
           <div className="mb-4 text-4xl">{currentStep.icon}</div>
-          <h2 className="text-xl font-semibold text-gray-900">{currentStep.title}</h2>
-          <p className="mt-2 text-sm text-gray-600">{currentStep.description}</p>
+          <h2 id="onboarding-title" className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+            {currentStep.title}
+          </h2>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{currentStep.description}</p>
 
           {/* 操作按钮 */}
           {currentStep.action && (
@@ -152,11 +169,11 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ forceShow })
           <button
             onClick={handlePrev}
             disabled={step === 0}
-            className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-gray-500 transition hover:bg-gray-100 disabled:opacity-0"
+            className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-gray-500 transition hover:bg-gray-100 disabled:opacity-0 dark:text-gray-400 dark:hover:bg-gray-700"
           >
             <ChevronLeft className="h-4 w-4" /> 上一步
           </button>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-400 dark:text-gray-500">
             {step + 1} / {ONBOARDING_STEPS.length}
           </span>
           <button
