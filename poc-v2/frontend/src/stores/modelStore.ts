@@ -75,6 +75,14 @@ interface ModelState {
   setNodePosition: (nodeId: string, x: number, y: number) => void;
   applyElkLayout: () => Promise<void>;
 
+  // M11 拖拽建模
+  createNodeFromPalette: (
+    snippet: string,
+    name: string,
+    dropXY?: { x: number; y: number }
+  ) => { ok: boolean; newNodeId?: string; reason?: string };
+  addConnection: (sourceId: string, targetId: string) => { ok: boolean; reason?: string };
+
   // M2 AI 语法检查
   runAiCheck: () => void;
   cancelAiCheck: () => void;
@@ -349,6 +357,78 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ pipeline: { ...get().pipeline, nodes } });
   },
 
+  // ─── M11: 拖拽创建节点 ─────────────────────────────────────────────
+
+  /**
+   * 拖拽 PaletteItem 到画布某坐标时调用：
+   *   1. 生成 snippet
+   *   2. spliceAt 插入位置
+   *   3. setContent 触发 pipeline
+   *   4. 在 pipeline 完成后立即 setNodePosition 锁定到落点
+   */
+  createNodeFromPalette(
+    snippet: string,
+    name: string,
+    dropXY?: { x: number; y: number }
+  ): { ok: boolean; newNodeId?: string; reason?: string } {
+    const { content, pipeline } = get();
+    // 空内容：包入默认 package
+    let newContent: string;
+    if (content.trim().length === 0) {
+      newContent = `package DemoModel {\n${snippet}\n}\n`;
+    } else {
+      // 简化：找到最后一个 package 的 `}` 之前插入
+      const lastPkg = pipeline.model.packages[pipeline.model.packages.length - 1];
+      if (!lastPkg) {
+        newContent = `package DemoModel {\n${snippet}\n}\n` + content;
+      } else {
+        // 找最后一个 package 的关闭 `}` 的 offset
+        const closeOffset = findPackageClose(content, lastPkg.location.offset);
+        newContent = content.slice(0, closeOffset) + snippet + '\n' + content.slice(closeOffset);
+      }
+    }
+
+    set({ content: newContent, saved: false });
+    get().runPipeline(newContent);
+
+    // 找到新生成的节点（kind 推断）
+    const id = findNewNodeId(pipeline.model, name);
+    if (id && dropXY) {
+      get().setNodePosition(id, dropXY.x, dropXY.y);
+    }
+    return { ok: true, newNodeId: id };
+  },
+
+  // ─── M11: 添加 connect 语句（用户画线） ─────────────────────────────
+
+  /**
+   * 用户在 drag 模式从 sourceId 节点画线到 targetId 节点。
+   * 自动推断两端的"短名"，生成 `connect A to B;` 语句。
+   */
+  addConnection(sourceId: string, targetId: string): { ok: boolean; reason?: string } {
+    const { content, pipeline } = get();
+    const srcShort = shortNameFromNodeId(pipeline.model, sourceId);
+    const tgtShort = shortNameFromNodeId(pipeline.model, targetId);
+    if (!srcShort || !tgtShort) {
+      return { ok: false, reason: '源/目标节点找不到短名' };
+    }
+    if (srcShort === tgtShort) {
+      return { ok: false, reason: '不能连接同一节点' };
+    }
+    const snippet = `connect ${srcShort} to ${tgtShort};`;
+    const lastPkg = pipeline.model.packages[pipeline.model.packages.length - 1];
+    let newContent: string;
+    if (!lastPkg) {
+      newContent = `package DemoModel {\n${snippet}\n}\n`;
+    } else {
+      const closeOffset = findPackageClose(content, lastPkg.location.offset);
+      newContent = content.slice(0, closeOffset) + snippet + '\n' + content.slice(closeOffset);
+    }
+    set({ content: newContent, saved: false });
+    get().runPipeline(newContent);
+    return { ok: true };
+  },
+
   // ─── M2 AI 语法检查 ──────────────────────────────────────────────
 
   runAiCheck() {
@@ -402,3 +482,110 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
   },
 }));
+
+// ─── 辅助：findPackageClose ─────────────────────────────────────────────
+
+function findPackageClose(text: string, pkgOffset: number): number {
+  let i = pkgOffset;
+  while (i < text.length && text[i] !== '{') i++;
+  if (i >= text.length) return text.length;
+  let depth = 1;
+  i++;
+  while (i < text.length && depth > 0) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') depth--;
+    i++;
+  }
+  return i - 1; // `}` 之前
+}
+
+// ─── 辅助：从 model 中按 name 找最新声明的 node id ───────────────────────
+
+function findNewNodeId(model: SysMLModel, name: string): string | undefined {
+  for (const pkg of model.packages) {
+    const found = walkForName(pkg, name);
+    if (found) return found;
+  }
+  for (const sm of model.stateMachines) {
+    for (const s of sm.states) if (s.name === name) return `state:${s.id}`;
+  }
+  for (const req of model.requirements) {
+    if (req.name === name) return `req:${req.id}`;
+  }
+  for (const cb of model.constraintBlocks) {
+    if (cb.name === name) return `cb:${cb.id}`;
+  }
+  return undefined;
+}
+
+function walkForName(pkg: any, name: string): string | undefined {
+  for (const m of pkg.members) {
+    if (m.kind === 'partDef' && m.name === name) return `pd:${m.id}`;
+    if (m.kind === 'partUsage' && m.name === name) return `pu:${m.id}`;
+    if (m.kind === 'portDef' && m.name === name) return `portdef:${m.id}`;
+    if (m.kind === 'stateMachine') {
+      for (const s of m.states ?? []) if (s.name === name) return `state:${s.id}`;
+    }
+    if (m.kind === 'requirement' && m.name === name) return `req:${m.id}`;
+    if (m.kind === 'constraintBlock' && m.name === name) return `cb:${m.id}`;
+    if (m.kind === 'package') {
+      const f = walkForName(m, name);
+      if (f) return f;
+    }
+  }
+  return undefined;
+}
+
+// ─── 辅助：从 node id 反查短名 ────────────────────────────────────────────
+
+function shortNameFromNodeId(model: SysMLModel, nodeId: string): string | undefined {
+  const map: Record<string, string> = {
+    'pd:': 'partDef',
+    'pu:': 'partUsage',
+    'portdef:': 'portDef',
+    'state:': 'stateDef',
+    'action:': 'actionDef',
+    'req:': 'requirement',
+    'cb:': 'constraintBlock',
+  };
+  for (const [prefix, kind] of Object.entries(map)) {
+    if (nodeId.startsWith(prefix)) {
+      const astId = nodeId.slice(prefix.length);
+      return walkForShortName(model, astId, kind);
+    }
+  }
+  return undefined;
+}
+
+function walkForShortName(model: SysMLModel, astId: string, kind: string): string | undefined {
+  for (const pkg of model.packages) {
+    const r = walkPkgForShortName(pkg, astId, kind);
+    if (r) return r;
+  }
+  for (const sm of model.stateMachines) {
+    for (const s of sm.states) {
+      if (s.id === astId && kind === 'stateDef') return s.name;
+    }
+  }
+  for (const req of model.requirements) {
+    if (req.id === astId && kind === 'requirement') return req.name;
+  }
+  for (const cb of model.constraintBlocks) {
+    if (cb.id === astId && kind === 'constraintBlock') return cb.name;
+  }
+  return undefined;
+}
+
+function walkPkgForShortName(pkg: any, astId: string, kind: string): string | undefined {
+  for (const m of pkg.members) {
+    if (m.id === astId && m.kind === kind && m.name) return m.name;
+    if (m.kind === 'package') {
+      const r = walkPkgForShortName(m, astId, kind);
+      if (r) return r;
+    }
+    if (m.kind === 'stateMachine') {
+      for (const s of m.states ?? []) if (s.id === astId) return s.name;
+    }
+  }
+  return undefined;
+}

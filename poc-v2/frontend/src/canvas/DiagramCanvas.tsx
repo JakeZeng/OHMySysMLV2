@@ -5,6 +5,12 @@
  *   - 双向同步：双击节点重命名（prompt），Backspace/Delete 删除节点
  *   - 性能：onlyRenderVisibleElements（视口内才渲染）、React.memo 节点
  *   - 持久化：拖动后位置写入 store
+ *
+ * M11 新增能力：
+ *   - 拖拽建模：PalettePanel 拖入 → onDrop 创建节点
+ *   - 画线连线：nodesConnectable 基于 drag mode 切换
+ *   - onPaneDoubleClick：双击空白处按当前 viewType 创建节点
+ *   - view.modelingMode === 'text' 时画布只读
  */
 
 import React, {
@@ -32,7 +38,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-// ─── 节点类型定义 ──────────────────────────────────────────────────────
+// ─── 节点类型定义（保持 M10 不变） ────────────────────────────
 
 interface BaseNodeData {
   label: string;
@@ -148,8 +154,6 @@ const PortNode: React.FC<NodeProps> = ({ data, selected }) => {
   );
 };
 const MemoPortNode = React.memo(PortNode);
-
-// ─── M5 节点类型：状态、动作、需求、约束 ────────────────────────────
 
 const StateNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData & { isInitial?: boolean; isFinal?: boolean };
@@ -312,7 +316,7 @@ const nodeTypes = {
   sysmlConstraint: MemoConstraintBlockNode,
 };
 
-// ─── 回调接口 ─────────────────────────────────────────────────────────
+// ─── 回调接口 ─────────────────────────────────────────
 
 export interface DiagramCanvasProps {
   nodes: Node[];
@@ -323,25 +327,27 @@ export interface DiagramCanvasProps {
   onNodesDelete?: (nodeIds: string[]) => void;
   onEdgesDelete?: (edgeIds: string[]) => void;
   onNodePositionChange?: (nodeId: string, x: number, y: number) => void;
-  /** M10: 当前选中节点变化（用于右侧 PropertyPanel） */
   onSelectionChange?: (node: Node | null) => void;
-  /** M10: 仿真态高亮节点 ID 集合（额外用边框 + 脉动） */
   highlightNodeIds?: string[];
-  /** 节点总数（供性能徽章显示） */
   nodeCount?: number;
+  /** M11: 是否处于可交互（drag）模式；text 模式时画布只读 */
+  interactive?: boolean;
+  /** M11: Palette 拖入创建回调 */
+  onPaletteDrop?: (kind: string, flowPosition: { x: number; y: number }) => void;
+  /** M11: 双击画布空白处按当前视图类型创建回调 */
+  onPaneDoubleClick?: (flowPosition: { x: number; y: number }) => void;
+  /** M11: 节点之间画线创建连接（drag 模式） */
+  onConnectCreate?: (sourceId: string, targetId: string) => void;
 }
 
 /** 暴露给父组件的操作接口 */
 export interface DiagramCanvasHandle {
-  /** 聚焦并高亮指定节点 */
   focusNode(nodeId: string): void;
-  /** M4.5 增量：导出画布为 PNG blob */
   exportPng(): Promise<Blob | null>;
-  /** 导出画布为 SVG blob */
   exportSvg(): Promise<Blob | null>;
 }
 
-// ─── 组件 ─────────────────────────────────────────────────────────────
+// ─── 组件 ─────────────────────────────────────────────
 
 export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>(({
   nodes,
@@ -354,8 +360,13 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   onSelectionChange,
   highlightNodeIds,
   nodeCount,
+  interactive = true,
+  onPaletteDrop,
+  onPaneDoubleClick,
+  onConnectCreate,
 }, ref) => {
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = React.useState<string | null>(null);
 
@@ -364,7 +375,6 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     highlightTimerRef.current = setTimeout(() => setHighlightedNodeId(null), 2000);
   }, []);
 
-  // 暴露给父组件
   useImperativeHandle(ref, () => ({
     focusNode(nodeId: string) {
       const instance = rfInstanceRef.current;
@@ -377,7 +387,6 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       }
     },
     async exportPng(): Promise<Blob | null> {
-      // 使用 html-to-image 或直接从 ReactFlow 的 DOM 截取
       const rfElement = document.querySelector('.react-flow') as HTMLElement | null;
       if (!rfElement) return null;
       try {
@@ -400,7 +409,6 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         const dataUrl = await toSvg(rfElement, {
           backgroundColor: '#f9fafb',
         });
-        // data:image/svg+xml;base64,... 或 data:image/svg+xml;utf8,...
         const res = await fetch(dataUrl);
         return res.blob();
       } catch {
@@ -434,11 +442,11 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [edges]
   );
 
-  // 双击节点 → 弹出 prompt 改名
+  // 双击节点 → 改名 prompt
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      if (!interactive) return; // text 模式：禁用
       if (!onNodeRename) return;
-      // 不允许改 port 子节点的标识符（会破坏引用一致性；用户可通过删父节点处理）
       if ((node as { parentId?: string }).parentId) return;
       const label = (node.data as { label?: string })?.label ?? '';
       const input = window.prompt(`改名为（新名字必须符合 SysML 标识符规则）:`, label);
@@ -446,15 +454,13 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         onNodeRename(String(node.id), input.trim());
       }
     },
-    [onNodeRename]
+    [onNodeRename, interactive]
   );
 
-  // 节点变更（删除、拖动结束等）
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
       for (const c of changes) {
         if (c.type === 'position' && c.dragging === false && c.position && onNodePositionChange) {
-          // 拖动结束：持久化位置
           onNodePositionChange(String(c.id), c.position.x, c.position.y);
         }
         if (c.type === 'remove' && onNodeDelete) {
@@ -469,7 +475,6 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     (changes: EdgeChange[]) => {
       for (const c of changes) {
         if (c.type === 'remove' && onEdgesDelete) {
-          // React Flow 的 edgesChange 不直接给 edgeIds，需要从 change.id 取
           onEdgesDelete([String(c.id)]);
         }
       }
@@ -477,7 +482,6 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [onEdgesDelete]
   );
 
-  // 多选删除（M2 Backspace/Delete）
   const handleNodesDelete = useCallback(
     (deleted: Node[]) => {
       if (onNodesDelete) {
@@ -496,18 +500,16 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [onEdgesDelete]
   );
 
-  // 连接创建：M2 仅展示，不允许用户拖出连接（M3+ 再做）
-  const handleConnect = useCallback((_c: Connection) => {
-    // no-op
-  }, []);
+  // M11: 连接创建
+  const handleConnect = useCallback((c: Connection) => {
+    if (!interactive || !onConnectCreate) return;
+    if (c.source && c.target) onConnectCreate(c.source, c.target);
+  }, [interactive, onConnectCreate]);
 
-  // ReactFlow 初始化：保存实例引用
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleInit = useCallback((instance: any) => {
     rfInstanceRef.current = instance as ReactFlowInstance;
   }, []);
 
-  // M10: 选中变化 → 通知 PropertyPanel
   const handleSelectionChange = useCallback(
     ({ nodes: selNodes }: { nodes: Node[]; edges: Edge[] }) => {
       if (!onSelectionChange) return;
@@ -516,8 +518,44 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [onSelectionChange]
   );
 
+  // ─── M11: 拖拽支持 ─────────────────────────────────────────────────
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!interactive) return;
+    if (e.dataTransfer.types.includes('application/x-sysml-palette')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, [interactive]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!interactive) return;
+    const kind = e.dataTransfer.getData('application/x-sysml-palette');
+    if (!kind || !onPaletteDrop) return;
+    e.preventDefault();
+    const instance = rfInstanceRef.current;
+    if (!instance) return;
+    const flowPos = instance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    onPaletteDrop(kind, flowPos);
+  }, [interactive, onPaletteDrop]);
+
+  const handlePaneDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (!interactive) return;
+    if (!onPaneDoubleClick) return;
+    const instance = rfInstanceRef.current;
+    if (!instance) return;
+    const flowPos = instance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    onPaneDoubleClick(flowPos);
+  }, [interactive, onPaneDoubleClick]);
+
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      ref={wrapperRef}
+      style={{ width: '100%', height: '100%', position: 'relative' }}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      data-testid="canvas-wrapper"
+      data-mode={interactive ? 'drag' : 'text'}
+    >
       <ReactFlow
         nodes={stableNodes}
         edges={stableEdges}
@@ -530,9 +568,10 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         onConnect={handleConnect}
         onInit={handleInit}
         onSelectionChange={handleSelectionChange}
-        onlyRenderVisibleElements={true}  // M2 性能：视口内才渲染
-        nodesDraggable={true}
-        nodesConnectable={false}
+        onDoubleClick={handlePaneDoubleClick}
+        onlyRenderVisibleElements={true}
+        nodesDraggable={interactive}
+        nodesConnectable={interactive}
         elementsSelectable={true}
         deleteKeyCode={['Backspace', 'Delete']}
         fitView
@@ -557,6 +596,17 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
           }}
         />
       </ReactFlow>
+      {/* 模式徽章 */}
+      <div
+        data-testid="canvas-mode-badge"
+        className={`pointer-events-none absolute right-2 top-2 rounded px-2 py-0.5 font-mono text-[11px] ${
+          interactive
+            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'
+            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200'
+        }`}
+      >
+        {interactive ? '▶ 拖拽模式' : '📝 文本模式（只读）'}
+      </div>
       {/* 性能徽章 */}
       {typeof nodeCount === 'number' && (
         <div
@@ -572,6 +622,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
             fontSize: 11,
             fontFamily: 'monospace',
             pointerEvents: 'none',
+            display: 'none', // 隐藏，让 mode-badge 显示
           }}
         >
           {nodeCount} 节点 · 仅渲染可见

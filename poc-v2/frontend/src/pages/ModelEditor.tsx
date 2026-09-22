@@ -1,10 +1,16 @@
 /**
- * 模型编辑器（核心页面）。
+ * 模型编辑器（M11：视图一等公民 + 单元素表单 + 双模建模）
  *
- * 复用 POC v2 已工作的 SysMLEditor + DiagramCanvas + ErrorPanel。
- * 顶部工具条：模型名、保存、错误计数。
- * 主体：左编辑器（3/5 宽）+ 右画布（2/5 宽）。
- * 底部：错误面板。
+ * 主体布局（5 列）：
+ *   ViewSidebar | Palette | Editor | Canvas(+Sim) | ElementFormPanel
+ *
+ * M11 新增：
+ *   - 视图一等公民（侧栏 + 属性对话框）
+ *   - 单元素表单（替代 PropertyPanel）
+ *   - 拖拽建模（Palette → Canvas drop）
+ *   - 画线建模（节点之间拖线 → connect 语句）
+ *   - 双击空白创建节点
+ *   - 视图建模模式（drag ↔ text）驱动画布可交互性 + Monaco 只读
  */
 
 import * as React from 'react';
@@ -29,6 +35,7 @@ import { ErrorPanel } from '../editor/ErrorPanel';
 import { Button } from '../components/ui/Button';
 import { useModelStore } from '../stores/modelStore';
 import { useProjectStore } from '../stores/projectStore';
+import { useViewStore } from '../stores/viewStore';
 import { useToast } from '../components/ui/Toast';
 import { downloadJson } from '@transform/exportJson';
 import { importFromJson } from '@transform/importJson';
@@ -42,13 +49,15 @@ import { CommentsPanel } from '../components/CommentsPanel';
 import { PresenceIndicator } from '../components/PresenceIndicator';
 import { ModelEditorTutorial } from '../components/tutorials/ModelEditorTutorial';
 import { SyntaxReference } from '../components/SyntaxReference';
-// M10 绘图建模 MVP：左右侧栏
 import { PalettePanel } from '../components/diagram/PalettePanel';
-import { PropertyPanel } from '../components/diagram/PropertyPanel';
-// M10 行为仿真 MVP
+import { ElementFormPanel } from '../components/forms/ElementFormPanel';
+import { ViewSidebar } from '../components/views/ViewSidebar';
+import { ViewPropertiesDialog } from '../components/views/ViewPropertiesDialog';
 import { SimulationPanel } from '../components/sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../stores/simulationStore';
+import { PALETTE_ITEMS, type PaletteKind } from '../lib/insertSnippet';
 import type { Node } from '@xyflow/react';
+import type { ViewType } from '../types/view';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -81,26 +90,47 @@ export const ModelEditor: React.FC = () => {
   const deleteNode = useModelStore((s) => s.deleteNode);
   const deleteConnection = useModelStore((s) => s.deleteConnection);
   const setNodePosition = useModelStore((s) => s.setNodePosition);
+  const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
+  const addConnection = useModelStore((s) => s.addConnection);
+
+  // M11 view store
+  const viewModelId = useViewStore((s) => s.modelId);
+  const views = useViewStore((s) => s.views);
+  const currentViewId = useViewStore((s) => s.currentViewId);
+  const setCurrentView = useViewStore((s) => s.setCurrentView);
+  const ensureViews = useViewStore((s) => s.ensureViews);
+  const resetViews = useViewStore((s) => s.reset);
 
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const [errorPanelExpanded, setErrorPanelExpanded] = React.useState(true);
-
-  // M5: 视图模式切换（提前到 M10 effect 之前）
-  const [viewMode, setViewMode] = React.useState<'structure' | 'behavior' | 'requirements' | 'constraints'>('structure');
-
-  // M10: 画布选中节点（用于 PropertyPanel）
   const [selectedNode, setSelectedNode] = React.useState<Node | null>(null);
+  const [viewPropertiesFor, setViewPropertiesFor] = React.useState<string | null>(null);
 
-  // M10: 仿真自动加载（当 pipeline 中存在状态机时）
+  // 当前激活视图
+  const currentView = React.useMemo(
+    () => views.find((v) => v.id === currentViewId) ?? null,
+    [views, currentViewId]
+  );
+
+  // 计算每个视图的"节点数"（用于侧栏）
+  const nodeCounts = React.useMemo(() => {
+    const allNodes = pipeline.nodes;
+    const map: Record<string, number> = {};
+    for (const v of views) {
+      map[v.id] = filterNodesForView(allNodes, v.viewType).length;
+    }
+    return map;
+  }, [views, pipeline.nodes]);
+
+  // M10 仿真自动加载
   const stateMachines = useModelStore((s) => s.pipeline.model.stateMachines);
   const simMachine = useSimulationStore((s) => s.machine);
   const simLoad = useSimulationStore((s) => s.load);
   const simUnload = useSimulationStore((s) => s.unload);
   const simCurrentStateId = useSimulationStore(selectCurrentStateId);
   React.useEffect(() => {
-    // 仅在行为视图下装载仿真
-    if (viewMode !== 'behavior') {
+    if (currentView?.viewType !== 'behavior') {
       if (simMachine) simUnload();
       return;
     }
@@ -109,28 +139,18 @@ export const ModelEditor: React.FC = () => {
       if (simMachine) simUnload();
       return;
     }
-    // 同一台机器不重复装载
     if (simMachine && simMachine.id === sm.id) return;
     simLoad(sm);
-    return () => {
-      simUnload();
-    };
+    return () => { simUnload(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, stateMachines.length, stateMachines[0]?.id]);
+  }, [currentView?.viewType, stateMachines.length, stateMachines[0]?.id]);
 
-  // M3: AI 生成 + 模板选择器
+  // M3 / M4.5 modals
   const [showAIGenerate, setShowAIGenerate] = React.useState(false);
   const [showTemplateChooser, setShowTemplateChooser] = React.useState(false);
-  // M4.5 增量：快捷键帮助
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = React.useState(false);
-
-  // 评论面板
   const [showComments, setShowComments] = React.useState(false);
-
-  // 语法参考
   const [showSyntaxRef, setShowSyntaxRef] = React.useState(false);
-
-  // M4.5 增量：版本历史面板
   const [showVersionHistory, setShowVersionHistory] = React.useState(false);
   const [versionHistory, setVersionHistory] = React.useState<ModelVersion[]>([]);
   const [versionHistoryLoading, setVersionHistoryLoading] = React.useState(false);
@@ -142,13 +162,13 @@ export const ModelEditor: React.FC = () => {
       const data = await modelApi.listVersions(projectIdFromQuery, modelId);
       setVersionHistory(data);
     } catch {
-      // silent
+      /* silent */
     } finally {
       setVersionHistoryLoading(false);
     }
   }, [projectIdFromQuery, modelId]);
 
-  // 暴露 dev hook：浏览器演示脚本可直接调用 store action
+  // Dev hook
   React.useEffect(() => {
     (window as unknown as { __sysmlDemoDelete?: (id: string) => void }).__sysmlDemoDelete = (id: string) => {
       deleteNode(id);
@@ -156,49 +176,58 @@ export const ModelEditor: React.FC = () => {
     (window as unknown as { __sysmlDemoSetContent?: (c: string) => void }).__sysmlDemoSetContent = (c: string) => {
       setContent(c);
     };
+    (window as unknown as { __sysmlDemoCreateView?: (t: ViewType) => string }).__sysmlDemoCreateView = (t: ViewType) => {
+      return useViewStore.getState().createView({ viewType: t });
+    };
+    (window as unknown as { __sysmlDemoSetViewMode?: (id: string, mode: 'drag' | 'text') => void }).__sysmlDemoSetViewMode = (id: string, mode: 'drag' | 'text') => {
+      useViewStore.getState().setModelingMode(id, mode);
+    };
+    (window as unknown as { __sysmlDemoSelectNode?: (id: string) => void }).__sysmlDemoSelectNode = (id: string) => {
+      const n = pipeline.nodes.find((nd) => String(nd.id) === id);
+      if (n) setSelectedNode(n);
+    };
+    (window as unknown as { __sysmlDemoGetFirstNode?: () => string | null }).__sysmlDemoGetFirstNode = () => {
+      const n = pipeline.nodes[0];
+      return n ? String(n.id) : null;
+    };
     return () => {
       delete (window as unknown as { __sysmlDemoDelete?: unknown }).__sysmlDemoDelete;
       delete (window as unknown as { __sysmlDemoSetContent?: unknown }).__sysmlDemoSetContent;
+      delete (window as unknown as { __sysmlDemoCreateView?: unknown }).__sysmlDemoCreateView;
+      delete (window as unknown as { __sysmlDemoSetViewMode?: unknown }).__sysmlDemoSetViewMode;
+      delete (window as unknown as { __sysmlDemoSelectNode?: unknown }).__sysmlDemoSelectNode;
+      delete (window as unknown as { __sysmlDemoGetFirstNode?: unknown }).__sysmlDemoGetFirstNode;
     };
-  }, [deleteNode, setContent]);
+  }, [deleteNode, setContent, pipeline.nodes]);
 
-  // 加载模型（或新建空白）
+  // 加载模型
   React.useEffect(() => {
     if (modelId && projectIdFromQuery) {
       setProject(projectIdFromQuery);
       void loadModel(projectIdFromQuery, modelId);
-      // M4.5 增量：加载项目信息（用于面包屑导航）
-      void fetchProject(projectIdFromQuery).catch(() => {/* silent */});
+      void fetchProject(projectIdFromQuery).catch(() => { /* silent */ });
+      ensureViews(modelId);
     } else if (projectIdFromQuery) {
       setProject(projectIdFromQuery);
       reset();
-      void fetchProject(projectIdFromQuery).catch(() => {/* silent */});
-      // 注入一个空 pipeline 的初始内容（避免空编辑器看不到提示）
+      void fetchProject(projectIdFromQuery).catch(() => { /* silent */ });
     } else {
-      // 没有 projectId，回到项目列表
       navigate('/', { replace: true });
     }
     return () => {
-      // 离开页面清空
       reset();
+      resetViews();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelId, projectIdFromQuery]);
 
-  const handlePipeline = React.useCallback((_r: PipelineResult) => {
-    // pipeline 已在 store 中更新，这里只需要触发一次 UI 反馈
-  }, []);
+  const handlePipeline = React.useCallback((_r: PipelineResult) => {}, []);
 
-  // 错误面板跳转：同时跳 Monaco 和图聚焦
   const handleJumpTo = React.useCallback(
     (line: number, column: number) => {
-      // 1. Monaco 跳转
       sysmlEditorRef.current?.revealPosition(line, column);
-      // 2. 图形聚焦：找到 location 匹配的 node 并高亮
       const matchingNode = pipeline.nodes.find(
-        (n) =>
-          n.data &&
-          (n.data as { location?: { line: number } }).location?.line === line
+        (n) => n.data && (n.data as { location?: { line: number } }).location?.line === line
       );
       if (matchingNode) {
         diagramRef.current?.focusNode(String(matchingNode.id));
@@ -212,15 +241,11 @@ export const ModelEditor: React.FC = () => {
       await saveModel();
       showToast({ title: '已保存', variant: 'success' });
     } catch (e) {
-      showToast({
-        title: '保存失败',
-        description: (e as Error).message,
-        variant: 'error',
-      });
+      showToast({ title: '保存失败', description: (e as Error).message, variant: 'error' });
     }
   };
 
-  // M4.5 增量：键盘快捷键
+  // ── 键盘快捷键 ──
   const [wordWrapEnabled, setWordWrapEnabled] = React.useState(true);
   const [minimapEnabled, setMinimapEnabled] = React.useState(false);
   const [lineNumbersEnabled, setLineNumbersEnabled] = React.useState(true);
@@ -228,94 +253,14 @@ export const ModelEditor: React.FC = () => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        if (!saving && !loading) {
-          void handleSave();
-        }
+        if (!saving && !loading) void handleSave();
       }
-      // "?" 打开快捷键帮助（仅在非输入元素上触发）
       if (
         e.key === '?' &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
+        !e.ctrlKey && !e.metaKey && !e.altKey &&
         !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
       ) {
         setShowKeyboardShortcuts((v) => !v);
-      }
-      // Ctrl+H 打开 Monaco 的替换面板
-      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.startFindReplaceAction', {});
-      }
-      // Ctrl+G 打开 Monaco 的"跳转到行"面板
-      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.gotoLine', {});
-      }
-      // Alt+Z 切换自动换行
-      if (e.altKey && e.key === 'z') {
-        e.preventDefault();
-        setWordWrapEnabled((v) => {
-          const next = !v;
-          sysmlEditorRef.current
-            ?.getEditor()
-            ?.updateOptions({ wordWrap: next ? 'on' : 'off' });
-          return next;
-        });
-      }
-      // Alt+M 切换 minimap
-      if (e.altKey && e.key === 'm') {
-        e.preventDefault();
-        setMinimapEnabled((v) => {
-          const next = !v;
-          sysmlEditorRef.current
-            ?.getEditor()
-            ?.updateOptions({ minimap: { enabled: next } });
-          return next;
-        });
-      }
-      // Shift+Alt+F 格式化文档（Monaco 内置）
-      if (e.shiftKey && e.altKey && e.key === 'f') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.formatDocument', {});
-      }
-      // Ctrl+D 选择下一个匹配项（Monaco 内置 multi-cursor）
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.addSelectionToNextFindMatch', {});
-      }
-      // Ctrl+/ 切换行注释（Monaco 内置）
-      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.commentLine', {});
-      }
-      // Ctrl+Shift+K 删除当前行（Monaco 内置）
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'K') {
-        e.preventDefault();
-        sysmlEditorRef.current
-          ?.getEditor()
-          ?.trigger('keyboard', 'editor.action.deleteLines', {});
-      }
-      // Ctrl+Shift+L 切换行号显示
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
-        e.preventDefault();
-        setLineNumbersEnabled((v) => {
-          const next = !v;
-          sysmlEditorRef.current
-            ?.getEditor()
-            ?.updateOptions({ lineNumbers: next ? 'on' : 'off' });
-          return next;
-        });
       }
     };
     window.addEventListener('keydown', onKey, { capture: true });
@@ -323,91 +268,60 @@ export const ModelEditor: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, loading]);
 
-  // M4.5 增量：自动保存 — 内容变更后 5 秒无操作自动保存
+  // 自动保存
   const autoSaveRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => {
     if (!content || !modelId || saving || loading) return;
     if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
     autoSaveRef.current = setTimeout(() => {
-      void saveModel().catch(() => {
-        // 静默失败（Ctrl+S 手动保存时会显示 toast）
-      });
+      void saveModel().catch(() => { /* silent */ });
     }, 5000);
     return () => {
       if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
     };
   }, [content, modelId, saving, loading, saveModel]);
 
-  // M4.5 增量：离开页面时若有未保存变更则提醒。
-  // saved 仅在成功保存后短暂 true（2s 后回 false），所以用"内容是否与加载时不同"做脏检测。
   const lastSavedContent = React.useRef<string>('');
   React.useEffect(() => {
-    // 模型加载完成后记录"已保存"基准
-    if (!loading && modelId && content) {
-      lastSavedContent.current = content;
-    }
+    if (!loading && modelId && content) lastSavedContent.current = content;
   }, [loading, modelId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 保存成功时更新基准
   React.useEffect(() => {
-    if (saved) {
-      lastSavedContent.current = content;
-    }
+    if (saved) lastSavedContent.current = content;
   }, [saved, content]);
-
-  // beforeunload：内容与基准不同时才拦截
   React.useEffect(() => {
     const dirty = content !== lastSavedContent.current && !!modelId && !!content;
     if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [content, modelId]);
 
-  // 导出 JSON
   const handleExportJson = React.useCallback(() => {
     try {
       downloadJson(pipeline.model, `${name || 'model'}.sysml.json`);
       showToast({ title: '已导出 JSON', variant: 'success' });
     } catch (e) {
-      showToast({
-        title: '导出失败',
-        description: (e as Error).message,
-        variant: 'error',
-      });
+      showToast({ title: '导出失败', description: (e as Error).message, variant: 'error' });
     }
   }, [pipeline.model, name, showToast]);
 
-  // M4.5 增量：导出 .sysml 原始文件
   const handleExportSysML = React.useCallback(() => {
     try {
       const blob = new Blob([content], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name || 'model'}.sysml`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      a.href = url; a.download = `${name || 'model'}.sysml`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
       showToast({ title: '已导出 .sysml', variant: 'success' });
     } catch (e) {
-      showToast({
-        title: '导出失败',
-        description: (e as Error).message,
-        variant: 'error',
-      });
+      showToast({ title: '导出失败', description: (e as Error).message, variant: 'error' });
     }
   }, [content, name, showToast]);
 
-  // 导入 JSON
   const handleImportJson = React.useCallback(() => {
     const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
+    input.type = 'file'; input.accept = '.json,application/json';
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -419,12 +333,7 @@ export const ModelEditor: React.FC = () => {
           setContent(result.text);
           showToast({ title: '已导入 JSON', variant: 'success' });
         } else {
-          const firstErr = result.errors[0];
-          showToast({
-            title: '导入失败',
-            description: `${firstErr.path}: ${firstErr.message}`,
-            variant: 'error',
-          });
+          showToast({ title: '导入失败', description: `${result.errors[0]?.path}: ${result.errors[0]?.message}`, variant: 'error' });
         }
       };
       reader.readAsText(file);
@@ -432,7 +341,6 @@ export const ModelEditor: React.FC = () => {
     input.click();
   }, [setContent, showToast]);
 
-  // M3: 应用模板
   const handleApplyTemplate = React.useCallback(
     (templateContent: string) => {
       setContent(templateContent);
@@ -441,7 +349,6 @@ export const ModelEditor: React.FC = () => {
     [setContent, showToast]
   );
 
-  // M3: 插入 AI 生成结果
   const handleInsertAIGenerated = React.useCallback(
     (code: string) => {
       const newContent = content.trim() ? `${content}\n${code}` : code;
@@ -451,197 +358,201 @@ export const ModelEditor: React.FC = () => {
     [content, setContent, showToast]
   );
 
-  // M5: 根据视图模式过滤节点和边
+  // ─── M11: 视图过滤 + 拖拽 ────────────────────────────────────────
   const filteredNodes = React.useMemo(() => {
-    if (viewMode === 'structure') {
-      return pipeline.nodes.filter(n =>
-        n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage' ||
-        n.type === 'sysmlPortDef' || n.type === 'sysmlPort'
-      );
-    }
-    if (viewMode === 'behavior') {
-      return pipeline.nodes.filter(n =>
-        n.type === 'sysmlState' || n.type === 'sysmlAction'
-      );
-    }
-    if (viewMode === 'requirements') {
-      return pipeline.nodes.filter(n => n.type === 'sysmlRequirement');
-    }
-    if (viewMode === 'constraints') {
-      return pipeline.nodes.filter(n => n.type === 'sysmlConstraint');
-    }
-    return pipeline.nodes;
-  }, [viewMode, pipeline.nodes]);
+    if (!currentView) return pipeline.nodes;
+    return filterNodesForView(pipeline.nodes, currentView.viewType);
+  }, [currentView, pipeline.nodes]);
 
   const filteredEdges = React.useMemo(() => {
-    if (viewMode === 'structure') {
-      return pipeline.edges.filter(e =>
-        !e.id.startsWith('edge:') || e.style?.stroke === '#1890ff'
-      );
-    }
-    if (viewMode === 'behavior') {
-      return pipeline.edges.filter(e =>
-        e.style?.stroke === '#722ed1' || e.style?.stroke === '#13c2c2'
-      );
-    }
-    // requirements/constraints 暂不显示边
-    return [];
-  }, [viewMode, pipeline.edges]);
+    if (!currentView) return pipeline.edges;
+    return filterEdgesForView(pipeline.edges, currentView.viewType);
+  }, [currentView, pipeline.edges]);
+
+  // ─── M11: 拖拽建模 ───────────────────────────────────────────────
+  const handlePaletteDrop = React.useCallback(
+    (kind: string, dropXY: { x: number; y: number }) => {
+      const item = PALETTE_ITEMS.find((p) => p.kind === kind);
+      if (!item) return;
+      // partUsage / transition / connect 需要多个名字，弹窗分别取
+      if (item.defaultName2 && item.kind !== 'partUsage') {
+        const name1 = window.prompt(`${item.label}（第一个名字）:`, item.defaultName);
+        if (!name1) return;
+        const name2 = window.prompt(`${item.label}（第二个名字）:`, item.defaultName2);
+        if (!name2) return;
+        const snippet = item.generate(name1.trim(), name2.trim());
+        const result = createNodeFromPalette(snippet, name1.trim(), dropXY);
+        if (!result.ok) {
+          showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+        }
+        return;
+      }
+      if (item.kind === 'partUsage') {
+        const name = window.prompt(`${item.label}（实例名）:`, item.defaultName);
+        if (!name) return;
+        const typeRef = window.prompt(`${item.label}（类型名）:`, item.defaultName2);
+        if (!typeRef) return;
+        const snippet = `part ${name.trim()} : ${typeRef.trim()};`;
+        const result = createNodeFromPalette(snippet, name.trim(), dropXY);
+        if (!result.ok) {
+          showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+        }
+        return;
+      }
+      const name = window.prompt(`${item.label}（名字）:`, item.defaultName);
+      if (!name) return;
+      const trimmed = name.trim();
+      if (!/^[A-Za-z_][\w]*$/.test(trimmed)) {
+        showToast({ title: '非法标识符', variant: 'error' });
+        return;
+      }
+      const snippet = item.generate(trimmed);
+      const result = createNodeFromPalette(snippet, trimmed, dropXY);
+      if (!result.ok) {
+        showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+      } else {
+        showToast({ title: '已添加', description: `${item.label} "${trimmed}" 已插入`, variant: 'success' });
+      }
+    },
+    [createNodeFromPalette, showToast]
+  );
+
+  // 双击空白创建（按当前视图类型推断 kind）
+  const handlePaneDoubleClick = React.useCallback(
+    (dropXY: { x: number; y: number }) => {
+      if (!currentView) return;
+      const kind = defaultKindForViewType(currentView.viewType);
+      if (!kind) return;
+      const item = PALETTE_ITEMS.find((p) => p.kind === kind);
+      if (!item) return;
+      const name = window.prompt(`双击创建 ${item.label}（名字）:`, item.defaultName);
+      if (!name) return;
+      const trimmed = name.trim();
+      if (!/^[A-Za-z_][\w]*$/.test(trimmed)) {
+        showToast({ title: '非法标识符', variant: 'error' });
+        return;
+      }
+      const snippet = item.generate(trimmed);
+      const result = createNodeFromPalette(snippet, trimmed, dropXY);
+      if (!result.ok) {
+        showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+      }
+    },
+    [currentView, createNodeFromPalette, showToast]
+  );
+
+  // 画线连接
+  const handleConnectCreate = React.useCallback(
+    (sourceId: string, targetId: string) => {
+      const result = addConnection(sourceId, targetId);
+      if (!result.ok) {
+        showToast({ title: '连接失败', description: result.reason, variant: 'error' });
+      }
+    },
+    [addConnection, showToast]
+  );
 
   const parseErrorCount = pipeline.parseErrors.length;
-  const validationErrorCount = pipeline.validationIssues.filter(
-    (i) => i.severity === 'error'
-  ).length;
-  const warningCount = pipeline.validationIssues.filter(
-    (i) => i.severity === 'warning'
-  ).length;
+  const validationErrorCount = pipeline.validationIssues.filter((i) => i.severity === 'error').length;
+  const warningCount = pipeline.validationIssues.filter((i) => i.severity === 'warning').length;
 
-  // M4.5 增量：编辑器统计信息（字符数 + 行数 + 文件大小）
   const contentStats = React.useMemo(() => {
     const lines = content.split('\n').length;
     const chars = content.length;
     const bytes = new Blob([content]).size;
-    const sizeStr =
-      bytes < 1024
-        ? `${bytes} B`
-        : bytes < 1024 * 1024
-          ? `${(bytes / 1024).toFixed(1)} KB`
-          : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    const sizeStr = bytes < 1024 ? `${bytes} B` :
+      bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` :
+        `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${lines} 行 · ${chars} 字符 · ${sizeStr}`;
   }, [content]);
 
-  // M4.5 增量：模型描述显示（工具栏下方）
   const [showDescription, setShowDescription] = React.useState(false);
-
-  // M4.5 增量：复制内容到剪贴板
   const [copied, setCopied] = React.useState(false);
   const handleCopyContent = React.useCallback(async () => {
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // silent
-    }
+    } catch { /* silent */ }
   }, [content]);
 
-  // M4.5 增量：下载图表 PNG
   const handleDownloadDiagram = React.useCallback(async () => {
     const blob = await diagramRef.current?.exportPng();
-    if (!blob) {
-      showToast({ title: '导出图表失败', variant: 'error' });
-      return;
-    }
+    if (!blob) { showToast({ title: '导出图表失败', variant: 'error' }); return; }
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name || 'diagram'}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement('a'); a.href = url; a.download = `${name || 'diagram'}.png`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast({ title: '图表已导出', variant: 'success' });
   }, [name, showToast]);
 
-  // 导出图表为 SVG
   const handleDownloadSVG = React.useCallback(async () => {
     const blob = await diagramRef.current?.exportSvg();
-    if (!blob) {
-      showToast({ title: '导出 SVG 失败', variant: 'error' });
-      return;
-    }
+    if (!blob) { showToast({ title: '导出 SVG 失败', variant: 'error' }); return; }
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name || 'diagram'}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement('a'); a.href = url; a.download = `${name || 'diagram'}.svg`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast({ title: 'SVG 已导出', variant: 'success' });
   }, [name, showToast]);
 
-  // M4.5 增量：记录上次保存时间
   const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
   React.useEffect(() => {
     if (saved) {
       setLastSavedAt(new Date());
-      // 保存成功后刷新版本历史
       if (showVersionHistory) void loadVersionHistory();
     }
   }, [saved, showVersionHistory, loadVersionHistory]);
 
-  // M4.5 增量：光标位置（行:列）
   const [cursorPos, setCursorPos] = React.useState<{ line: number; column: number } | null>(null);
 
-  // M4.5 增量：模型重命名（双击名称进入编辑模式）
   const [editingModelName, setEditingModelName] = React.useState(false);
   const [editModelName, setEditModelName] = React.useState('');
   const handleModelNameSubmit = React.useCallback(() => {
-    if (editModelName.trim() && editModelName.trim() !== name) {
-      setName(editModelName.trim());
-    }
+    if (editModelName.trim() && editModelName.trim() !== name) setName(editModelName.trim());
     setEditingModelName(false);
   }, [editModelName, name, setName]);
 
-  // 打开版本历史面板时加载数据
   React.useEffect(() => {
     if (showVersionHistory) void loadVersionHistory();
   }, [showVersionHistory, loadVersionHistory]);
 
   const breadcrumbItems = React.useMemo(() => {
-    const items: { label: string; to?: string }[] = [
-      { label: '项目', to: '/projects' },
-    ];
+    const items: { label: string; to?: string }[] = [{ label: '项目', to: '/projects' }];
     if (currentProject) {
-      items.push({
-        label: currentProject.name,
-        to: `/projects/${projectIdFromQuery}`,
-      });
+      items.push({ label: currentProject.name, to: `/projects/${projectIdFromQuery}` });
     }
     items.push({ label: name || 'untitled' });
     return items;
   }, [currentProject, projectIdFromQuery, name]);
 
+  const interactive = currentView?.modelingMode !== 'text';
+
   return (
     <div className="flex h-full flex-col">
-      {/* 面包屑 + Toolbar */}
+      {/* Toolbar */}
       <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2">
         <Breadcrumb items={breadcrumbItems} />
         <div className="mx-1 h-5 w-px bg-gray-200 dark:bg-gray-700" />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate(`/projects/${projectIdFromQuery}`)}
-        >
+        <Button variant="ghost" size="sm" onClick={() => navigate(`/projects/${projectIdFromQuery}`)}>
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
         <div className="mx-2 h-5 w-px bg-gray-200 dark:bg-gray-700" />
         {editingModelName ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleModelNameSubmit();
-            }}
-            className="flex items-center gap-1"
-          >
+          <form onSubmit={(e) => { e.preventDefault(); handleModelNameSubmit(); }} className="flex items-center gap-1">
             <input
               value={editModelName}
               onChange={(e) => setEditModelName(e.target.value)}
-              autoFocus
-              onBlur={handleModelNameSubmit}
-              className="h-8 w-40 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-sm text-gray-900 dark:text-gray-100 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              autoFocus onBlur={handleModelNameSubmit}
+              className="h-8 w-40 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-sm focus:border-brand-500 focus:outline-none"
               data-testid="edit-model-name"
             />
           </form>
         ) : (
           <button
             type="button"
-            onDoubleClick={() => {
-              setEditModelName(name);
-              setEditingModelName(true);
-            }}
-            className="h-8 rounded border border-transparent px-2 text-sm font-medium text-gray-900 dark:text-gray-100 transition hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800"
+            onDoubleClick={() => { setEditModelName(name); setEditingModelName(true); }}
+            className="h-8 rounded border border-transparent px-2 text-sm font-medium hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800"
             title="双击重命名"
             data-testid="model-name-display"
           >
@@ -652,198 +563,78 @@ export const ModelEditor: React.FC = () => {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="描述（可选）"
-          className="h-8 w-48 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-xs text-gray-500 dark:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          className="h-8 w-48 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-xs text-gray-500 focus:border-brand-500 focus:outline-none"
           data-testid="model-description-input"
         />
         {version > 0 && (
-          <span className="text-xs text-gray-400" data-testid="model-version">
-            v{version}
-          </span>
+          <span className="text-xs text-gray-400" data-testid="model-version">v{version}</span>
         )}
         {modelId && <PresenceIndicator modelId={modelId} />}
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={saving || loading}
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> 保存中…
-            </>
-          ) : saved ? (
-            <>
-              <CheckCircle2 className="h-3.5 w-3.5" /> 已保存
-            </>
-          ) : (
-            <>
-              <Save className="h-3.5 w-3.5" /> 保存
-            </>
-          )}
+        <Button size="sm" onClick={handleSave} disabled={saving || loading}>
+          {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> 保存中…</> :
+            saved ? <><CheckCircle2 className="h-3.5 w-3.5" /> 已保存</> :
+              <><Save className="h-3.5 w-3.5" /> 保存</>}
         </Button>
-
         <div className="mx-1 h-5 w-px bg-gray-200" />
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowTemplateChooser(true)}
-          title="从模板新建"
-          data-testid="open-template-chooser"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowTemplateChooser(true)} data-testid="open-template-chooser">
           <Layers className="h-3.5 w-3.5" /> 模板
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowAIGenerate(true)}
-          title="AI 生成模型"
-          data-testid="open-ai-generate"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowAIGenerate(true)} data-testid="open-ai-generate">
           <Sparkles className="h-3.5 w-3.5" /> AI 生成
         </Button>
-
         <div className="mx-1 h-5 w-px bg-gray-200" />
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleExportJson}
-          disabled={loading}
-          title="导出 JSON"
-        >
+        <Button variant="ghost" size="sm" onClick={handleExportJson} disabled={loading}>
           <Download className="h-3.5 w-3.5" /> JSON
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleExportSysML}
-          disabled={loading}
-          title="导出 .sysml 原始文件"
-          data-testid="export-sysml"
-        >
+        <Button variant="ghost" size="sm" onClick={handleExportSysML} disabled={loading} data-testid="export-sysml">
           <Download className="h-3.5 w-3.5" /> .sysml
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDownloadDiagram}
-          disabled={loading}
-          title="导出图表 PNG"
-          data-testid="export-diagram-png"
-        >
+        <Button variant="ghost" size="sm" onClick={handleDownloadDiagram} disabled={loading} data-testid="export-diagram-png">
           <Download className="h-3.5 w-3.5" /> 图表
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDownloadSVG}
-          disabled={loading}
-          title="导出图表 SVG"
-          data-testid="export-diagram-svg"
-        >
+        <Button variant="ghost" size="sm" onClick={handleDownloadSVG} disabled={loading} data-testid="export-diagram-svg">
           <Download className="h-3.5 w-3.5" /> SVG
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleImportJson}
-          title="导入 JSON"
-        >
+        <Button variant="ghost" size="sm" onClick={handleImportJson}>
           <Upload className="h-3.5 w-3.5" /> 导入
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowKeyboardShortcuts(true)}
-          title="键盘快捷键 (?)"
-        >
-          ⌨ 快捷键
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowSyntaxRef(true)}
-          title="语法参考"
-          data-testid="syntax-reference"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowKeyboardShortcuts(true)}>⌨ 快捷键</Button>
+        <Button variant="ghost" size="sm" onClick={() => setShowSyntaxRef(true)} data-testid="syntax-reference">
           📖 语法
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowVersionHistory((v) => !v)}
-          title="版本历史"
-          data-testid="toggle-version-history"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowVersionHistory((v) => !v)} data-testid="toggle-version-history">
           <History className="h-3.5 w-3.5" /> 版本
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowComments((v) => !v)}
-          title="评论"
-          data-testid="toggle-comments"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowComments((v) => !v)} data-testid="toggle-comments">
           <MessageSquare className="h-3.5 w-3.5" /> 评论
         </Button>
-
         <div className="flex-1" />
-
-        <button
-          type="button"
-          onClick={handleCopyContent}
-          className="rounded px-1.5 py-0.5 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
-          title="复制全部内容"
-          data-testid="copy-content"
-        >
+        <button type="button" onClick={handleCopyContent} className="rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-100">
           {copied ? '已复制' : '复制'}
         </button>
-        <span className="text-xs text-gray-400" data-testid="content-stats">
-          {contentStats}
-        </span>
+        <span className="text-xs text-gray-400" data-testid="content-stats">{contentStats}</span>
         {cursorPos && (
-          <span className="text-xs text-gray-400" data-testid="cursor-pos">
-            行 {cursorPos.line} : 列 {cursorPos.column}
-          </span>
+          <span className="text-xs text-gray-400" data-testid="cursor-pos">行 {cursorPos.line} : 列 {cursorPos.column}</span>
         )}
         {lastSavedAt && (
-          <span className="text-xs text-gray-400" data-testid="last-saved">
-            上次保存 {lastSavedAt.toLocaleTimeString()}
-          </span>
+          <span className="text-xs text-gray-400" data-testid="last-saved">上次保存 {lastSavedAt.toLocaleTimeString()}</span>
         )}
         <div className="mx-1 h-5 w-px bg-gray-200" />
-
-        {/* 状态徽章（可点击展开/折叠错误面板） */}
         {loading ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
             <Loader2 className="h-3 w-3 animate-spin" /> 加载中
           </span>
         ) : parseErrorCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => setErrorPanelExpanded((v) => !v)}
-            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 transition hover:bg-red-200"
-          >
-            <AlertCircle className="h-3 w-3" />
-            {parseErrorCount} 解析错误
+          <button onClick={() => setErrorPanelExpanded((v) => !v)} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 hover:bg-red-200">
+            <AlertCircle className="h-3 w-3" /> {parseErrorCount} 解析错误
           </button>
         ) : validationErrorCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => setErrorPanelExpanded((v) => !v)}
-            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 transition hover:bg-red-200"
-          >
-            <AlertCircle className="h-3 w-3" />
-            {validationErrorCount} 语义错误
+          <button onClick={() => setErrorPanelExpanded((v) => !v)} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 hover:bg-red-200">
+            <AlertCircle className="h-3 w-3" /> {validationErrorCount} 语义错误
           </button>
         ) : warningCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => setErrorPanelExpanded((v) => !v)}
-            className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 transition hover:bg-amber-200"
-          >
-            <AlertTriangle className="h-3 w-3" />
-            {warningCount} 警告
+          <button onClick={() => setErrorPanelExpanded((v) => !v)} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-200">
+            <AlertTriangle className="h-3 w-3" /> {warningCount} 警告
           </button>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
@@ -853,59 +644,52 @@ export const ModelEditor: React.FC = () => {
       </div>
 
       {error && (
-        <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          ⚠ {error}
-        </div>
+        <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">⚠ {error}</div>
       )}
 
-      {/* 模型描述（可展开） */}
       {description && (
         <div className="border-b border-gray-100 bg-gray-50 px-4 py-1.5">
-          <button
-            type="button"
-            onClick={() => setShowDescription((v) => !v)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-          >
+          <button onClick={() => setShowDescription((v) => !v)} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
             {showDescription ? '▾' : '▸'} 模型描述
           </button>
           {showDescription && (
-            <p className="mt-1 text-xs text-gray-600" data-testid="model-description">
-              {description}
-            </p>
+            <p className="mt-1 text-xs text-gray-600" data-testid="model-description">{description}</p>
           )}
         </div>
       )}
 
-      {/* M5: 视图模式 Tabs */}
-      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-1">
-        {([
-          { key: 'structure', label: '结构视图', icon: '📦' },
-          { key: 'behavior', label: '行为视图', icon: '⚡' },
-          { key: 'requirements', label: '需求视图', icon: '📋' },
-          { key: 'constraints', label: '参数视图', icon: '📐' },
-        ] as const).map(tab => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setViewMode(tab.key)}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition ${
-              viewMode === tab.key
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-            data-testid={`view-tab-${tab.key}`}
+      {/* 当前视图面包屑 */}
+      {currentView && (
+        <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-1">
+          <span className="inline-block h-2 w-2 rounded-full" style={{ background: currentView.colorTag }} />
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-200" data-testid="current-view-name">
+            {currentView.name}
+          </span>
+          <span className="text-[10px] text-gray-400">·</span>
+          <span className="text-[10px] text-gray-500">
+            {currentView.modelingMode === 'drag' ? '拖拽建模' : '文本建模'}
+          </span>
+          <div className="flex-1" />
+          <span className="text-xs text-gray-400" data-testid="current-view-stats">
+            {filteredNodes.length} 节点 · {filteredEdges.length} 连接
+          </span>
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => setViewPropertiesFor(currentView.id)}
+            data-testid="open-view-properties"
           >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-        <div className="flex-1" />
-        <span className="text-xs text-gray-400 dark:text-gray-500">
-          {filteredNodes.length} 节点 · {filteredEdges.length} 连接
-        </span>
-      </div>
+            视图属性
+          </Button>
+        </div>
+      )}
 
-      {/* 主体：M10 布局 —— Palette | Editor | Canvas(+Sim) | PropertyPanel */}
+      {/* 主体：M11 5 列布局 ─ ViewSidebar | Palette | Otherview | Editor | Canvas(+Sim) | ElementFormPanel */}
       <div className="flex flex-1 overflow-hidden">
+        <ViewSidebar
+          nodeCounts={nodeCounts}
+          onOpenProperties={(id) => setViewPropertiesFor(id)}
+        />
+
         <PalettePanel />
 
         <div className="flex w-3/5 flex-col border-r border-gray-200 dark:border-gray-700">
@@ -916,6 +700,7 @@ export const ModelEditor: React.FC = () => {
               onChange={(v) => setContent(v)}
               onPipelineResult={handlePipeline}
               onCursorChange={setCursorPos}
+              readOnly={interactive === false}
             />
           </div>
           {errorPanelExpanded && (
@@ -929,9 +714,7 @@ export const ModelEditor: React.FC = () => {
         </div>
 
         <div className="relative flex flex-1 flex-col bg-gray-50 dark:bg-gray-950">
-          {/* M10 仿真面板（仅行为视图显示） */}
-          {viewMode === 'behavior' && <SimulationPanel />}
-
+          {currentView?.viewType === 'behavior' && <SimulationPanel />}
           <div className="relative flex-1">
             <DiagramCanvas
               ref={diagramRef}
@@ -945,6 +728,10 @@ export const ModelEditor: React.FC = () => {
               onSelectionChange={setSelectedNode}
               highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
               nodeCount={filteredNodes.length}
+              interactive={interactive}
+              onPaletteDrop={handlePaletteDrop}
+              onPaneDoubleClick={handlePaneDoubleClick}
+              onConnectCreate={handleConnectCreate}
             />
             <div
               data-testid="layout-engine-badge"
@@ -955,39 +742,25 @@ export const ModelEditor: React.FC = () => {
           </div>
         </div>
 
-        <PropertyPanel
+        <ElementFormPanel
           selectedNode={selectedNode}
           onClear={() => setSelectedNode(null)}
+          readOnly={!interactive}
         />
       </div>
 
-      {/* M3: AI 生成 Modal */}
-      <AIGenerateModal
-        open={showAIGenerate}
-        onClose={() => setShowAIGenerate(false)}
-        onInsert={handleInsertAIGenerated}
-        contextContent={content}
+      {/* Modals */}
+      <AIGenerateModal open={showAIGenerate} onClose={() => setShowAIGenerate(false)} onInsert={handleInsertAIGenerated} contextContent={content} />
+      <TemplateChooserModal open={showTemplateChooser} onClose={() => setShowTemplateChooser(false)} onApply={handleApplyTemplate} />
+      <KeyboardShortcutsModal open={showKeyboardShortcuts} onClose={() => setShowKeyboardShortcuts(false)} />
+      <ViewPropertiesDialog
+        viewId={viewPropertiesFor}
+        onClose={() => setViewPropertiesFor(null)}
       />
+      <SyntaxReference open={showSyntaxRef} onClose={() => setShowSyntaxRef(false)} />
 
-      {/* M3: 模板选择器 Modal */}
-      <TemplateChooserModal
-        open={showTemplateChooser}
-        onClose={() => setShowTemplateChooser(false)}
-        onApply={handleApplyTemplate}
-      />
-
-      {/* M4.5: 快捷键帮助 Modal */}
-      <KeyboardShortcutsModal
-        open={showKeyboardShortcuts}
-        onClose={() => setShowKeyboardShortcuts(false)}
-      />
-
-      {/* M4.5: 版本历史面板（底部抽屉） */}
       {showVersionHistory && (
-        <div
-          className="h-64 border-t border-gray-200 bg-white"
-          data-testid="version-history-panel"
-        >
+        <div className="h-64 border-t border-gray-200 bg-white" data-testid="version-history-panel">
           <VersionHistoryPanel
             versions={versionHistory}
             loading={versionHistoryLoading}
@@ -995,34 +768,58 @@ export const ModelEditor: React.FC = () => {
             currentContent={content}
             onRestore={(v) => {
               setContent(v.content);
-              showToast({
-                title: `已恢复 v${v.version} 内容`,
-                description: '请手动保存以应用更改。',
-                variant: 'success',
-              });
+              showToast({ title: `已恢复 v${v.version} 内容`, description: '请手动保存以应用更改。', variant: 'success' });
             }}
           />
         </div>
       )}
 
-      {/* 评论面板（右侧抽屉） */}
       {showComments && modelId && (
-        <div
-          className="absolute right-0 top-0 z-10 h-full w-80 border-l border-gray-200 bg-white shadow-lg"
-          data-testid="comments-panel"
-        >
+        <div className="absolute right-0 top-0 z-10 h-full w-80 border-l border-gray-200 bg-white shadow-lg" data-testid="comments-panel">
           <CommentsPanel modelId={modelId} />
         </div>
       )}
 
-      {/* 引导式教程 */}
       <ModelEditorTutorial />
-
-      {/* 语法参考面板 */}
-      <SyntaxReference
-        open={showSyntaxRef}
-        onClose={() => setShowSyntaxRef(false)}
-      />
     </div>
   );
 };
+
+// ─── 辅助：按视图类型过滤节点 / 边 ─────────────────────────────────────
+
+function filterNodesForView(nodes: Node[], viewType: ViewType): Node[] {
+  if (viewType === 'structure') {
+    return nodes.filter((n) =>
+      n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage' ||
+      n.type === 'sysmlPortDef' || n.type === 'sysmlPort'
+    );
+  }
+  if (viewType === 'behavior') {
+    return nodes.filter((n) => n.type === 'sysmlState' || n.type === 'sysmlAction');
+  }
+  if (viewType === 'requirement') {
+    return nodes.filter((n) => n.type === 'sysmlRequirement');
+  }
+  if (viewType === 'constraint') {
+    return nodes.filter((n) => n.type === 'sysmlConstraint');
+  }
+  return nodes;
+}
+
+function filterEdgesForView(edges: import('@xyflow/react').Edge[], viewType: ViewType): import('@xyflow/react').Edge[] {
+  if (viewType === 'structure') {
+    return edges.filter((e) => !e.id.startsWith('edge:') || e.style?.stroke === '#1890ff');
+  }
+  if (viewType === 'behavior') {
+    return edges.filter((e) => e.style?.stroke === '#722ed1' || e.style?.stroke === '#13c2c2');
+  }
+  return [];
+}
+
+function defaultKindForViewType(viewType: ViewType): PaletteKind | null {
+  if (viewType === 'structure') return 'partDef';
+  if (viewType === 'behavior') return 'state';
+  if (viewType === 'requirement') return 'requirement';
+  if (viewType === 'constraint') return 'constraint';
+  return null;
+}
