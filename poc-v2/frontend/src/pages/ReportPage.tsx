@@ -9,9 +9,11 @@ import { FileText, Download, Loader2, Copy } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useModelStore } from '../stores/modelStore';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /reports 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 export const ReportPage: React.FC = () => {
   const { showToast } = useToast();
@@ -31,11 +33,11 @@ export const ReportPage: React.FC = () => {
 
     setGenerating(true);
     try {
-      const { data } = await api.post<{ data: { title: string; content: string; format: string } }>(
+      const { data } = await api.post<{ title: string; content: string; format: string }>(
         '/reports/generate',
         { projectId, modelId, format, title: `${modelName} - 设计文档` }
       );
-      setReport(data.data);
+      setReport(data);
       showToast({ title: '文档已生成', variant: 'success' });
     } catch (e: any) {
       showToast({ title: '生成失败', description: e.message, variant: 'error' });

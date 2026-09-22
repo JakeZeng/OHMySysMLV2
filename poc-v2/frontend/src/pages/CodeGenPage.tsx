@@ -9,9 +9,11 @@ import { Code, Download, Loader2, Copy, FileCode } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useModelStore } from '../stores/modelStore';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /codegen 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface CodeGenFile {
   name: string;
@@ -36,11 +38,11 @@ export const CodeGenPage: React.FC = () => {
 
     setGenerating(true);
     try {
-      const { data } = await api.post<{ data: { language: string; files: CodeGenFile[] } }>(
+      const { data } = await api.post<{ language: string; files: CodeGenFile[] }>(
         '/codegen/generate',
         { modelId, language }
       );
-      setFiles(data.data.files);
+      setFiles(data.files);
       setActiveFile(0);
       showToast({ title: '代码已生成', variant: 'success' });
     } catch (e: any) {

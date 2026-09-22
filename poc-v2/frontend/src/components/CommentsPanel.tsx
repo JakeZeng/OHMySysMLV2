@@ -8,9 +8,11 @@ import * as React from 'react';
 import { MessageSquare, Send, Trash2, Check, Loader2 } from 'lucide-react';
 import { useToast } from './ui/Toast';
 import { relativeTime } from '../lib/relativeTime';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /models/:id/comments 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface Comment {
   id: string;
@@ -41,8 +43,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({ modelId, onComment
   // 加载评论
   const loadComments = React.useCallback(async () => {
     try {
-      const { data } = await api.get<{ data: Comment[] }>(`/models/${modelId}/comments`);
-      setComments(data.data ?? []);
+      const { data } = await api.get<Comment[]>(`/models/${modelId}/comments`);
+      setComments(data ?? []);
     } catch {
       // silent
     } finally {

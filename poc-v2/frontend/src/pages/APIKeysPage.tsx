@@ -8,9 +8,11 @@ import * as React from 'react';
 import { Plus, Trash2, Copy, Loader2, Key, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /api-keys 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface APIKeyRecord {
   id: string;
@@ -37,8 +39,8 @@ export const APIKeysPage: React.FC = () => {
   // 加载 API Keys
   const loadKeys = React.useCallback(async () => {
     try {
-      const { data } = await api.get<{ data: APIKeyRecord[] }>('/api-keys');
-      setKeys(data.data ?? []);
+      const { data } = await api.get<APIKeyRecord[]>('/api-keys');
+      setKeys(data ?? []);
     } catch {
       // silent
     } finally {
@@ -55,11 +57,11 @@ export const APIKeysPage: React.FC = () => {
     if (!createName) return;
     setCreating(true);
     try {
-      const { data } = await api.post<{ data: APIKeyRecord }>('/api-keys', {
+      const { data } = await api.post<APIKeyRecord>('/api-keys', {
         name: createName,
         scopes: createScopes,
       });
-      setNewKey(data.data.key ?? null);
+      setNewKey(data.key ?? null);
       setShowKey(true);
       showToast({ title: 'API Key 已创建', variant: 'success' });
       setShowCreate(false);

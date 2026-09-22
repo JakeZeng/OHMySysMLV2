@@ -9,9 +9,11 @@ import { Plus, Trash2, Send, Loader2, Webhook, ExternalLink } from 'lucide-react
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useI18n } from '../i18n/useI18n';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /webhooks 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface WebhookSubscription {
   id: string;
@@ -45,8 +47,8 @@ export const WebhookPage: React.FC = () => {
   // 加载 webhooks
   const loadWebhooks = React.useCallback(async () => {
     try {
-      const { data } = await api.get<{ data: WebhookSubscription[] }>('/webhooks');
-      setWebhooks(data.data ?? []);
+      const { data } = await api.get<WebhookSubscription[]>('/webhooks');
+      setWebhooks(data ?? []);
     } catch {
       // silent
     } finally {

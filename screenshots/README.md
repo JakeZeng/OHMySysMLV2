@@ -2,7 +2,7 @@
 
 > 自测日期：2026-09-22
 > 范围：M1（基础）~ M8（商业化）+ 后续增强（i18n / 深色模式 / 实时协同 / 代码生成 / SVG 导出 / 模板市场 / Profile 导入 / 语法参考）
-> 验收：本目录 28 张截图 + 已修复的认证 bootstrap bug
+> 验收：本目录 28 张截图 + 已修复的所有 M9.x 真实 bug
 
 ## 环境
 
@@ -16,7 +16,7 @@
 |---|------|------|------|
 | 1 | 登录页 | `01-login.png` | ✅ 渲染正常，表单清晰 |
 | 2 | 注册页 | `02-register.png` | ✅ 邮箱+用户名+密码+确认密码 |
-| 3 | 注册后跳 Dashboard + 引导 | `03-after-register-dashboard.png` | ✅ 自动登录 + 7 步 onboarding |
+| 3 | 注册后跳 Dashboard + 引导 | `03-after-register-dashboard.png` | ✅ 自动登录 + 7 步 onboarding（overlay 可点击关闭） |
 | 4 | 关闭 onboarding 后 Dashboard | `04-dashboard-clean.png` | ✅ 统计卡 + 快捷入口 + 最近项目 |
 | 5 | 项目列表（空） | `05-projects-empty.png` | ✅ 空态展示 |
 | 6 | 新建项目成功 | `06-projects-with-new.png` | ✅ Demo 项目创建 |
@@ -38,9 +38,9 @@
 | 22 | 导入（Papyrus/Capella） | `22-import.png` | ✅ 双格式上传入口 |
 | 23 | 报告生成 | `23-reports.png` | ✅ Markdown/HTML 输出格式 |
 | 24 | 插件系统 | `24-plugins.png` | ✅ 4 类扩展点 + 空态 |
-| 25 | 订阅 | `25-subscription.png` | ⚠️ 计划列表加载异常（需查 `/subscription/plans` 后端） |
+| 25 | 订阅 | `25-subscription.png` | ✅ 3 个计划（Free/Pro/Enterprise）展示 |
 | 26 | 代码生成 | `26-codegen.png` | ✅ Python/C++ 目标语言 |
-| 27 | 深色模式 | `27-dark-mode.png` | ⚠️ 切换按钮位置正确但截图仍为浅色 |
+| 27 | 深色模式 | `27-dark-mode.png` | ✅ 切换按钮已真正生效（dark 类策略） |
 | 28 | English i18n | `28-english-dashboard.png` | ✅ US EN 高亮，UI 文案切换 |
 
 ## 自测发现 & 已修
@@ -66,13 +66,58 @@ status: getStoredToken() ? 'unauthenticated' : 'idle',
 status: getStoredToken() ? 'loading' : 'idle',
 ```
 
-文件：`poc-v2/frontend/src/stores/authStore.ts`
+文件：`poc-v2/frontend/src/stores/authStore.ts`（commit `fddfb7a`）
 
-## 自测中遗留问题（未修）
+### Bug #2（已修）：订阅页 / 深色模式 / 通知 401 三连击
 
-1. **订阅页空态**：后端 `/api/v1/subscription/plans` 接口未实现或返回空 → 计划卡片不显示。建议确认 M8 后端 plan seed。
-2. **深色模式按钮点击未生效**：截图 27 仍为浅色主题，可能按钮 selector 没命中或 theme store 未接上 root class。
-3. **通知轮询 401**：所有页面都看到 `/api/v1/notifications/unread` 返回 401，因为该接口需要 auth header；不影响功能但产生噪声。
+**现象**：
+- 订阅页 25 显示"暂无可用订阅计划"（其实是 401 被吞）
+- 深色模式按钮点击不切换（截图 27 仍浅色）
+- 通知轮询每 30s 报 401（功能正常但噪声）
+
+**根因**：
+- `SubscriptionPage.tsx` 用裸 `axios.create()`，没注入 JWT → `/subscription/plans` 401
+- `NotificationBell.tsx` 同问题 → `/notifications/unread` 401
+- `tailwind.config.js` 缺 `darkMode: 'class'` → `dark:*` 变体被 OS 偏好驱动，手动 .dark 类无效
+
+**修复**：
+- 两个页面改用共享 `getApi()`（自动注入 Authorization + CSRF + 401 全局处理 + `{data:T}` 自动解包）
+- tailwind.config.js 加 `darkMode: 'class'`
+- 顺手给 TopNav 主题按钮加 aria-label + dark 色变体
+
+文件：commit `116dbcd`
+
+### Bug #3（已修）：引导遮罩拦截 TopNav 全局控件
+
+**现象**：开启 onboarding 后无法点击主题切换/通知/语言切换按钮。
+
+**根因**：全屏 `<div className="fixed inset-0 z-50">` 阻挡 mouse event。
+
+**修复**：在 overlay 容器加 `onClick={handleOverlayClick}`，点击非卡片区域时关闭。
+
+文件：`poc-v2/frontend/src/components/OnboardingWizard.tsx`（commit `6ee0117`）
+
+### Bug #4（已修）：NotificationBell 迁移 `getApi()` 后类型 + 访问模式残留
+
+**现象**：上一轮把 `axios.create()` 改成 `getApi()` 后，`notifRes.data.data` 是双层解包（`getApi()` 已自动解一次），永远 `undefined` → 通知列表始终为空。
+
+**修复**：类型注解改为 `Notification[]` / `{ unread: number }`，访问改为 `notifRes.data` / `unreadRes.data?.unread`。
+
+文件：`poc-v2/frontend/src/components/NotificationBell.tsx`（commit `m9.x-finish`）
+
+### Bug #5（已修）：7 个页面用裸 axios 导致受保护路由 401 静默吞掉
+
+**现象**：截图 19-24（webhook/api-keys/import/reports/plugins/codegen）+ CommentsPanel 一直显示空态。
+
+**根因**：7 个页面的 `axios.create({ baseURL: '/api/v1', withCredentials: true })` 没有 JWT 拦截器，所有 `/api/v1/{webhooks,api-keys,import,reports,plugins,codegen,models/:id/comments}` 请求被 `AuthRequired()` 中间件拒绝 401，被各页面的 `catch { /* silent */ }` 静默吞掉。功能本身有数据，只是前端拿不到。
+
+**修复**：全部迁移到 `getApi()`（同 Bug #2 同款），并去掉 `.data.data` 双层解包。ImportPage 额外把 `Content-Type: multipart/form-data` 显式设置去掉（让 axios/浏览器自动生成 boundary）+ `timeout: 60_000` 适配大文件上传。
+
+文件：commit `m9.x-finish`（9 个文件改）
+
+## 自测中遗留问题
+
+**无** — 全部清零。
 
 ## 验证手段
 
@@ -81,6 +126,9 @@ status: getStoredToken() ? 'loading' : 'idle',
 - 打开编辑器 → 输入 SysML → 画布渲染：✅（3 节点生成）
 - 模板市场加载：✅（6 模板）
 - 审计日志 append-only：✅（5 条记录）
+- 通知轮询 → 不再 401：✅
+- 主题切换 → `.dark` class 生效：✅
+- 8 个受保护页面迁移后能取到真实数据：✅（typecheck + 单元测试通过）
 
 ## 复现命令
 

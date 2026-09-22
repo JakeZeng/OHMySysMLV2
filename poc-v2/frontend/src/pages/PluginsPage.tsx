@@ -8,9 +8,11 @@ import * as React from 'react';
 import { Plus, Trash2, Loader2, Puzzle, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /plugins 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface Plugin {
   id: string;
@@ -45,8 +47,8 @@ export const PluginsPage: React.FC = () => {
   // 加载插件
   const loadPlugins = React.useCallback(async () => {
     try {
-      const { data } = await api.get<{ data: Plugin[] }>('/plugins');
-      setPlugins(data.data ?? []);
+      const { data } = await api.get<Plugin[]>('/plugins');
+      setPlugins(data ?? []);
     } catch {
       // silent
     } finally {

@@ -5,12 +5,11 @@
  * GET /api/v1/templates/:id              获取单个（含 Content）
  */
 
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端（行为不变：/templates 公开端点，
+// 拦截器无 JWT 时不发 Authorization，对响应也无影响）。
+import { getApi } from './api';
 
-const api = axios.create({
-  baseURL: '/api/v1',
-  withCredentials: true,
-});
+const api = getApi();
 
 export type TemplateIndustry = 'automotive' | 'aerospace' | 'software';
 

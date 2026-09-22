@@ -9,9 +9,11 @@ import { Upload, FileUp, Loader2, CheckCircle2, AlertCircle } from 'lucide-react
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+// M9.x-finish：迁移到共享 getApi() 客户端，自动注入 Authorization + CSRF，
+// 否则 /import 受 AuthRequired 保护会 401 被静默吞掉。
+import { getApi } from '../services/api';
 
-const api = axios.create({ baseURL: '/api/v1', withCredentials: true });
+const api = getApi();
 
 interface ImportResult {
   model?: { id: string; name: string };
@@ -43,12 +45,14 @@ export const ImportPage: React.FC = () => {
     formData.append('projectId', projectId);
 
     try {
-      const { data } = await api.post<{ data: ImportResult }>(
+      // 不显式设置 Content-Type，让 axios/浏览器自动生成 multipart/form-data 边界
+      // （手动设置但不指定 boundary 会破坏上传）。timeout 提高到 60s 适配大文件。
+      const { data } = await api.post<ImportResult>(
         `/import/${format}`,
         formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        { timeout: 60_000 }
       );
-      setResult(data.data);
+      setResult(data);
       showToast({ title: '导入成功', variant: 'success' });
     } catch (e: any) {
       const msg = e.response?.data?.error || e.message || '导入失败';

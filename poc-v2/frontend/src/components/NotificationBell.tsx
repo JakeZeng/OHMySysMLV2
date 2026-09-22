@@ -43,12 +43,15 @@ export const NotificationBell: React.FC = () => {
   // 加载通知
   const loadNotifications = React.useCallback(async () => {
     try {
+      // M9.x-finish 修复：getApi() 拦截器已自动解包 { data: T } → T，
+      // 所以 res.data 已是 Notification[] / { unread }；之前用 .data.data
+      // 是双层解包，结果永远 undefined → 铃铛静默失效。
       const [notifRes, unreadRes] = await Promise.all([
-        api.get<{ data: Notification[] }>('/notifications'),
-        api.get<{ data: { unread: number } }>('/notifications/unread'),
+        api.get<Notification[]>('/notifications'),
+        api.get<{ unread: number }>('/notifications/unread'),
       ]);
-      setNotifications(notifRes.data.data ?? []);
-      setUnread(unreadRes.data.data?.unread ?? 0);
+      setNotifications(notifRes.data ?? []);
+      setUnread(unreadRes.data?.unread ?? 0);
     } catch {
       // silent
     }
