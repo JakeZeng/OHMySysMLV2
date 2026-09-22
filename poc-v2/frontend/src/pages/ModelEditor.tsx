@@ -42,6 +42,13 @@ import { CommentsPanel } from '../components/CommentsPanel';
 import { PresenceIndicator } from '../components/PresenceIndicator';
 import { ModelEditorTutorial } from '../components/tutorials/ModelEditorTutorial';
 import { SyntaxReference } from '../components/SyntaxReference';
+// M10 绘图建模 MVP：左右侧栏
+import { PalettePanel } from '../components/diagram/PalettePanel';
+import { PropertyPanel } from '../components/diagram/PropertyPanel';
+// M10 行为仿真 MVP
+import { SimulationPanel } from '../components/sim/SimulationPanel';
+import { useSimulationStore, selectCurrentStateId } from '../stores/simulationStore';
+import type { Node } from '@xyflow/react';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -79,14 +86,43 @@ export const ModelEditor: React.FC = () => {
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const [errorPanelExpanded, setErrorPanelExpanded] = React.useState(true);
 
+  // M5: 视图模式切换（提前到 M10 effect 之前）
+  const [viewMode, setViewMode] = React.useState<'structure' | 'behavior' | 'requirements' | 'constraints'>('structure');
+
+  // M10: 画布选中节点（用于 PropertyPanel）
+  const [selectedNode, setSelectedNode] = React.useState<Node | null>(null);
+
+  // M10: 仿真自动加载（当 pipeline 中存在状态机时）
+  const stateMachines = useModelStore((s) => s.pipeline.model.stateMachines);
+  const simMachine = useSimulationStore((s) => s.machine);
+  const simLoad = useSimulationStore((s) => s.load);
+  const simUnload = useSimulationStore((s) => s.unload);
+  const simCurrentStateId = useSimulationStore(selectCurrentStateId);
+  React.useEffect(() => {
+    // 仅在行为视图下装载仿真
+    if (viewMode !== 'behavior') {
+      if (simMachine) simUnload();
+      return;
+    }
+    const sm = stateMachines[0];
+    if (!sm) {
+      if (simMachine) simUnload();
+      return;
+    }
+    // 同一台机器不重复装载
+    if (simMachine && simMachine.id === sm.id) return;
+    simLoad(sm);
+    return () => {
+      simUnload();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, stateMachines.length, stateMachines[0]?.id]);
+
   // M3: AI 生成 + 模板选择器
   const [showAIGenerate, setShowAIGenerate] = React.useState(false);
   const [showTemplateChooser, setShowTemplateChooser] = React.useState(false);
   // M4.5 增量：快捷键帮助
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = React.useState(false);
-
-  // M5: 视图模式切换
-  const [viewMode, setViewMode] = React.useState<'structure' | 'behavior' | 'requirements' | 'constraints'>('structure');
 
   // 评论面板
   const [showComments, setShowComments] = React.useState(false);
@@ -117,10 +153,14 @@ export const ModelEditor: React.FC = () => {
     (window as unknown as { __sysmlDemoDelete?: (id: string) => void }).__sysmlDemoDelete = (id: string) => {
       deleteNode(id);
     };
+    (window as unknown as { __sysmlDemoSetContent?: (c: string) => void }).__sysmlDemoSetContent = (c: string) => {
+      setContent(c);
+    };
     return () => {
       delete (window as unknown as { __sysmlDemoDelete?: unknown }).__sysmlDemoDelete;
+      delete (window as unknown as { __sysmlDemoSetContent?: unknown }).__sysmlDemoSetContent;
     };
-  }, [deleteNode]);
+  }, [deleteNode, setContent]);
 
   // 加载模型（或新建空白）
   React.useEffect(() => {
@@ -864,9 +904,11 @@ export const ModelEditor: React.FC = () => {
         </span>
       </div>
 
-      {/* 主体：左编辑器 / 右画布 */}
+      {/* 主体：M10 布局 —— Palette | Editor | Canvas(+Sim) | PropertyPanel */}
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex w-3/5 flex-col border-r border-gray-200">
+        <PalettePanel />
+
+        <div className="flex w-3/5 flex-col border-r border-gray-200 dark:border-gray-700">
           <div className="flex-1 overflow-hidden">
             <SysMLEditor
               ref={sysmlEditorRef}
@@ -885,25 +927,38 @@ export const ModelEditor: React.FC = () => {
             />
           )}
         </div>
-        <div className="relative w-2/5 bg-gray-50">
-          <DiagramCanvas
-            ref={diagramRef}
-            nodes={filteredNodes}
-            edges={filteredEdges}
-            onNodeRename={renameNode}
-            onNodeDelete={deleteNode}
-            onNodesDelete={(ids) => ids.forEach(deleteNode)}
-            onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
-            onNodePositionChange={setNodePosition}
-            nodeCount={filteredNodes.length}
-          />
-          <div
-            data-testid="layout-engine-badge"
-            className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[11px] text-white"
-          >
-            布局: {layoutEngine ?? 'grid'} · {perfMs.toFixed(0)}ms
+
+        <div className="relative flex flex-1 flex-col bg-gray-50 dark:bg-gray-950">
+          {/* M10 仿真面板（仅行为视图显示） */}
+          {viewMode === 'behavior' && <SimulationPanel />}
+
+          <div className="relative flex-1">
+            <DiagramCanvas
+              ref={diagramRef}
+              nodes={filteredNodes}
+              edges={filteredEdges}
+              onNodeRename={renameNode}
+              onNodeDelete={deleteNode}
+              onNodesDelete={(ids) => ids.forEach(deleteNode)}
+              onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
+              onNodePositionChange={setNodePosition}
+              onSelectionChange={setSelectedNode}
+              highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
+              nodeCount={filteredNodes.length}
+            />
+            <div
+              data-testid="layout-engine-badge"
+              className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[11px] text-white"
+            >
+              布局: {layoutEngine ?? 'grid'} · {perfMs.toFixed(0)}ms
+            </div>
           </div>
         </div>
+
+        <PropertyPanel
+          selectedNode={selectedNode}
+          onClear={() => setSelectedNode(null)}
+        />
       </div>
 
       {/* M3: AI 生成 Modal */}

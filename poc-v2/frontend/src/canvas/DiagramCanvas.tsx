@@ -323,6 +323,10 @@ export interface DiagramCanvasProps {
   onNodesDelete?: (nodeIds: string[]) => void;
   onEdgesDelete?: (edgeIds: string[]) => void;
   onNodePositionChange?: (nodeId: string, x: number, y: number) => void;
+  /** M10: 当前选中节点变化（用于右侧 PropertyPanel） */
+  onSelectionChange?: (node: Node | null) => void;
+  /** M10: 仿真态高亮节点 ID 集合（额外用边框 + 脉动） */
+  highlightNodeIds?: string[];
   /** 节点总数（供性能徽章显示） */
   nodeCount?: number;
 }
@@ -347,6 +351,8 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   onNodesDelete,
   onEdgesDelete,
   onNodePositionChange,
+  onSelectionChange,
+  highlightNodeIds,
   nodeCount,
 }, ref) => {
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
@@ -409,15 +415,20 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     };
   }, []);
 
-  const stableNodes = useMemo(
-    () =>
-      nodes.map((n) => ({
+  const stableNodes = useMemo(() => {
+    const hlSet = new Set(highlightNodeIds ?? []);
+    return nodes.map((n) => {
+      const idStr = String(n.id);
+      const cls: string[] = [];
+      if (idStr === highlightedNodeId) cls.push('rf-node-highlight');
+      if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
+      return {
         ...n,
-        id: String(n.id),
-        className: String(n.id) === highlightedNodeId ? 'rf-node-highlight' : undefined,
-      })),
-    [nodes, highlightedNodeId]
-  );
+        id: idStr,
+        className: cls.length > 0 ? cls.join(' ') : undefined,
+      };
+    });
+  }, [nodes, highlightedNodeId, highlightNodeIds]);
   const stableEdges = useMemo(
     () => edges.map((e) => ({ ...e, id: String(e.id) })),
     [edges]
@@ -496,6 +507,15 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     rfInstanceRef.current = instance as ReactFlowInstance;
   }, []);
 
+  // M10: 选中变化 → 通知 PropertyPanel
+  const handleSelectionChange = useCallback(
+    ({ nodes: selNodes }: { nodes: Node[]; edges: Edge[] }) => {
+      if (!onSelectionChange) return;
+      onSelectionChange(selNodes[0] ?? null);
+    },
+    [onSelectionChange]
+  );
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <ReactFlow
@@ -509,6 +529,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         onNodeDoubleClick={handleNodeDoubleClick}
         onConnect={handleConnect}
         onInit={handleInit}
+        onSelectionChange={handleSelectionChange}
         onlyRenderVisibleElements={true}  // M2 性能：视口内才渲染
         nodesDraggable={true}
         nodesConnectable={false}

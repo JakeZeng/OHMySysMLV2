@@ -240,6 +240,12 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
   const partNodes = nodes.filter((n) => !n.parentId && (n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage'));
   const portDefNodes = nodes.filter((n) => n.type === 'sysmlPortDef');
   const childPortNodes = nodes.filter((n) => n.parentId);
+  // M10: 行为/需求/约束节点（M5 引入的状态/活动/需求/约束块）
+  const behaviorNodes = nodes.filter(
+    (n) => n.type === 'sysmlState' || n.type === 'sysmlAction'
+  );
+  const requirementNodes = nodes.filter((n) => n.type === 'sysmlRequirement');
+  const constraintNodes = nodes.filter((n) => n.type === 'sysmlConstraint');
 
   let cursorX = ORIGIN_X;
   let cursorY = ORIGIN_Y;
@@ -277,6 +283,63 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
   for (const n of portDefNodes) {
     positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
     cursorX += PART_WIDTH + COL_GAP;
+  }
+
+  // M10: 行为节点（状态/活动）放右侧第二列
+  if (behaviorNodes.length > 0) {
+    if (rowHeight > 0) {
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+    cursorX = ORIGIN_X;
+  }
+  for (const n of behaviorNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+    if (cursorX > MAX_COL_X) {
+      cursorX = ORIGIN_X;
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+  }
+
+  // M10: 需求节点
+  if (requirementNodes.length > 0) {
+    if (rowHeight > 0) {
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+    cursorX = ORIGIN_X;
+  }
+  for (const n of requirementNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+    if (cursorX > MAX_COL_X) {
+      cursorX = ORIGIN_X;
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+  }
+
+  // M10: 约束节点
+  if (constraintNodes.length > 0) {
+    if (rowHeight > 0) {
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+    cursorX = ORIGIN_X;
+  }
+  for (const n of constraintNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+    if (cursorX > MAX_COL_X) {
+      cursorX = ORIGIN_X;
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
   }
 
   const maxX = positioned.filter((n) => !n.parentId).reduce(

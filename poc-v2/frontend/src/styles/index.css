@@ -86,3 +86,15 @@
   outline: 2px solid #1890ff;
   outline-offset: 2px;
 }
+
+/* M10: 仿真当前状态节点持续脉动 */
+@keyframes node-sim-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(114, 46, 209, 0.7); }
+  50%  { box-shadow: 0 0 0 8px rgba(114, 46, 209, 0.15); }
+  100% { box-shadow: 0 0 0 0 rgba(114, 46, 209, 0); }
+}
+.rf-node-sim-active {
+  animation: node-sim-pulse 1.4s ease-in-out infinite;
+  outline: 2px solid #722ed1;
+  outline-offset: 2px;
+}

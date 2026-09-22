@@ -42,6 +42,10 @@ export function parse(source: string): ParseResult {
 
   try {
     const result = rawParse(source) as SysMLModel;
+    // M10: 扁平化 — 将包内的 stateMachine / activity / requirement / constraintBlock 提升到顶层
+    // 原因：状态机可视化、行为仿真、需求视图等模块都依赖 model.{stateMachines,activities,...}[0]。
+    // peggy 解析时这些元素只在包内出现时不会被加入顶层数组，所以这里递归 pull-up。
+    flattenNestedMembers(result);
     return {
       ok: errors.length === 0,
       model: result,
@@ -115,3 +119,36 @@ function classifyError(e: any): string {
 
 // 重导出便于测试
 export { locationOf };
+
+// ─── 内部辅助：扁平化包内成员 ─────────────────────────────────────────────
+
+function flattenNestedMembers(model: SysMLModel): void {
+  const collected: typeof model.stateMachines = [];
+  const collectedActs: typeof model.activities = [];
+  const collectedReqs: typeof model.requirements = [];
+  const collectedCbs: typeof model.constraintBlocks = [];
+  const walk = (pkg: { members: any[] }): void => {
+    const remaining: any[] = [];
+    for (const m of pkg.members) {
+      if (m.kind === 'package') {
+        walk(m);
+      } else if (m.kind === 'stateMachine') {
+        collected.push(m);
+      } else if (m.kind === 'activity') {
+        collectedActs.push(m);
+      } else if (m.kind === 'requirement') {
+        collectedReqs.push(m);
+      } else if (m.kind === 'constraintBlock') {
+        collectedCbs.push(m);
+      } else {
+        remaining.push(m);
+      }
+    }
+    pkg.members = remaining;
+  };
+  for (const pkg of model.packages) walk(pkg);
+  model.stateMachines.push(...collected);
+  model.activities.push(...collectedActs);
+  model.requirements.push(...collectedReqs);
+  model.constraintBlocks.push(...collectedCbs);
+}
