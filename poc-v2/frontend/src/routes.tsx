@@ -1,11 +1,15 @@
 /**
  * 路由表 — 使用 React.lazy 懒加载页面组件，减少首屏加载体积。
+ *
+ * M12.4 路由合并：旧 `/models/:modelId` 替换为 `LegacyModelRedirect`
+ * （见 components/layout/LegacyModelRedirect.tsx），自动跳到对应工程页。
  */
 
 import * as React from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
+import { LegacyModelRedirect } from './components/layout/LegacyModelRedirect';
 
 // 关键页面（首屏必需）— 同步加载
 import { Login } from './pages/Login';
@@ -19,9 +23,6 @@ const ProjectList = React.lazy(() =>
 );
 const ProjectDetail = React.lazy(() =>
   import('./pages/ProjectDetail').then((m) => ({ default: m.ProjectDetail }))
-);
-const ModelEditor = React.lazy(() =>
-  import('./pages/ModelEditor').then((m) => ({ default: m.ModelEditor }))
 );
 const MetamodelPage = React.lazy(() =>
   import('./pages/MetamodelPage').then((m) => ({ default: m.MetamodelPage }))
@@ -104,7 +105,8 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'projects', element: <LazyRoute Component={ProjectList} /> },
       { path: 'projects/:projectId', element: <LazyRoute Component={ProjectDetail} /> },
-      { path: 'models/:modelId', element: <LazyRoute Component={ModelEditor} /> },
+      // M12.4：旧 /models/:modelId 跳转到 /projects/:projectId
+      { path: 'models/:modelId', element: <LegacyModelRedirect /> },
       { path: 'metamodel', element: <LazyRoute Component={MetamodelPage} /> },
       { path: 'teams', element: <LazyRoute Component={TeamsPage} /> },
       { path: 'teams/:teamId', element: <LazyRoute Component={TeamDetailPage} /> },

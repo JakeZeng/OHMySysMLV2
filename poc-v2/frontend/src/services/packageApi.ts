@@ -62,4 +62,18 @@ export const packageApi = {
     const api = getApi();
     await api.delete(`/packages/${packageId}`);
   },
+
+  /**
+   * 跨项目模糊搜索包（按 name / description 匹配）。
+   *
+   * M12 替代 M11 `modelApi.search`：搜索结果用于 GlobalSearch，
+   * 命中后跳 `/projects/:pid?package=:id`。
+   */
+  async search(q: string, limit = 20): Promise<Array<PackageSummary & { projectId: string }>> {
+    const api = getApi();
+    const { data } = await api.get<{
+      data: Array<PackageSummary & { projectId: string }>;
+    }>(`/packages/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    return data?.data ?? [];
+  },
 };

@@ -16,6 +16,7 @@ import { getApi } from '../services/api';
 const api = getApi();
 
 interface ImportResult {
+  package?: { id: string; name: string };
   model?: { id: string; name: string };
   source?: string;
   message?: string;
@@ -114,11 +115,18 @@ export const ImportPage: React.FC = () => {
           <div className="flex items-center gap-2 text-sm font-medium text-green-800">
             <CheckCircle2 className="h-4 w-4" /> {result.message}
           </div>
-          {result.model && (
+          {(result.package ?? result.model) && (
             <p className="mt-2 text-sm text-green-700">
-              模型 "{result.model.name}" 已创建
+              包「{(result.package ?? result.model)!.name}」已创建
               <button
-                onClick={() => navigate(`/models/${result.model!.id}?projectId=${projectId}`)}
+                onClick={() => {
+                  const target = result.package ?? result.model;
+                  if (target) {
+                    navigate(`/projects/${projectId}?package=${target.id}`);
+                  } else {
+                    navigate(`/projects/${projectId}`);
+                  }
+                }}
                 className="ml-2 text-green-600 underline hover:text-green-800"
               >
                 打开编辑器 →

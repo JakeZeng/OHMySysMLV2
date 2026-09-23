@@ -170,14 +170,13 @@ export const ProjectList: React.FC = () => {
             description: data.project.description ?? '',
             visibility: data.project.visibility ?? 'private',
           });
-          // 导入每个模型
-          const { modelApi } = await import('../services/modelApi');
+          // 导入每个模型（M12.4：导入到包，包是 M12 一等实体）
+          const { packageApi } = await import('../services/packageApi');
           for (const m of data.models) {
-            await modelApi.create(p.id, {
+            await packageApi.create(p.id, {
               name: m.name,
               description: m.description ?? '',
               content: m.content ?? '',
-              version: 1,
             });
           }
           showToast({

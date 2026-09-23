@@ -1,7 +1,7 @@
 /**
- * 快捷键帮助 Modal（M4.5 增量）。
+ * 快捷键帮助 Modal（M4.5 增量 / M12 重命名）。
  *
- * 显示 ModelEditor 的所有可用键盘快捷键。
+ * 显示工程编辑器（ProjectDetail 三栏）的所有可用键盘快捷键。
  */
 
 import * as React from 'react';
@@ -27,6 +27,11 @@ const SHORTCUTS: Shortcut[] = [
   { keys: 'Ctrl + Shift + L', description: '切换行号显示' },
   { keys: 'Shift + Alt + F', description: '格式化文档' },
   { keys: '?', description: '打开快捷键帮助' },
+  { keys: '↑ ↓ ← →', description: '工程树上下左右导航' },
+  { keys: 'Enter / Space', description: '选中节点' },
+  { keys: 'F2', description: '重命名节点' },
+  { keys: 'Delete', description: '删除节点' },
+  { keys: 'Ctrl + K', description: '打开全局搜索' },
 ];
 
 interface KeyboardShortcutsModalProps {
@@ -43,7 +48,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
       open={open}
       onOpenChange={onClose}
       title="键盘快捷键"
-      description="ModelEditor 可用的快捷键列表。"
+      description="工程编辑器可用的快捷键列表。"
       footer={
         <Button variant="secondary" onClick={onClose}>
           关闭

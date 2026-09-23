@@ -62,4 +62,17 @@ export const viewApi = {
     const api = getApi();
     await api.delete(`/views/${viewId}`);
   },
+
+  /**
+   * 跨项目模糊搜索视图。
+   *
+   * M12 替代 M11 模型搜索：命中后跳 `/projects/:pid?view=:id`。
+   */
+  async search(q: string, limit = 20): Promise<Array<ViewSummary & { projectId: string }>> {
+    const api = getApi();
+    const { data } = await api.get<{
+      data: Array<ViewSummary & { projectId: string }>;
+    }>(`/views/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    return data?.data ?? [];
+  },
 };

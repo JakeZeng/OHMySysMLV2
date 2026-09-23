@@ -1,26 +1,29 @@
 /**
- * 全局搜索组件（M4.5 增量）。
+ * 全局搜索组件（M12 重写）。
  *
- * 在 TopNav 中提供项目 + 模型的跨资源搜索。
+ * 搜索范围：项目 + 包 + 视图（替代 M11 项目+模型）。
+ * 命中后：
+ *   - 项目 → /projects/:pid
+ *   - 包   → /projects/:pid?package=:id
+ *   - 视图 → /projects/:pid?view=:id
+ *
  * 按 Ctrl+K 或点击搜索图标打开。
  */
 
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Loader2, FolderKanban, FileCode2 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { Search, Loader2, FolderKanban, Box, Eye } from 'lucide-react';
 import { projectApi, type Project } from '../services/projectApi';
-import { modelApi, type ModelListItem } from '../services/modelApi';
+import { packageApi } from '../services/packageApi';
+import { viewApi } from '../services/viewApi';
+import type { PackageSummary } from '../types/package';
+import type { ViewSummary } from '../types/view';
 import { relativeTime } from '../lib/relativeTime';
 
-interface SearchResult {
-  type: 'project' | 'model';
-  id: string;
-  name: string;
-  description?: string;
-  projectId?: string;
-  updatedAt: string;
-}
+type SearchResult =
+  | { type: 'project'; id: string; name: string; description?: string; updatedAt: string }
+  | { type: 'package'; id: string; name: string; description?: string; projectId: string; updatedAt: string }
+  | { type: 'view'; id: string; name: string; description?: string; projectId: string; updatedAt: string };
 
 export const GlobalSearch: React.FC = () => {
   const [open, setOpen] = React.useState(false);
@@ -43,12 +46,10 @@ export const GlobalSearch: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, []);
 
-  // 打开时聚焦
   React.useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 50);
   }, [open]);
 
-  // 搜索（debounced 300ms）
   React.useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -58,16 +59,20 @@ export const GlobalSearch: React.FC = () => {
     const id = setTimeout(async () => {
       setLoading(true);
       try {
-        const [projects, models] = await Promise.all([
-          projectApi.list().catch(() => []),
-          modelApi.search(q, 10).catch(() => []),
+        const [projects, packages, views] = await Promise.all([
+          projectApi.list().catch(() => [] as Project[]),
+          packageApi.search(q, 8).catch(() => [] as Array<PackageSummary & { projectId: string }>),
+          viewApi.search(q, 8).catch(() => [] as Array<ViewSummary & { projectId: string }>),
         ]);
-        const projectResults: SearchResult[] = (projects as Project[])
+
+        const ql = q.toLowerCase();
+        const projectResults: SearchResult[] = projects
           .filter(
             (p) =>
-              p.name.toLowerCase().includes(q.toLowerCase()) ||
-              (p.description ?? '').toLowerCase().includes(q.toLowerCase()),
+              p.name.toLowerCase().includes(ql) ||
+              (p.description ?? '').toLowerCase().includes(ql),
           )
+          .slice(0, 5)
           .map((p) => ({
             type: 'project' as const,
             id: p.id,
@@ -75,16 +80,30 @@ export const GlobalSearch: React.FC = () => {
             description: p.description,
             updatedAt: p.updatedAt,
           }));
-        const modelResults: SearchResult[] = (models as ModelListItem[])
-          .map((m) => ({
-            type: 'model' as const,
-            id: m.id,
-            name: m.name,
-            description: m.description,
-            projectId: m.projectId,
-            updatedAt: m.updatedAt,
+
+        const packageResults: SearchResult[] = packages
+          .slice(0, 6)
+          .map((p) => ({
+            type: 'package' as const,
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            projectId: p.projectId,
+            updatedAt: p.updatedAt,
           }));
-        setResults([...modelResults, ...projectResults].slice(0, 10));
+
+        const viewResults: SearchResult[] = views
+          .slice(0, 6)
+          .map((v) => ({
+            type: 'view' as const,
+            id: v.id,
+            name: v.name,
+            description: v.description,
+            projectId: v.projectId,
+            updatedAt: v.updatedAt,
+          }));
+
+        setResults([...packageResults, ...viewResults, ...projectResults].slice(0, 12));
       } catch {
         setResults([]);
       } finally {
@@ -97,8 +116,10 @@ export const GlobalSearch: React.FC = () => {
   const handleSelect = (r: SearchResult) => {
     if (r.type === 'project') {
       navigate(`/projects/${r.id}`);
-    } else if (r.type === 'model' && r.projectId) {
-      navigate(`/models/${r.id}?projectId=${r.projectId}`);
+    } else if (r.type === 'package') {
+      navigate(`/projects/${r.projectId}?package=${r.id}`);
+    } else if (r.type === 'view') {
+      navigate(`/projects/${r.projectId}?view=${r.id}`);
     }
     setOpen(false);
     setQuery('');
@@ -135,13 +156,11 @@ export const GlobalSearch: React.FC = () => {
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索项目或模型…"
+                placeholder="搜索项目、包、视图…"
                 className="flex-1 border-0 bg-transparent py-3 pl-2 text-sm focus:outline-none"
                 data-testid="global-search-input"
               />
-              {loading && (
-                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-              )}
+              {loading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
             </div>
             <div className="max-h-64 overflow-auto">
               {results.length === 0 && query.trim() && !loading ? (
@@ -159,8 +178,10 @@ export const GlobalSearch: React.FC = () => {
                   >
                     {r.type === 'project' ? (
                       <FolderKanban className="h-4 w-4 text-gray-400" />
+                    ) : r.type === 'package' ? (
+                      <Box className="h-4 w-4 text-gray-400" />
                     ) : (
-                      <FileCode2 className="h-4 w-4 text-gray-400" />
+                      <Eye className="h-4 w-4 text-gray-400" />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-gray-900">

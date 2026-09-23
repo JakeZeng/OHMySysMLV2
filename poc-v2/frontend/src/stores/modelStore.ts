@@ -14,7 +14,6 @@
 import { create } from 'zustand';
 import { renameNode as editRename, deleteNode as editDelete, deleteConnection as editDeleteConn } from '@transform/textEdit';
 import { modelToFlowLayouted } from '@transform/modelToFlow';
-import { modelApi, type ModelRecord } from '../services/modelApi';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
 import { useLayoutStore } from './layoutStore';
@@ -28,7 +27,7 @@ import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 
 /** 当前内容会话对应的实体类型 */
-export type ContentEntityKind = 'model' | 'package' | 'view';
+export type ContentEntityKind = 'package' | 'view';
 
 interface ModelState {
   /** 当前编辑的实体类型；null = 无会话 */
@@ -64,9 +63,7 @@ interface ModelState {
   aiError: string | null;
   aiAbortController: AbortController | null;
 
-  /** M4.5 增量：最近打开的模型 ID 列表 */
-  recentModelIds: string[];
-  addRecentModel: (id: string) => void;
+  // ── M12.4 删除：recentModelIds（M12 无 Model 概念） ──
 
   setName: (n: string) => void;
   setDescription: (d: string) => void;
@@ -85,9 +82,7 @@ interface ModelState {
   /** 保存当前会话的 content（按 entityKind 分派） */
   saveContent: () => Promise<unknown>;
 
-  // ── 遗留（M12.4 删除） ───────────────────────────────
-  loadModel: (projectId: string, modelId: string) => Promise<void>;
-  saveModel: () => Promise<void>;
+  // ── M12.4 删除：loadModel/saveModel（Model 实体已不存在） ──
 
   // M2 双向同步
   renameNode: (nodeId: string, newName: string) => void;
@@ -139,25 +134,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
   aiIssues: [],
   aiError: null,
   aiAbortController: null,
-
-  recentModelIds: (() => {
-    try {
-      return JSON.parse(localStorage.getItem('recent_models') ?? '[]');
-    } catch {
-      return [];
-    }
-  })() as string[],
-
-  addRecentModel(id) {
-    const prev = get().recentModelIds.filter((x) => x !== id);
-    const next = [id, ...prev].slice(0, 10);
-    try {
-      localStorage.setItem('recent_models', JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
-    set({ recentModelIds: next });
-  },
 
   setName(n) {
     set({ name: n, saved: false, dirty: true });
@@ -309,12 +285,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
           version,
         });
       } else {
-        rec = await modelApi.update(get().projectId!, entityId, {
-          name,
-          description,
-          content,
-          version,
-        });
+        // M12.4：entityKind 已是 'package' | 'view'，不应进入此分支。
+        throw new Error('未知实体类型');
       }
       set({
         version: rec.version,
@@ -348,73 +320,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
   },
 
-  // ─── 遗留：模型会话（M12.4 删除） ──────────────────────────────────
-
-  async loadModel(projectId, modelId) {
-    set({ loading: true, error: null, projectId, scopeId: modelId });
-    try {
-      useLayoutStore.getState().setProject(projectId);
-      const rec: ModelRecord = await modelApi.get(projectId, modelId);
-      set({
-        entityKind: 'model',
-        entityId: rec.id,
-        modelId: rec.id,
-        name: rec.name,
-        description: rec.description ?? '',
-        content: rec.content,
-        version: rec.version,
-        loading: false,
-        saved: false,
-        dirty: false,
-      });
-      get().addRecentModel(rec.id);
-      get().runPipeline(rec.content);
-    } catch (e) {
-      set({ loading: false, error: (e as Error).message });
-      throw e;
-    }
-  },
-
-  async saveModel() {
-    if (get().saving) return;
-    const { projectId, entityId, name, description, content, version } = get();
-    if (!projectId) {
-      set({ error: '缺少 projectId，无法保存' });
-      return;
-    }
-    set({ saving: true, error: null, saved: false });
-    try {
-      const rec: ModelRecord = entityId
-        ? await modelApi.update(projectId, entityId, { name, description, content, version })
-        : await modelApi.create(projectId, { name, content, version: 1 });
-      set({
-        entityId: rec.id,
-        modelId: rec.id,
-        scopeId: rec.id,
-        entityKind: 'model',
-        version: rec.version,
-        saving: false,
-        saved: true,
-        dirty: false,
-      });
-      setTimeout(() => {
-        set((s) => (s.saved ? { saved: false } : s));
-      }, 2000);
-    } catch (e) {
-      const err = e as { code?: string; message?: string } & Error;
-      if (err.code === 'E_VERSION_CONFLICT' && entityId) {
-        try {
-          await get().loadModel(projectId, entityId);
-        } catch {
-          /* ignore reload error */
-        }
-        set({ saving: false, error: '版本冲突，已刷新至最新版本，请重新保存' });
-      } else {
-        set({ saving: false, error: err.message ?? '保存失败' });
-      }
-      throw e;
-    }
-  },
+  // ─── M12.4 删除：loadModel/saveModel（Model 实体不存在） ────────────────
 
   reset() {
     set({
