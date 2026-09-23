@@ -131,6 +131,13 @@ func main() {
 			// M4.5 增量：模型版本历史（project-scoped）
 			projects.GET("/:id/models/:modelId/versions", h.ListModelVersions)
 
+			// M12 增量：Packages（project-scoped）
+			projects.GET("/:id/packages", h.ListPackagesByProject)
+			projects.POST("/:id/packages", h.CreatePackageInProject)
+			// M12 增量：Views（project-scoped）
+			projects.GET("/:id/views", h.ListViewsByProject)
+			projects.POST("/:id/views", h.CreateViewInProject)
+
 			// M4 W3：项目级分享（owner 才能管）
 			projects.POST("/:id/shares", shareH.AddShare)
 			projects.GET("/:id/shares", shareH.ListShares)
@@ -155,6 +162,24 @@ func main() {
 			models.DELETE("/:id", h.DeleteModel)
 			// M4.5 增量：模型版本历史
 			models.GET("/:id/versions", h.ListModelVersions)
+		}
+
+		// M12 增量：Packages — 一等 SysML v2 实体（嵌套 + 顶层）
+		packages := v1.Group("/packages")
+		packages.Use(middleware.AuthRequired())
+		{
+			packages.GET("/:id", h.GetPackage)
+			packages.PUT("/:id", h.UpdatePackage)
+			packages.DELETE("/:id", h.DeletePackage)
+		}
+
+		// M12 增量：Views — 一等 SysML v2 实体（嵌套 + 顶层）
+		views := v1.Group("/views")
+		views.Use(middleware.AuthRequired())
+		{
+			views.GET("/:id", h.GetView)
+			views.PUT("/:id", h.UpdateView)
+			views.DELETE("/:id", h.DeleteView)
 		}
 
 		// AI endpoints（受保护）

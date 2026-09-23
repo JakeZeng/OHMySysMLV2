@@ -559,6 +559,168 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/ModelVersion' }
 
+  # ─── M12 ─── 一等 SysML v2 实体（Package + View）
+  /api/v1/projects/{id}/packages:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Packages]
+      summary: List packages in a project.
+      responses:
+        '200':
+          description: Package list (summaries, 不含大字段 content).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PackageSummary' }
+    post:
+      tags: [Packages]
+      summary: Create a package in a project (top-level or nested under parentPackageId).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePackageRequest' }
+      responses:
+        '200':
+          description: Package created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Package' }
+        '409':
+          description: 同父下同名包冲突 (E_PACKAGE_NAME_CONFLICT).
+
+  /api/v1/packages/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Packages]
+      summary: Get a package (with content).
+      responses:
+        '200':
+          description: Package.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Package' }
+    put:
+      tags: [Packages]
+      summary: Update a package (optimistic lock on version).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePackageRequest' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Package' }
+        '409':
+          description: 版本冲突 或 同名冲突.
+    delete:
+      tags: [Packages]
+      summary: Delete a package (cascades to child packages).
+      responses:
+        '200': { description: Deleted. }
+
+  /api/v1/projects/{id}/views:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Views]
+      summary: List views in a project.
+      responses:
+        '200':
+          description: View list (summaries).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ViewSummary' }
+    post:
+      tags: [Views]
+      summary: Create a view in a project.
+      description: 解析 content 中的 `expose` 语句填充 exposedElements 缓存.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateViewRequest' }
+      responses:
+        '200':
+          description: View created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/View' }
+        '409':
+          description: 同包下同名视图冲突 (E_VIEW_NAME_CONFLICT).
+
+  /api/v1/views/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Views]
+      summary: Get a view (with content + exposedElements).
+      responses:
+        '200':
+          description: View.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/View' }
+    put:
+      tags: [Views]
+      summary: Update a view (recomputes exposedElements from content).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateViewRequest' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/View' }
+        '409':
+          description: 版本冲突 或 同名冲突.
+    delete:
+      tags: [Views]
+      summary: Delete a view.
+      responses:
+        '200': { description: Deleted. }
+
   /api/v1/models/{id}/comments:
     parameters:
       - $ref: '#/components/parameters/ModelID'
@@ -1710,6 +1872,130 @@ components:
         message: { type: string, description: Optional commit-style message. }
         createdBy: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
+
+    # ─── M12 ─── 一等 SysML v2 实体（Package + View）
+    Package:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        parentPackageId: { type: string, format: uuid, description: 顶级包省略. }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string, description: SysML v2 source text. }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+          description: K-V 标注. 非 SysML 语义.
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PackageSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        parentPackageId: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+
+    CreatePackageRequest:
+      type: object
+      required: [name]
+      properties:
+        parentPackageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    UpdatePackageRequest:
+      type: object
+      required: [name, version]
+      properties:
+        parentPackageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        version: { type: integer, minimum: 1 }
+
+    ExposedElement:
+      type: object
+      properties:
+        qualifiedName: { type: string, description: e.g. "Pkg1.Sub::PartDef". }
+        kind: { type: string, description: 推断的 SysML 元素类型 — PartDef / PortDef / ActionDef / ... }
+
+    View:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        packageId: { type: string, format: uuid, description: 顶层视图省略. }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string, description: SysML v2 view definition 文本. }
+        colorTag: { type: string, description: UI metadata. 非 SysML 语义. }
+        renderingCategory: { type: string, description: UI hint. 不强制画布过滤. }
+        exposedElements:
+          type: array
+          items: { $ref: '#/components/schemas/ExposedElement' }
+          description: 解析 content 缓存.
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ViewSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        packageId: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        colorTag: { type: string }
+        renderingCategory: { type: string }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+
+    CreateViewRequest:
+      type: object
+      required: [name]
+      properties:
+        packageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        colorTag: { type: string }
+        renderingCategory: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    UpdateViewRequest:
+      type: object
+      required: [name, version]
+      properties:
+        packageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        colorTag: { type: string }
+        renderingCategory: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        version: { type: integer, minimum: 1 }
 
     Comment:
       type: object

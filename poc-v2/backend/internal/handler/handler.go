@@ -15,6 +15,7 @@ import (
 
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/model"
+	"github.com/sysmlv2/mbse-backend/internal/parser"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
 )
 
@@ -565,6 +566,410 @@ func (h *Handler) CreateModelInProject(c *gin.Context) {
 	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetModel, m.ID,
 		`{"name":"`+escapeJSON(m.Name)+`","project":"`+m.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": m})
+}
+
+// ─── Packages（M12 一等 SysML v2 实体） ────────────────────────────────
+
+type createPackageReq struct {
+	ProjectID       string            `json:"projectId"`
+	ParentPackageID string            `json:"parentPackageId,omitempty"`
+	Name            string            `json:"name" binding:"required,min=1,max=200"`
+	Description     string            `json:"description"`
+	Content         string            `json:"content"`
+	Metadata        map[string]string `json:"metadata"`
+}
+
+type updatePackageReq struct {
+	Name            string            `json:"name" binding:"required,min=1,max=200"`
+	ParentPackageID string            `json:"parentPackageId,omitempty"`
+	Description     string            `json:"description"`
+	Content         string            `json:"content"`
+	Metadata        map[string]string `json:"metadata"`
+	Version         int               `json:"version" binding:"required,min=1"`
+}
+
+// packageID 从嵌套路由 param "packageId" 或平坦路由 param "id" 中提取 Package ID。
+func packageID(c *gin.Context) string {
+	if id := c.Param("packageId"); id != "" {
+		return id
+	}
+	return c.Param("id")
+}
+
+// viewID 从嵌套路由 param "viewId" 或平坦路由 param "id" 中提取 View ID。
+func viewID(c *gin.Context) string {
+	if id := c.Param("viewId"); id != "" {
+		return id
+	}
+	return c.Param("id")
+}
+
+// loadAccessiblePackage 通过 packageID 加载 package，再加载其 project 并验证权限。
+// 返回 (package, project, heldPermission)；权限不足时由 authz 写入响应并返回 nil。
+func loadAccessiblePackage(c *gin.Context, repo *repository.SQLiteRepository, id string, required Permission) (*model.Package, *model.Project, Permission, error) {
+	p, err := repo.GetPackage(c.Request.Context(), id)
+	if errors.Is(err, repository.ErrNotFound) {
+		notFound(c, "包不存在")
+		return nil, nil, 0, nil
+	}
+	if err != nil {
+		serverError(c, "加载包失败", err)
+		return nil, nil, 0, nil
+	}
+	prj, held, lerr := loadAccessibleProject(c, repo, p.ProjectID, required)
+	if lerr != nil {
+		return nil, nil, 0, lerr
+	}
+	if prj == nil {
+		return nil, nil, 0, nil
+	}
+	return p, prj, held, nil
+}
+
+// loadAccessibleView 通过 viewID 加载 view，再加载其 project 并验证权限。
+func loadAccessibleView(c *gin.Context, repo *repository.SQLiteRepository, id string, required Permission) (*model.View, *model.Project, Permission, error) {
+	v, err := repo.GetView(c.Request.Context(), id)
+	if errors.Is(err, repository.ErrNotFound) {
+		notFound(c, "视图不存在")
+		return nil, nil, 0, nil
+	}
+	if err != nil {
+		serverError(c, "加载视图失败", err)
+		return nil, nil, 0, nil
+	}
+	prj, held, lerr := loadAccessibleProject(c, repo, v.ProjectID, required)
+	if lerr != nil {
+		return nil, nil, 0, lerr
+	}
+	if prj == nil {
+		return nil, nil, 0, nil
+	}
+	return v, prj, held, nil
+}
+
+// ListPackagesByProject GET /projects/:id/packages
+func (h *Handler) ListPackagesByProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermRead); err != nil || !ok {
+		return
+	}
+	pkgs, err := h.repo.ListPackagesByProject(c, projectID)
+	if err != nil {
+		serverError(c, "列出包失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": pkgs})
+}
+
+// CreatePackageInProject POST /projects/:id/packages
+func (h *Handler) CreatePackageInProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
+		return
+	}
+	var req createPackageReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	// 同包下重名 → SQLite UNIQUE 触发；前端可识别 409
+	if req.ParentPackageID != "" {
+		if _, err := h.repo.GetPackage(c, req.ParentPackageID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				badRequest(c, "父包不存在", nil)
+				return
+			}
+			serverError(c, "校验父包失败", err)
+			return
+		}
+	}
+	p := &model.Package{
+		ID:              uuid.NewString(),
+		ProjectID:       projectID,
+		ParentPackageID: req.ParentPackageID,
+		Name:            req.Name,
+		Description:     req.Description,
+		Content:         req.Content,
+		Metadata:        req.Metadata,
+		Version:         1,
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
+	}
+	if err := h.repo.CreatePackage(c, p); err != nil {
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_PACKAGE_NAME_CONFLICT",
+				"message": "同一父包下已存在同名包",
+			}})
+			return
+		}
+		serverError(c, "创建包失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetPackage, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// GetPackage GET /packages/:id
+func (h *Handler) GetPackage(c *gin.Context) {
+	id := packageID(c)
+	p, _, _, err := loadAccessiblePackage(c, h.repo, id, PermRead)
+	if err != nil || p == nil {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// UpdatePackage PUT /packages/:id
+func (h *Handler) UpdatePackage(c *gin.Context) {
+	id := packageID(c)
+	p, _, _, err := loadAccessiblePackage(c, h.repo, id, PermWrite)
+	if err != nil || p == nil {
+		return
+	}
+	var req updatePackageReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	p.Name = req.Name
+	p.ParentPackageID = req.ParentPackageID
+	p.Description = req.Description
+	p.Content = req.Content
+	if req.Metadata != nil {
+		p.Metadata = req.Metadata
+	}
+	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
+	p.Version = req.Version
+	p.UpdatedAt = time.Now().UTC()
+	if err := h.repo.UpdatePackage(c, p); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VERSION_CONFLICT",
+				"message": "版本冲突，请刷新后重试",
+			}})
+			return
+		}
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_PACKAGE_NAME_CONFLICT",
+				"message": "同一父包下已存在同名包",
+			}})
+			return
+		}
+		serverError(c, "更新包失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetPackage, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// DeletePackage DELETE /packages/:id
+func (h *Handler) DeletePackage(c *gin.Context) {
+	id := packageID(c)
+	p, _, _, err := loadAccessiblePackage(c, h.repo, id, PermWrite)
+	if err != nil || p == nil {
+		return
+	}
+	if err := h.repo.DeletePackage(c, id); err != nil {
+		serverError(c, "删除包失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetPackage, id,
+		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": nil})
+}
+
+// ─── Views（M12 一等 SysML v2 实体） ──────────────────────────────────
+
+type createViewReq struct {
+	ProjectID         string            `json:"projectId"`
+	PackageID         string            `json:"packageId,omitempty"`
+	Name              string            `json:"name" binding:"required,min=1,max=200"`
+	Description       string            `json:"description"`
+	Content           string            `json:"content"`
+	ColorTag          string            `json:"colorTag"`
+	RenderingCategory string            `json:"renderingCategory"`
+	Metadata          map[string]string `json:"metadata"`
+}
+
+type updateViewReq struct {
+	Name              string            `json:"name" binding:"required,min=1,max=200"`
+	PackageID         string            `json:"packageId,omitempty"`
+	Description       string            `json:"description"`
+	Content           string            `json:"content"`
+	ColorTag          string            `json:"colorTag"`
+	RenderingCategory string            `json:"renderingCategory"`
+	Metadata          map[string]string `json:"metadata"`
+	Version           int               `json:"version" binding:"required,min=1"`
+}
+
+// ListViewsByProject GET /projects/:id/views
+func (h *Handler) ListViewsByProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermRead); err != nil || !ok {
+		return
+	}
+	views, err := h.repo.ListViewsByProject(c, projectID)
+	if err != nil {
+		serverError(c, "列出视图失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": views})
+}
+
+// CreateViewInProject POST /projects/:id/views
+func (h *Handler) CreateViewInProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
+		return
+	}
+	var req createViewReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	if req.PackageID != "" {
+		if _, err := h.repo.GetPackage(c, req.PackageID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				badRequest(c, "所属包不存在", nil)
+				return
+			}
+			serverError(c, "校验所属包失败", err)
+			return
+		}
+	}
+	v := &model.View{
+		ID:                uuid.NewString(),
+		ProjectID:         projectID,
+		PackageID:         req.PackageID,
+		Name:              req.Name,
+		Description:       req.Description,
+		Content:           req.Content,
+		ColorTag:          req.ColorTag,
+		RenderingCategory: req.RenderingCategory,
+		Metadata:          req.Metadata,
+		ExposedElements:   parser.ParseExposedElements(req.Content),
+		Version:           1,
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := h.repo.CreateView(c, v); err != nil {
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VIEW_NAME_CONFLICT",
+				"message": "同一包下已存在同名视图",
+			}})
+			return
+		}
+		serverError(c, "创建视图失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetView, v.ID,
+		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": v})
+}
+
+// GetView GET /views/:id
+func (h *Handler) GetView(c *gin.Context) {
+	id := viewID(c)
+	v, _, _, err := loadAccessibleView(c, h.repo, id, PermRead)
+	if err != nil || v == nil {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": v})
+}
+
+// UpdateView PUT /views/:id
+func (h *Handler) UpdateView(c *gin.Context) {
+	id := viewID(c)
+	v, _, _, err := loadAccessibleView(c, h.repo, id, PermWrite)
+	if err != nil || v == nil {
+		return
+	}
+	var req updateViewReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	v.Name = req.Name
+	v.PackageID = req.PackageID
+	v.Description = req.Description
+	v.Content = req.Content
+	v.ColorTag = req.ColorTag
+	v.RenderingCategory = req.RenderingCategory
+	if req.Metadata != nil {
+		v.Metadata = req.Metadata
+	}
+	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
+	v.Version = req.Version
+	v.UpdatedAt = time.Now().UTC()
+	if err := h.repo.UpdateView(c, v, parser.ParseExposedElements); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VERSION_CONFLICT",
+				"message": "版本冲突，请刷新后重试",
+			}})
+			return
+		}
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VIEW_NAME_CONFLICT",
+				"message": "同一包下已存在同名视图",
+			}})
+			return
+		}
+		serverError(c, "更新视图失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetView, v.ID,
+		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": v})
+}
+
+// DeleteView DELETE /views/:id
+func (h *Handler) DeleteView(c *gin.Context) {
+	id := viewID(c)
+	v, _, _, err := loadAccessibleView(c, h.repo, id, PermWrite)
+	if err != nil || v == nil {
+		return
+	}
+	if err := h.repo.DeleteView(c, id); err != nil {
+		serverError(c, "删除视图失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetView, id,
+		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": nil})
+}
+
+// isUniqueViolation 判定 SQLite 唯一约束冲突。
+// modernc.org/sqlite 返回的错误字符串包含 "UNIQUE constraint failed"。
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "constraint failed: UNIQUE")
 }
 
 // ─── 错误响应辅助 ─────────────────────────────────────────────────────

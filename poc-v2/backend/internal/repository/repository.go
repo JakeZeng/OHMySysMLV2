@@ -4,6 +4,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,13 +38,15 @@ func (r *SQLiteRepository) Counts(ctx context.Context) map[string]int64 {
 		"users":      0,
 		"projects":   0,
 		"models":     0,
+		"packages":   0,
+		"views":      0,
 		"teams":      0,
 		"shares":     0,
 		"share_links": 0,
 		"audit_logs": 0,
 	}
 	for _, table := range []string{
-		"users", "projects", "models", "teams",
+		"users", "projects", "models", "packages", "views", "teams",
 		"project_shares", "share_links", "audit_logs",
 	} {
 		var n int64
@@ -165,6 +168,51 @@ CREATE TABLE IF NOT EXISTS share_links (
     revoked_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id);
+
+-- M12 增量：packages 表（一等 SysML v2 实体，含 SysML 文本、可嵌套）
+-- 注意：parent_package_id 允许 NULL（顶级包）；同时 UNIQUE(project_id, parent_package_id, name)
+-- 把 NULL 视为不同 — 我们在应用层把空字符串映射为 NULL。
+CREATE TABLE IF NOT EXISTS packages (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_package_id TEXT REFERENCES packages(id) ON DELETE CASCADE,
+    name              TEXT NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    content           TEXT NOT NULL DEFAULT '',
+    metadata_json     TEXT NOT NULL DEFAULT '{}',
+    version           INTEGER NOT NULL DEFAULT 1,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+-- 显式创建唯一索引（NULL 在 UNIQUE 中视为不同 — 我们靠应用层保证唯一性）。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_packages_scope_name
+    ON packages(project_id, COALESCE(parent_package_id, ''), name);
+CREATE INDEX IF NOT EXISTS idx_packages_project ON packages(project_id);
+CREATE INDEX IF NOT EXISTS idx_packages_parent ON packages(parent_package_id);
+CREATE INDEX IF NOT EXISTS idx_packages_updated ON packages(updated_at DESC);
+
+-- M12 增量：views 表（一等 SysML v2 ViewDefinition 实体）
+-- 注意：package_id 允许 NULL（顶层视图）；应用层把空字符串映射为 NULL。
+CREATE TABLE IF NOT EXISTS views (
+    id                  TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    package_id          TEXT REFERENCES packages(id) ON DELETE SET NULL,
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    content             TEXT NOT NULL DEFAULT '',
+    color_tag           TEXT NOT NULL DEFAULT '',
+    rendering_category  TEXT NOT NULL DEFAULT '',
+    exposed_elements    TEXT NOT NULL DEFAULT '[]',
+    metadata_json       TEXT NOT NULL DEFAULT '{}',
+    version             INTEGER NOT NULL DEFAULT 1,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_views_scope_name
+    ON views(project_id, COALESCE(package_id, ''), name);
+CREATE INDEX IF NOT EXISTS idx_views_project ON views(project_id);
+CREATE INDEX IF NOT EXISTS idx_views_package ON views(package_id);
+CREATE INDEX IF NOT EXISTS idx_views_updated ON views(updated_at DESC);
 `
 	if _, err := r.db.Exec(ddl); err != nil {
 		return fmt.Errorf("初始化 schema 失败: %w", err)
@@ -610,6 +658,322 @@ func (r *SQLiteRepository) UpdateModel(ctx context.Context, m *model.Model, save
 
 func (r *SQLiteRepository) DeleteModel(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM models WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ─── Packages (M12 一等 SysML v2 实体) ────────────────────────────────
+
+// marshalMetadata 把 map 序列化为 JSON 字符串。空 map 写入 "{}"。
+func marshalMetadata(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// unmarshalMetadata 从 JSON 字符串反序列化。空串或 "{}" 视为空 map。
+func unmarshalMetadata(s string) (map[string]string, error) {
+	if s == "" || s == "{}" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scanPackage 把 row 扫描到 Package（含 content/metadata）。
+func scanPackage(row interface {
+	Scan(dest ...any) error
+}) (*model.Package, error) {
+	var (
+		p             model.Package
+		parentPkgID   sql.NullString
+		desc          string
+		metadataJSON  string
+	)
+	if err := row.Scan(&p.ID, &p.ProjectID, &parentPkgID, &p.Name, &desc, &p.Content, &metadataJSON, &p.Version, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	p.ParentPackageID = parentPkgID.String
+	p.Description = desc
+	if md, err := unmarshalMetadata(metadataJSON); err == nil {
+		p.Metadata = md
+	}
+	return &p, nil
+}
+
+// scanPackageSummary 把 row 扫描到 PackageSummary（不含 content）。
+func scanPackageSummary(row interface {
+	Scan(dest ...any) error
+}) (*model.PackageSummary, error) {
+	var (
+		ps           model.PackageSummary
+		parentPkgID  sql.NullString
+		desc         string
+	)
+	if err := row.Scan(&ps.ID, &ps.ProjectID, &parentPkgID, &ps.Name, &desc, &ps.Version, &ps.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	ps.ParentPackageID = parentPkgID.String
+	ps.Description = desc
+	return &ps, nil
+}
+
+func (r *SQLiteRepository) CreatePackage(ctx context.Context, p *model.Package) error {
+	mdJSON, err := marshalMetadata(p.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	// 顶层包规范化：parent_package_id 空字符串存为 NULL，
+	// 避免空字符串触发 self-FK (packages.id = '') 失败。
+	var parentPkgID any
+	if p.ParentPackageID != "" {
+		parentPkgID = p.ParentPackageID
+	}
+	const q = `INSERT INTO packages (id, project_id, parent_package_id, name, description, content, metadata_json, version, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = r.db.ExecContext(ctx, q, p.ID, p.ProjectID, parentPkgID, p.Name, p.Description, p.Content, mdJSON, p.Version, p.CreatedAt, p.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) GetPackage(ctx context.Context, id string) (*model.Package, error) {
+	const q = `SELECT id, project_id, parent_package_id, name, description, content, metadata_json, version, created_at, updated_at
+              FROM packages WHERE id = ?`
+	row := r.db.QueryRowContext(ctx, q, id)
+	return scanPackage(row)
+}
+
+func (r *SQLiteRepository) GetPackageSummary(ctx context.Context, id string) (*model.PackageSummary, error) {
+	const q = `SELECT id, project_id, parent_package_id, name, description, version, updated_at
+              FROM packages WHERE id = ?`
+	row := r.db.QueryRowContext(ctx, q, id)
+	return scanPackageSummary(row)
+}
+
+func (r *SQLiteRepository) ListPackagesByProject(ctx context.Context, projectID string) ([]*model.PackageSummary, error) {
+	const q = `SELECT id, project_id, parent_package_id, name, description, version, updated_at
+              FROM packages WHERE project_id = ? ORDER BY updated_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.PackageSummary, 0)
+	for rows.Next() {
+		ps, err := scanPackageSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ps)
+	}
+	return out, rows.Err()
+}
+
+// UpdatePackage 乐观锁：版本不匹配返回 ErrVersionConflict。
+func (r *SQLiteRepository) UpdatePackage(ctx context.Context, p *model.Package) error {
+	now := time.Now().UTC()
+	mdJSON, err := marshalMetadata(p.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	var parentPkgID any
+	if p.ParentPackageID != "" {
+		parentPkgID = p.ParentPackageID
+	}
+	const q = `UPDATE packages SET name = ?, parent_package_id = ?, description = ?, content = ?, metadata_json = ?, version = version + 1, updated_at = ?
+              WHERE id = ? AND version = ?`
+	res, err := r.db.ExecContext(ctx, q, p.Name, parentPkgID, p.Description, p.Content, mdJSON, now, p.ID, p.Version)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrVersionConflict
+	}
+	updated, err := r.GetPackage(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	*p = *updated
+	return nil
+}
+
+func (r *SQLiteRepository) DeletePackage(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM packages WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ─── Views (M12 一等 SysML v2 ViewDefinition) ──────────────────────────
+
+// scanView 把 row 扫描到 View（含 content + exposedElements）。
+func scanView(row interface {
+	Scan(dest ...any) error
+}) (*model.View, error) {
+	var (
+		v             model.View
+		pkgID         sql.NullString
+		desc          string
+		colorTag      string
+		renderCat     string
+		exposedJSON   string
+		metadataJSON  string
+	)
+	if err := row.Scan(&v.ID, &v.ProjectID, &pkgID, &v.Name, &desc, &v.Content, &colorTag, &renderCat, &exposedJSON, &metadataJSON, &v.Version, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	v.PackageID = pkgID.String
+	v.Description = desc
+	v.ColorTag = colorTag
+	v.RenderingCategory = renderCat
+	if exposed, err := model.UnmarshalExposedElements(exposedJSON); err == nil {
+		v.ExposedElements = exposed
+	}
+	if md, err := unmarshalMetadata(metadataJSON); err == nil {
+		v.Metadata = md
+	}
+	return &v, nil
+}
+
+// scanViewSummary 把 row 扫描到 ViewSummary。
+func scanViewSummary(row interface {
+	Scan(dest ...any) error
+}) (*model.ViewSummary, error) {
+	var (
+		vs        model.ViewSummary
+		pkgID     sql.NullString
+		desc      string
+		colorTag  string
+		renderCat string
+	)
+	if err := row.Scan(&vs.ID, &vs.ProjectID, &pkgID, &vs.Name, &desc, &colorTag, &renderCat, &vs.Version, &vs.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	vs.PackageID = pkgID.String
+	vs.Description = desc
+	vs.ColorTag = colorTag
+	vs.RenderingCategory = renderCat
+	return &vs, nil
+}
+
+func (r *SQLiteRepository) CreateView(ctx context.Context, v *model.View) error {
+	mdJSON, err := marshalMetadata(v.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	exposedJSON, err := model.MarshalExposedElements(v.ExposedElements)
+	if err != nil {
+		return fmt.Errorf("序列化 exposedElements 失败: %w", err)
+	}
+	// 顶层视图规范化：package_id 空字符串存为 NULL，
+	// 避免空字符串触发 FK (views.package_id -> packages.id) 失败。
+	var pkgID any
+	if v.PackageID != "" {
+		pkgID = v.PackageID
+	}
+	const q = `INSERT INTO views (id, project_id, package_id, name, description, content, color_tag, rendering_category, exposed_elements, metadata_json, version, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = r.db.ExecContext(ctx, q, v.ID, v.ProjectID, pkgID, v.Name, v.Description, v.Content, v.ColorTag, v.RenderingCategory, exposedJSON, mdJSON, v.Version, v.CreatedAt, v.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) GetView(ctx context.Context, id string) (*model.View, error) {
+	const q = `SELECT id, project_id, package_id, name, description, content, color_tag, rendering_category, exposed_elements, metadata_json, version, created_at, updated_at
+              FROM views WHERE id = ?`
+	row := r.db.QueryRowContext(ctx, q, id)
+	return scanView(row)
+}
+
+func (r *SQLiteRepository) ListViewsByProject(ctx context.Context, projectID string) ([]*model.ViewSummary, error) {
+	const q = `SELECT id, project_id, package_id, name, description, color_tag, rendering_category, version, updated_at
+              FROM views WHERE project_id = ? ORDER BY updated_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.ViewSummary, 0)
+	for rows.Next() {
+		vs, err := scanViewSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vs)
+	}
+	return out, rows.Err()
+}
+
+// UpdateView 乐观锁：版本不匹配返回 ErrVersionConflict。
+// 每次更新重算 exposedElements（解析 content）。
+func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseExposed func(content string) []model.ExposedElement) error {
+	now := time.Now().UTC()
+	mdJSON, err := marshalMetadata(v.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	// 重算 exposedElements（如调用方传了 parser）
+	if parseExposed != nil {
+		v.ExposedElements = parseExposed(v.Content)
+	}
+	exposedJSON, err := model.MarshalExposedElements(v.ExposedElements)
+	if err != nil {
+		return fmt.Errorf("序列化 exposedElements 失败: %w", err)
+	}
+	var pkgID any
+	if v.PackageID != "" {
+		pkgID = v.PackageID
+	}
+	const q = `UPDATE views SET name = ?, package_id = ?, description = ?, content = ?, color_tag = ?, rendering_category = ?, exposed_elements = ?, metadata_json = ?, version = version + 1, updated_at = ?
+              WHERE id = ? AND version = ?`
+	res, err := r.db.ExecContext(ctx, q, v.Name, pkgID, v.Description, v.Content, v.ColorTag, v.RenderingCategory, exposedJSON, mdJSON, now, v.ID, v.Version)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrVersionConflict
+	}
+	updated, err := r.GetView(ctx, v.ID)
+	if err != nil {
+		return err
+	}
+	*v = *updated
+	return nil
+}
+
+func (r *SQLiteRepository) DeleteView(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM views WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
