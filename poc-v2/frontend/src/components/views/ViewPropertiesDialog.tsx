@@ -8,13 +8,12 @@ import * as React from 'react';
 import { X } from 'lucide-react';
 import { useViewStore } from '../../stores/viewStore';
 import {
-  type View,
   type ViewType,
   type ModelingMode,
   VIEW_TYPE_LABEL,
   MODELING_MODE_LABEL,
   COLOR_TAGS,
-} from '../../types/view';
+} from '../../types/viewLegacy';
 import { Button } from '../ui/Button';
 
 export interface ViewPropertiesDialogProps {
@@ -161,8 +160,8 @@ export const ViewPropertiesDialog: React.FC<ViewPropertiesDialogProps> = ({ view
               ))}
             </div>
             <div className="mt-1 text-[10px] text-gray-400">
-              拖拽模式：画布可交互，编辑器只读预览<br />
-              文本模式：编辑器可编辑，画布只读
+              可视化模式：画布可交互<br />
+              文本模式：编辑器可编辑
             </div>
           </div>
 

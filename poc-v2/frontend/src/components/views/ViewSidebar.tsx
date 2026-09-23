@@ -10,14 +10,14 @@ import * as React from 'react';
 import { Plus, FolderTree, MoreVertical, Copy, Trash2, Settings2 } from 'lucide-react';
 import { useViewStore } from '../../stores/viewStore';
 import {
-  type View,
+  type LegacyView as View,
   type ViewType,
   VIEW_TYPE_LABEL,
   VIEW_TYPE_ICON,
   MODELING_MODE_LABEL,
   COLOR_TAG_CLASS,
   COLOR_TAGS,
-} from '../../types/view';
+} from '../../types/viewLegacy';
 
 interface ViewSidebarProps {
   /** 当前模型的所有视图节点统计 */

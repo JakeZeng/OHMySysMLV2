@@ -605,7 +605,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
             : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200'
         }`}
       >
-        {interactive ? '▶ 拖拽模式' : '📝 文本模式（只读）'}
+        {interactive ? '▶ 可视化模式' : '📝 文本模式（只读）'}
       </div>
       {/* 性能徽章 */}
       {typeof nodeCount === 'number' && (

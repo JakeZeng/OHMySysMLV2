@@ -57,7 +57,7 @@ import { SimulationPanel } from '../components/sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../stores/simulationStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../lib/insertSnippet';
 import type { Node } from '@xyflow/react';
-import type { ViewType } from '../types/view';
+import type { ViewType } from '../types/viewLegacy';
 
 export const ModelEditor: React.FC = () => {
   const { modelId = '' } = useParams<{ modelId: string }>();
@@ -100,6 +100,7 @@ export const ModelEditor: React.FC = () => {
   const setCurrentView = useViewStore((s) => s.setCurrentView);
   const ensureViews = useViewStore((s) => s.ensureViews);
   const resetViews = useViewStore((s) => s.reset);
+  const setModelingMode = useViewStore((s) => s.setModelingMode);
 
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
@@ -268,19 +269,7 @@ export const ModelEditor: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, loading]);
 
-  // 自动保存
-  const autoSaveRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => {
-    if (!content || !modelId || saving || loading) return;
-    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
-    autoSaveRef.current = setTimeout(() => {
-      void saveModel().catch(() => { /* silent */ });
-    }, 5000);
-    return () => {
-      if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
-    };
-  }, [content, modelId, saving, loading, saveModel]);
-
+  // 跟踪上次已保存的内容（用于自动保存的脏检查 + beforeunload 提示）
   const lastSavedContent = React.useRef<string>('');
   React.useEffect(() => {
     if (!loading && modelId && content) lastSavedContent.current = content;
@@ -288,6 +277,42 @@ export const ModelEditor: React.FC = () => {
   React.useEffect(() => {
     if (saved) lastSavedContent.current = content;
   }, [saved, content]);
+
+  // 自动保存：仅当 content 与上次保存不一致时才调度。
+  // 修复（M11.x）：原先 saving 在依赖数组里，保存完成 toggling saving → effect 重跑 →
+  //   无脏检查的情况下，每 5 秒定时器又被重启，触发无限循环，版本号一直 +1。
+  // 现在：去掉 saving 依赖、增加 content === lastSavedContent 的脏检查。
+  const autoSaveRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    if (!content || !modelId || loading) return;
+    // 关键脏检查：内容未变就不调度保存，避免循环
+    if (content === lastSavedContent.current) {
+      if (autoSaveRef.current) {
+        clearTimeout(autoSaveRef.current);
+        autoSaveRef.current = null;
+      }
+      return;
+    }
+    // 正在保存中：等下次 content 变化再重新调度
+    if (useModelStore.getState().saving) {
+      if (autoSaveRef.current) {
+        clearTimeout(autoSaveRef.current);
+        autoSaveRef.current = null;
+      }
+      return;
+    }
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => {
+      // 触发时再查一次 saving，避免边界 race
+      if (useModelStore.getState().saving) return;
+      void saveModel().catch(() => { /* silent */ });
+    }, 5000);
+    return () => {
+      if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, modelId, loading, saveModel]);
+
   React.useEffect(() => {
     const dirty = content !== lastSavedContent.current && !!modelId && !!content;
     if (!dirty) return;
@@ -670,10 +695,42 @@ export const ModelEditor: React.FC = () => {
           <span className="text-xs font-medium text-gray-700 dark:text-gray-200" data-testid="current-view-name">
             {currentView.name}
           </span>
-          <span className="text-[10px] text-gray-400">·</span>
-          <span className="text-[10px] text-gray-500">
-            {currentView.modelingMode === 'drag' ? '拖拽建模' : '文本建模'}
-          </span>
+          {/* M11.x: 显式建模模式分段切换按钮（可视化 ↔ 文本） */}
+          <div
+            className="inline-flex overflow-hidden rounded border border-gray-300 dark:border-gray-600"
+            data-testid="modeling-mode-toggle"
+            role="group"
+            aria-label="建模模式"
+          >
+            <button
+              type="button"
+              onClick={() => setModelingMode(currentView.id, 'drag')}
+              data-testid="toggle-mode-drag"
+              aria-pressed={currentView.modelingMode === 'drag'}
+              title="可视化建模：画布可交互编辑"
+              className={`px-2 py-0.5 text-xs transition ${
+                currentView.modelingMode === 'drag'
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                  : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300'
+              }`}
+            >
+              👁 可视化
+            </button>
+            <button
+              type="button"
+              onClick={() => setModelingMode(currentView.id, 'text')}
+              data-testid="toggle-mode-text"
+              aria-pressed={currentView.modelingMode === 'text'}
+              title="文本建模：编辑器可编辑"
+              className={`border-l border-gray-300 px-2 py-0.5 text-xs transition dark:border-gray-600 ${
+                currentView.modelingMode === 'text'
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                  : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300'
+              }`}
+            >
+              📝 文本
+            </button>
+          </div>
           <div className="flex-1" />
           <span className="text-xs text-gray-400" data-testid="current-view-stats">
             {filteredNodes.length} 节点 · {filteredEdges.length} 连接
@@ -688,7 +745,7 @@ export const ModelEditor: React.FC = () => {
         </div>
       )}
 
-      {/* 主体：M11 5 列布局 ─ ViewSidebar | Palette | Otherview | Editor | Canvas(+Sim) | ElementFormPanel */}
+      {/* 主体：M11.x 4 列布局 ─ ViewSidebar | Palette | Active(Editor | Canvas) | ElementFormPanel */}
       <div className="flex flex-1 overflow-hidden">
         <ViewSidebar
           nodeCounts={nodeCounts}
@@ -697,55 +754,73 @@ export const ModelEditor: React.FC = () => {
 
         <PalettePanel />
 
-        <div className="flex w-3/5 flex-col border-r border-gray-200 dark:border-gray-700">
-          <div className="flex-1 overflow-hidden">
-            <SysMLEditor
-              ref={sysmlEditorRef}
-              value={content}
-              onChange={(v) => setContent(v)}
-              onPipelineResult={handlePipeline}
-              onCursorChange={setCursorPos}
-              readOnly={interactive === false}
-            />
-          </div>
-          {errorPanelExpanded && (
-            <ErrorPanel
-              parseErrors={pipeline.parseErrors}
-              validationIssues={pipeline.validationIssues}
-              onJumpTo={handleJumpTo}
-              onJumpToGraphNode={handleJumpTo}
-            />
-          )}
-        </div>
-
-        <div className="relative flex flex-1 flex-col bg-gray-50 dark:bg-gray-950">
-          {currentView?.viewType === 'behavior' && <SimulationPanel />}
-          <div className="relative flex-1">
-            <DiagramCanvas
-              ref={diagramRef}
-              nodes={filteredNodes}
-              edges={filteredEdges}
-              onNodeRename={renameNode}
-              onNodeDelete={deleteNode}
-              onNodesDelete={(ids) => ids.forEach(deleteNode)}
-              onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
-              onNodePositionChange={setNodePosition}
-              onSelectionChange={setSelectedNode}
-              highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
-              nodeCount={filteredNodes.length}
-              interactive={interactive}
-              onPaletteDrop={handlePaletteDrop}
-              onPaneDoubleClick={handlePaneDoubleClick}
-              onConnectCreate={handleConnectCreate}
-            />
-            <div
-              data-testid="layout-engine-badge"
-              className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[11px] text-white"
-            >
-              布局: {layoutEngine ?? 'grid'} · {perfMs.toFixed(0)}ms
+        {/* 按建模模式互斥渲染主区域，避免文本编辑器遮挡可视化画布 */}
+        {currentView?.modelingMode === 'text' ? (
+          <div
+            className="flex flex-1 flex-col border-r border-gray-200 dark:border-gray-700"
+            data-testid="editor-pane"
+          >
+            <div className="flex-1 overflow-hidden">
+              <SysMLEditor
+                ref={sysmlEditorRef}
+                value={content}
+                onChange={(v) => setContent(v)}
+                onPipelineResult={handlePipeline}
+                onCursorChange={setCursorPos}
+                // 文本模式 → 编辑器可编辑
+                readOnly={false}
+              />
             </div>
+            {errorPanelExpanded && (
+              <ErrorPanel
+                parseErrors={pipeline.parseErrors}
+                validationIssues={pipeline.validationIssues}
+                onJumpTo={handleJumpTo}
+                onJumpToGraphNode={handleJumpTo}
+              />
+            )}
           </div>
-        </div>
+        ) : (
+          <div
+            className="relative flex flex-1 flex-col bg-gray-50 dark:bg-gray-950"
+            data-testid="canvas-pane"
+          >
+            {currentView?.viewType === 'behavior' && <SimulationPanel />}
+            <div className="relative flex-1">
+              <DiagramCanvas
+                ref={diagramRef}
+                nodes={filteredNodes}
+                edges={filteredEdges}
+                onNodeRename={renameNode}
+                onNodeDelete={deleteNode}
+                onNodesDelete={(ids) => ids.forEach(deleteNode)}
+                onEdgesDelete={(ids) => ids.forEach(deleteConnection)}
+                onNodePositionChange={setNodePosition}
+                onSelectionChange={setSelectedNode}
+                highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
+                nodeCount={filteredNodes.length}
+                interactive={interactive}
+                onPaletteDrop={handlePaletteDrop}
+                onPaneDoubleClick={handlePaneDoubleClick}
+                onConnectCreate={handleConnectCreate}
+              />
+              <div
+                data-testid="layout-engine-badge"
+                className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[11px] text-white"
+              >
+                布局: {layoutEngine ?? 'grid'} · {perfMs.toFixed(0)}ms
+              </div>
+            </div>
+            {errorPanelExpanded && (
+              <ErrorPanel
+                parseErrors={pipeline.parseErrors}
+                validationIssues={pipeline.validationIssues}
+                onJumpTo={handleJumpTo}
+                onJumpToGraphNode={handleJumpTo}
+              />
+            )}
+          </div>
+        )}
 
         <ElementFormPanel
           selectedNode={selectedNode}

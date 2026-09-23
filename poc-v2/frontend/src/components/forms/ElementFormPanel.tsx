@@ -12,7 +12,7 @@ import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle, Plus, Minus } from
 import type { Node } from '@xyflow/react';
 import type { SysMLModel } from '../../../../ast/model';
 import { useModelStore } from '../../stores/modelStore';
-import { useViewStore } from '../../stores/viewStore';
+import { useUIStore } from '../../stores/uiStore';
 import { schemaFor, type FormSchema, type FormField, type RepeatableFieldTemplate, type SectionKey } from '../../lib/elementFormSchema';
 import { applyFieldEdit, applyListEdit, type ListItem } from '../../lib/reverseSerialize';
 import { Button } from '../ui/Button';
@@ -41,7 +41,8 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const pipeline = useModelStore((s) => s.pipeline);
   const setContent = useModelStore((s) => s.setContent);
   const deleteNode = useModelStore((s) => s.deleteNode);
-  const currentView = useViewStore((s) => s.views.find((v) => v.id === s.currentViewId));
+  // M12：建模模式是全局 UI 偏好，不再挂在 View 实体上
+  const modelingMode = useUIStore((s) => s.modelingMode);
 
   // M11.x: 列表字段（attributes / ports）— 从 AST 读取当前列表。
   // 必须在 early return 之前调用，避免 React hooks 顺序不一致（"Rendered more hooks"）。
@@ -167,7 +168,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
           >
             {schema.title}
           </span>
-          {currentView?.modelingMode === 'text' && (
+          {modelingMode === 'text' && (
             <span className="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200">
               📝 文本模式
             </span>

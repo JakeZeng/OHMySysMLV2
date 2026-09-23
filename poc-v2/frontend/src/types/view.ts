@@ -1,61 +1,87 @@
 /**
- * M11 视图一等公民：类型定义
+ * M12 视图（一等 SysML v2 ViewDefinition 实体）。
  *
- * 视图（View）是模型（Model）内部的"建模切片"。
- * - 每个视图有自己的名称、描述、视图类型、建模模式、用户位置
- * - 视图属性持久化在 localStorage（modelId → views[]）
- * - 多个视图共享同一份 Model.content（MVP 简化设计，后续 M11.x 可拆 content）
+ * SysML v2 spec §7.26：View 是 SysML v2 一等元素；
+ * 视图通过 content 中的 `expose` 语句跨包引用元素，
+ * exposedElements 是后端解析 content 的缓存。
+ *
+ * 字段语义：
+ * - id/projectId/packageId：SysML v2 命名空间（顶级 = packageId 缺省）
+ * - content：view definition 的 SysML v2 文本
+ * - colorTag：UI metadata，非 SysML 语义（用于侧栏徽章）
+ * - renderingCategory：UI hint，画布可作为过滤参考但不强制
+ * - exposedElements：解析 cache（qualifiedName + kind）
+ * - metadata：K-V 标注，非 SysML 语义
+ *
+ * 与 M11 的差异（已迁移完成）：
+ * - 删除 `viewType`（不再按类型硬过滤画布）
+ * - 删除 `modelingMode`（移入 useUIStore.modelingMode 全局 UI 状态）
+ * - 删除 `userPositions`（移入 layoutStore）
+ * - 删除 `createdBy`（审计日志查询）
+ * - modelId → packageId（视图属于 Package，不再属于 Model）
+ * - 新增 `exposedElements` / `renderingCategory` / `metadata`
  */
 
-export type ViewType = 'structure' | 'behavior' | 'requirement' | 'constraint';
-
-export type ModelingMode = 'drag' | 'text';
+import type { ExposedElement } from './exposedElement';
 
 export interface View {
-  /** 视图 uuid（短） */
   id: string;
-  /** 外键 */
-  modelId: string;
-  /** 视图名 */
+  projectId: string;
+  packageId?: string;
   name: string;
-  /** 视图描述 */
-  description: string;
-  /** 视图类型：决定画布节点过滤 */
-  viewType: ViewType;
-  /** 建模模式：默认 drag，可切 text */
-  modelingMode: ModelingMode;
-  /** 侧栏图标色 hex（用于视觉区分） */
-  colorTag: string;
-  /** 用户拖动过的节点位置（覆盖默认布局） */
-  userPositions: Record<string, { x: number; y: number }>;
-  /** 创建者（展示用） */
-  createdBy: string;
-  /** ISO 时间戳 */
+  description?: string;
+  content: string;
+  colorTag?: string;
+  renderingCategory?: string;
+  exposedElements?: ExposedElement[];
+  metadata?: Record<string, string>;
+  version: number;
   createdAt: string;
   updatedAt: string;
-  /** 自增版本号 */
+}
+
+export interface ViewSummary {
+  id: string;
+  projectId: string;
+  packageId?: string;
+  name: string;
+  description?: string;
+  colorTag?: string;
+  renderingCategory?: string;
+  version: number;
+  updatedAt: string;
+}
+
+export interface CreateViewRequest {
+  packageId?: string;
+  name: string;
+  description?: string;
+  content?: string;
+  colorTag?: string;
+  renderingCategory?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface UpdateViewRequest {
+  packageId?: string;
+  name: string;
+  description?: string;
+  content?: string;
+  colorTag?: string;
+  renderingCategory?: string;
+  metadata?: Record<string, string>;
   version: number;
 }
 
-export const VIEW_TYPE_LABEL: Record<ViewType, string> = {
-  structure: '结构',
-  behavior: '行为',
-  requirement: '需求',
-  constraint: '参数',
-};
-
-export const VIEW_TYPE_ICON: Record<ViewType, string> = {
-  structure: '📦',
-  behavior: '⚡',
-  requirement: '📋',
-  constraint: '📐',
-};
+/** 兼容历史：UI 仍可能用到 ModelingMode（来自 useUIStore） */
+export type ModelingMode = 'drag' | 'text';
 
 export const MODELING_MODE_LABEL: Record<ModelingMode, string> = {
-  drag: '拖拽建模',
+  drag: '可视化建模',
   text: '文本建模',
 };
 
+/** 保留 COLOR_TAGS 用于建模颜色选择器 */
 export const COLOR_TAGS: string[] = [
   '#1890ff', '#fa8c16', '#52c41a', '#722ed1',
   '#13c2c2', '#faad14', '#f5222d', '#eb2f96',

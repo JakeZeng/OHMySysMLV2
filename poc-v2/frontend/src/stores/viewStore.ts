@@ -1,18 +1,17 @@
 /**
- * M11 视图一等公民：Zustand store
+ * ⚠️ M11 遗留：localStorage 视图投影 store — M12.3 删除。
  *
- * - 每个 Model 可有多个 View
- * - 持久化到 localStorage：key = `sysmlv2.views.${modelId}`
- * - 首次进入 Model 时确保 4 个默认视图（每个 viewType 1 个）
- * - currentViewId 控制当前画布 + 侧栏高亮
+ * M12 起视图是**后端一等 SysML v2 实体**（`services/viewApi.ts`），
+ * 节点位置迁到 `stores/layoutStore.ts`，建模模式迁到 `stores/uiStore.ts`。
+ * 本文件仅为 M12.1–M12.2 过渡期保持编译，类型来自 `types/viewLegacy.ts`。
  */
 
 import { create } from 'zustand';
 import {
-  type View,
+  type LegacyView as View,
   type ViewType,
   type ModelingMode,
-} from '../types/view';
+} from '../types/viewLegacy';
 
 interface ViewState {
   /** 当前 modelId（用于持久化 key） */
