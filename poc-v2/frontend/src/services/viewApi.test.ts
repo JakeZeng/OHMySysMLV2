@@ -27,7 +27,6 @@ const summary: ViewSummary = {
   colorTag: '#1890ff',
   renderingCategory: 'structure',
   version: 1,
-  createdAt: '2026-09-23T00:00:00Z',
   updatedAt: '2026-09-23T00:00:00Z',
 };
 
@@ -36,6 +35,7 @@ const full: View = {
   content: 'view V expose Pkg1::Vehicle;',
   exposedElements: [{ qualifiedName: 'Pkg1::Vehicle', kind: 'PartDef' }],
   metadata: {},
+  createdAt: '2026-09-23T00:00:00Z',
 };
 
 beforeEach(() => {
