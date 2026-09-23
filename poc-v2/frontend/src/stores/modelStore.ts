@@ -1,53 +1,62 @@
 /**
- * Model Store — 当前编辑的模型 + 解析/验证结果。
+ * 内容编辑会话 store —— 当前正在编辑的一份 SysML v2 文本 + 解析/验证结果。
  *
- * 复用 POC v2 的端到端 pipeline：text → parse → validate → modelToFlow。
- * M2 增强：
- *   - 双向同步：renameNode / deleteNode / deleteConnection
- *   - 节点位置持久化：用户拖动后位置保存到 store
- *   - ELK 自动布局：异步触发，避免阻塞编辑器
+ * 复用端到端 pipeline：text → parse → validate → modelToFlow。
+ *
+ * M12 重构：从"当前模型"泛化为"当前内容会话"。
+ *   - 新增 entityKind/entityId：同一套编辑能力服务 model / package / view
+ *   - 节点位置迁到 layoutStore（按 scopeId 作用域持久化），本 store 不再持有 userPositions
+ *   - 纯文本操作辅助抽到 lib/textOps.ts
+ *
+ * 遗留：loadModel/saveModel 保留至 M12.4（ModelEditor 删除时一并移除）。
  */
 
 import { create } from 'zustand';
-import { parse } from '@parser/parser';
-import { validate } from '@validator/validator';
-import { modelToFlow, modelToFlowLayouted } from '@transform/modelToFlow';
 import { renameNode as editRename, deleteNode as editDelete, deleteConnection as editDeleteConn } from '@transform/textEdit';
-import type {
-  ParseError,
-  SysMLModel,
-} from '@ast/model';
-import type { ValidationIssue } from '@validator/validator';
-import type { Node, Edge } from '@xyflow/react';
+import { modelToFlowLayouted } from '@transform/modelToFlow';
 import { modelApi, type ModelRecord } from '../services/modelApi';
+import { packageApi } from '../services/packageApi';
+import { viewApi } from '../services/viewApi';
+import { useLayoutStore } from './layoutStore';
+import {
+  EMPTY_PIPELINE,
+  runPipeline as runPipelinePure,
+  type PipelineResult,
+} from '../lib/pipeline';
+import { insertSnippet, findNewNodeId, shortNameFromNodeId } from '../lib/textOps';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
+import type { ExposedElement } from '../types/exposedElement';
 
-interface PipelineResult {
-  parseErrors: ParseError[];
-  validationIssues: ValidationIssue[];
-  model: SysMLModel;
-  nodes: Node[];
-  edges: Edge[];
-  layoutMs?: number;
-  layoutEngine?: 'grid' | 'elk';
-}
+/** 当前内容会话对应的实体类型 */
+export type ContentEntityKind = 'model' | 'package' | 'view';
 
 interface ModelState {
+  /** 当前编辑的实体类型；null = 无会话 */
+  entityKind: ContentEntityKind | null;
+  /** 当前编辑实体 ID（modelId / packageId / viewId） */
+  entityId: string | null;
+  /** 兼容旧消费者（CodeGenPage / ReportPage / PresenceIndicator） */
   modelId: string | null;
   projectId: string | null;
+  /** layoutStore 位置作用域（= entityId） */
+  scopeId: string | null;
+
   name: string;
   description: string;
   content: string;
   version: number;
   pipeline: PipelineResult;
+  /** 视图专用：后端解析 content 得到的引用元素缓存（非视图会话恒为空） */
+  exposedElements: ExposedElement[];
   saving: boolean;
   saved: boolean;
+  /** 内容自上次加载/保存后被修改过 */
+  dirty: boolean;
   loading: boolean;
   error: string | null;
-  /** 用户拖动后做位置覆盖（nodeId → {x,y}） */
-  userPositions: Record<string, { x: number; y: number }>;
-  /** 上一次 ELK layout 耗时（ms） */
+  /** 上一次布局耗时（ms） */
   perfMs: number;
+
   // M2 AI 语法检查
   aiChecking: boolean;
   aiStreamContent: string;
@@ -63,10 +72,22 @@ interface ModelState {
   setDescription: (d: string) => void;
   setContent: (c: string) => void;
   setProject: (id: string | null) => void;
+  /** 属性面板保存后同步版本号（避免内容保存 409） */
+  setVersion: (v: number) => void;
   runPipeline: (text: string) => void;
+  reset: () => void;
+
+  // ── M12：实体加载 / 保存 ─────────────────────────────
+  /** 打开包：加载 content 并建立会话 */
+  loadPackage: (packageId: string) => Promise<void>;
+  /** 打开视图：加载 content 并建立会话 */
+  loadView: (viewId: string) => Promise<void>;
+  /** 保存当前会话的 content（按 entityKind 分派） */
+  saveContent: () => Promise<unknown>;
+
+  // ── 遗留（M12.4 删除） ───────────────────────────────
   loadModel: (projectId: string, modelId: string) => Promise<void>;
   saveModel: () => Promise<void>;
-  reset: () => void;
 
   // M2 双向同步
   renameNode: (nodeId: string, newName: string) => void;
@@ -88,27 +109,30 @@ interface ModelState {
   cancelAiCheck: () => void;
 }
 
-const EMPTY_PIPELINE: PipelineResult = {
-  parseErrors: [],
-  validationIssues: [],
-  model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] },
-  nodes: [],
-  edges: [],
-};
+/** 从 layoutStore 读当前作用域的节点位置 */
+function currentPositions(scopeId: string | null): Record<string, { x: number; y: number }> | undefined {
+  if (!scopeId) return undefined;
+  return useLayoutStore.getState().getScope(scopeId);
+}
 
 export const useModelStore = create<ModelState>((set, get) => ({
+  entityKind: null,
+  entityId: null,
   modelId: null,
   projectId: null,
+  scopeId: null,
+
   name: 'untitled',
   description: '',
   content: '',
   version: 1,
   pipeline: EMPTY_PIPELINE,
+  exposedElements: [],
   saving: false,
   saved: false,
+  dirty: false,
   loading: false,
   error: null,
-  userPositions: {},
   perfMs: 0,
   aiChecking: false,
   aiStreamContent: '',
@@ -116,7 +140,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
   aiError: null,
   aiAbortController: null,
 
-  /** M4.5 增量：最近打开的模型 */
   recentModelIds: (() => {
     try {
       return JSON.parse(localStorage.getItem('recent_models') ?? '[]');
@@ -124,23 +147,28 @@ export const useModelStore = create<ModelState>((set, get) => ({
       return [];
     }
   })() as string[],
-  addRecentModel(id: string) {
+
+  addRecentModel(id) {
     const prev = get().recentModelIds.filter((x) => x !== id);
     const next = [id, ...prev].slice(0, 10);
-    localStorage.setItem('recent_models', JSON.stringify(next));
+    try {
+      localStorage.setItem('recent_models', JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
     set({ recentModelIds: next });
   },
 
   setName(n) {
-    set({ name: n, saved: false });
+    set({ name: n, saved: false, dirty: true });
   },
 
   setDescription(d) {
-    set({ description: d, saved: false });
+    set({ description: d, saved: false, dirty: true });
   },
 
   setContent(c) {
-    set({ content: c, saved: false });
+    set({ content: c, saved: false, dirty: true });
     get().runPipeline(c);
   },
 
@@ -148,81 +176,36 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ projectId: id });
   },
 
+  setVersion(v) {
+    set({ version: v });
+  },
+
   runPipeline(text) {
-    const t0 = performance.now();
-    let parseErrors: ParseError[] = [];
-    let validationIssues: ValidationIssue[] = [];
-    let model: SysMLModel = { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] };
-    let nodes: Node[] = [];
-    let edges: Edge[] = [];
-    let layoutMs = 0;
-    let layoutEngine: 'grid' | 'elk' = 'grid';
+    const result = runPipelinePure(text, currentPositions(get().scopeId));
+    set({ pipeline: result, perfMs: result.layoutMs ?? 0 });
 
-    try {
-      const r = parse(text);
-      parseErrors = r.errors;
-      model = r.model;
-
-      const v = validate(model);
-      validationIssues = v.issues;
-
-      if (parseErrors.length === 0) {
-        const f = modelToFlow(model);
-        nodes = f.nodes;
-        edges = f.edges;
-        layoutMs = performance.now() - t0;
-      }
-    } catch (e) {
-      parseErrors = [
-        {
-          message: (e as Error).message || 'Pipeline failed',
-          location: { line: 1, column: 1, offset: 0 },
-          severity: 'error',
-          code: 'PIPELINE_ERROR',
-        },
-      ];
-    }
-
-    // 应用 userPositions（覆盖网格坐标，保留用户拖动结果）
-    const userPositions = get().userPositions;
-    nodes = nodes.map((n) => {
-      if ((n as { parentId?: string }).parentId) return n;
-      const up = userPositions[String(n.id)];
-      return up ? { ...n, position: up } : n;
-    });
-
-    set({
-      pipeline: { parseErrors, validationIssues, model, nodes, edges, layoutMs, layoutEngine },
-      perfMs: layoutMs,
-    });
-
-    // 异步触发 ELK 自动布局（M2）：完成后用 ELK 坐标覆盖 grid 坐标
-    if (parseErrors.length === 0) {
+    // 异步触发 ELK 自动布局：完成后用 ELK 坐标覆盖 grid 坐标
+    if (result.parseErrors.length === 0) {
       void get().applyElkLayout();
     }
   },
 
   async applyElkLayout() {
-    const { pipeline } = get();
+    const { pipeline, scopeId } = get();
     if (pipeline.parseErrors.length > 0) return;
     const t0 = performance.now();
     try {
       const laid = await modelToFlowLayouted(pipeline.model);
-      const userPositions = get().userPositions;
+      const positions = currentPositions(scopeId) ?? {};
       // 用户拖动过的节点保留用户位置，未拖动的采用 ELK 坐标
       const merged = laid.nodes.map((n) => {
         if ((n as { parentId?: string }).parentId) return n;
-        const up = userPositions[String(n.id)];
+        const up = positions[String(n.id)];
         return up ? { ...n, position: up } : n;
       });
       const ms = performance.now() - t0;
       set({
-        pipeline: {
-          ...pipeline,
-          nodes: merged,
-          layoutMs: ms,
-          layoutEngine: 'elk',
-        },
+        pipeline: { ...pipeline, nodes: merged, layoutMs: ms, layoutEngine: 'elk' },
         perfMs: ms,
       });
     } catch (e) {
@@ -231,20 +214,159 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
   },
 
-  async loadModel(projectId, modelId) {
-    set({ loading: true, error: null, projectId, modelId, userPositions: {} });
+  // ─── M12：包 / 视图会话 ───────────────────────────────────────────
+
+  async loadPackage(packageId) {
+    set({ loading: true, error: null });
     try {
+      const rec = await packageApi.get(packageId);
+      useLayoutStore.getState().setProject(rec.projectId);
+      set({
+        entityKind: 'package',
+        entityId: rec.id,
+        scopeId: rec.id,
+        modelId: rec.id,
+        projectId: rec.projectId,
+        name: rec.name,
+        description: rec.description ?? '',
+        content: rec.content ?? '',
+        version: rec.version,
+        loading: false,
+        saved: false,
+        dirty: false,
+      });
+      get().runPipeline(rec.content ?? '');
+    } catch (e) {
+      set({ loading: false, error: (e as Error).message });
+      throw e;
+    }
+  },
+
+  async loadView(viewId) {
+    set({ loading: true, error: null });
+    try {
+      const rec = await viewApi.get(viewId);
+      useLayoutStore.getState().setProject(rec.projectId);
+      set({
+        entityKind: 'view',
+        entityId: rec.id,
+        scopeId: rec.id,
+        modelId: rec.id,
+        projectId: rec.projectId,
+        name: rec.name,
+        description: rec.description ?? '',
+        content: rec.content ?? '',
+        version: rec.version,
+        exposedElements: rec.exposedElements ?? [],
+        loading: false,
+        saved: false,
+        dirty: false,
+      });
+      get().runPipeline(rec.content ?? '');
+    } catch (e) {
+      set({ loading: false, error: (e as Error).message });
+      throw e;
+    }
+  },
+
+  /**
+   * 保存当前会话内容。
+   *
+   * 只发送内容相关字段（name/description/content/version）；
+   * metadata / colorTag / parentPackageId 等属性由属性面板各自保存。
+   * 返回值交给调用方读取后端重算的字段（如 view.exposedElements）。
+   */
+  async saveContent() {
+    if (get().saving) return null;
+    const { entityKind, entityId, name, description, content, version } = get();
+    if (!entityKind || !entityId) {
+      set({ error: '没有打开的内容会话' });
+      return null;
+    }
+    set({ saving: true, error: null, saved: false });
+    try {
+      let rec: { id: string; version: number; exposedElements?: ExposedElement[] };
+      if (entityKind === 'package') {
+        const full = await packageApi.get(entityId);
+        rec = await packageApi.update(entityId, {
+          name,
+          parentPackageId: full.parentPackageId,
+          description,
+          content,
+          metadata: full.metadata,
+          version,
+        });
+      } else if (entityKind === 'view') {
+        const full = await viewApi.get(entityId);
+        rec = await viewApi.update(entityId, {
+          name,
+          packageId: full.packageId,
+          description,
+          content,
+          colorTag: full.colorTag,
+          renderingCategory: full.renderingCategory,
+          metadata: full.metadata,
+          version,
+        });
+      } else {
+        rec = await modelApi.update(get().projectId!, entityId, {
+          name,
+          description,
+          content,
+          version,
+        });
+      }
+      set({
+        version: rec.version,
+        // 视图保存后后端会重算暴露元素缓存，取返回值刷新
+        ...(entityKind === 'view'
+          ? { exposedElements: rec.exposedElements ?? [] }
+          : {}),
+        saving: false,
+        saved: true,
+        dirty: false,
+      });
+      setTimeout(() => {
+        set((s) => (s.saved ? { saved: false } : s));
+      }, 2000);
+      return rec;
+    } catch (e) {
+      const err = e as { code?: string; message?: string } & Error;
+      if (err.code === 'E_VERSION_CONFLICT' && entityKind && entityId) {
+        // 冲突：重载最新版本，让用户可重试
+        try {
+          if (entityKind === 'package') await get().loadPackage(entityId);
+          else if (entityKind === 'view') await get().loadView(entityId);
+        } catch {
+          /* ignore reload error */
+        }
+        set({ saving: false, error: '版本冲突，已刷新至最新版本，请重新保存' });
+      } else {
+        set({ saving: false, error: err.message ?? '保存失败' });
+      }
+      throw e;
+    }
+  },
+
+  // ─── 遗留：模型会话（M12.4 删除） ──────────────────────────────────
+
+  async loadModel(projectId, modelId) {
+    set({ loading: true, error: null, projectId, scopeId: modelId });
+    try {
+      useLayoutStore.getState().setProject(projectId);
       const rec: ModelRecord = await modelApi.get(projectId, modelId);
       set({
+        entityKind: 'model',
+        entityId: rec.id,
+        modelId: rec.id,
         name: rec.name,
         description: rec.description ?? '',
         content: rec.content,
         version: rec.version,
-        modelId: rec.id,
-        projectId,
         loading: false,
+        saved: false,
+        dirty: false,
       });
-      // M4.5 增量：记录最近打开
       get().addRecentModel(rec.id);
       get().runPipeline(rec.content);
     } catch (e) {
@@ -254,45 +376,35 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   async saveModel() {
-    // 并发保护：避免自动保存与手动保存同时用同一 version 发请求导致 409
     if (get().saving) return;
-    const { projectId, modelId, name, description, content, version } = get();
+    const { projectId, entityId, name, description, content, version } = get();
     if (!projectId) {
       set({ error: '缺少 projectId，无法保存' });
       return;
     }
     set({ saving: true, error: null, saved: false });
     try {
-      let rec: ModelRecord;
-      if (modelId) {
-        rec = await modelApi.update(projectId, modelId, {
-          name,
-          description,
-          content,
-          version,
-        });
-      } else {
-        rec = await modelApi.create(projectId, {
-          name,
-          content,
-          version: 1,
-        });
-      }
+      const rec: ModelRecord = entityId
+        ? await modelApi.update(projectId, entityId, { name, description, content, version })
+        : await modelApi.create(projectId, { name, content, version: 1 });
       set({
+        entityId: rec.id,
         modelId: rec.id,
+        scopeId: rec.id,
+        entityKind: 'model',
         version: rec.version,
         saving: false,
         saved: true,
+        dirty: false,
       });
       setTimeout(() => {
         set((s) => (s.saved ? { saved: false } : s));
       }, 2000);
     } catch (e) {
       const err = e as { code?: string; message?: string } & Error;
-      // 版本冲突：自动重载最新 version，让用户可重试
-      if (err.code === 'E_VERSION_CONFLICT' && modelId) {
+      if (err.code === 'E_VERSION_CONFLICT' && entityId) {
         try {
-          await get().loadModel(projectId, modelId);
+          await get().loadModel(projectId, entityId);
         } catch {
           /* ignore reload error */
         }
@@ -306,17 +418,22 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   reset() {
     set({
+      entityKind: null,
+      entityId: null,
       modelId: null,
       projectId: null,
+      scopeId: null,
       name: 'untitled',
+      description: '',
       content: '',
       version: 1,
       pipeline: EMPTY_PIPELINE,
+      exposedElements: [],
       saving: false,
       saved: false,
+      dirty: false,
       loading: false,
       error: null,
-      userPositions: {},
       perfMs: 0,
     });
   },
@@ -324,10 +441,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
   // ─── M2 双向同步 ──────────────────────────────────────────────────
 
   renameNode(nodeId, newName) {
-    const { content, pipeline } = get();
+    const { content, pipeline, scopeId } = get();
     const result = editRename(content, pipeline.model, nodeId, newName);
     if (result.text === content) return; // no-op
-    set({ content: result.text, saved: false, userPositions: {} });
+    // 重命名会改变 AST id → 旧位置记录失效，清掉该作用域
+    if (scopeId) useLayoutStore.getState().clearScope(scopeId);
+    set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
   },
 
@@ -335,7 +454,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const { content, pipeline } = get();
     const result = editDelete(content, pipeline.model, nodeId);
     if (result.text === content) return;
-    set({ content: result.text, saved: false });
+    set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
   },
 
@@ -343,18 +462,18 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const { content, pipeline } = get();
     const result = editDeleteConn(content, pipeline.model, edgeId);
     if (result.text === content) return;
-    set({ content: result.text, saved: false });
+    set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
   },
 
   setNodePosition(nodeId, x, y) {
-    const userPositions = { ...get().userPositions, [nodeId]: { x, y } };
-    set({ userPositions });
+    const { scopeId, pipeline } = get();
+    if (scopeId) useLayoutStore.getState().setPosition(scopeId, nodeId, x, y);
     // 立即更新 pipeline.nodes 中的 position，避免 React Flow 跳回
-    const nodes = get().pipeline.nodes.map((n) =>
+    const nodes = pipeline.nodes.map((n) =>
       String(n.id) === nodeId ? { ...n, position: { x, y } } : n
     );
-    set({ pipeline: { ...get().pipeline, nodes } });
+    set({ pipeline: { ...pipeline, nodes } });
   },
 
   // ─── M11: 拖拽创建节点 ─────────────────────────────────────────────
@@ -362,36 +481,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
   /**
    * 拖拽 PaletteItem 到画布某坐标时调用：
    *   1. 生成 snippet
-   *   2. spliceAt 插入位置
+   *   2. 插入到最后一个 package 的 body 末尾
    *   3. setContent 触发 pipeline
-   *   4. 在 pipeline 完成后立即 setNodePosition 锁定到落点
+   *   4. 锁定新节点到落点
    */
-  createNodeFromPalette(
-    snippet: string,
-    name: string,
-    dropXY?: { x: number; y: number }
-  ): { ok: boolean; newNodeId?: string; reason?: string } {
+  createNodeFromPalette(snippet, name, dropXY) {
     const { content, pipeline } = get();
-    // 空内容：包入默认 package
-    let newContent: string;
-    if (content.trim().length === 0) {
-      newContent = `package DemoModel {\n${snippet}\n}\n`;
-    } else {
-      // 简化：找到最后一个 package 的 `}` 之前插入
-      const lastPkg = pipeline.model.packages[pipeline.model.packages.length - 1];
-      if (!lastPkg) {
-        newContent = `package DemoModel {\n${snippet}\n}\n` + content;
-      } else {
-        // 找最后一个 package 的关闭 `}` 的 offset
-        const closeOffset = findPackageClose(content, lastPkg.location.offset);
-        newContent = content.slice(0, closeOffset) + snippet + '\n' + content.slice(closeOffset);
-      }
-    }
+    const newContent = insertSnippet(content, pipeline.model, snippet);
 
-    set({ content: newContent, saved: false });
+    set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
 
-    // 找到新生成的节点（kind 推断）
     const id = findNewNodeId(pipeline.model, name);
     if (id && dropXY) {
       get().setNodePosition(id, dropXY.x, dropXY.y);
@@ -403,9 +503,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   /**
    * 用户在 drag 模式从 sourceId 节点画线到 targetId 节点。
-   * 自动推断两端的"短名"，生成 `connect A to B;` 语句。
+   * 自动推断两端的短名，生成 `connect A to B;` 语句。
    */
-  addConnection(sourceId: string, targetId: string): { ok: boolean; reason?: string } {
+  addConnection(sourceId, targetId) {
     const { content, pipeline } = get();
     const srcShort = shortNameFromNodeId(pipeline.model, sourceId);
     const tgtShort = shortNameFromNodeId(pipeline.model, targetId);
@@ -416,15 +516,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
       return { ok: false, reason: '不能连接同一节点' };
     }
     const snippet = `connect ${srcShort} to ${tgtShort};`;
-    const lastPkg = pipeline.model.packages[pipeline.model.packages.length - 1];
-    let newContent: string;
-    if (!lastPkg) {
-      newContent = `package DemoModel {\n${snippet}\n}\n`;
-    } else {
-      const closeOffset = findPackageClose(content, lastPkg.location.offset);
-      newContent = content.slice(0, closeOffset) + snippet + '\n' + content.slice(closeOffset);
-    }
-    set({ content: newContent, saved: false });
+    const newContent = insertSnippet(content, pipeline.model, snippet);
+    set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
     return { ok: true };
   },
@@ -433,40 +526,21 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   runAiCheck() {
     const { content, aiAbortController } = get();
-    // 取消前一次请求
-    if (aiAbortController) {
-      aiAbortController.abort();
-    }
+    if (aiAbortController) aiAbortController.abort();
 
-    set({
-      aiChecking: true,
-      aiStreamContent: '',
-      aiIssues: [],
-      aiError: null,
+    set({ aiChecking: true, aiStreamContent: '', aiIssues: [], aiError: null });
+
+    const controller = checkSyntaxStream(content, {
+      onChunk(chunk) {
+        set((s) => ({ aiStreamContent: s.aiStreamContent + chunk }));
+      },
+      onDone(issues) {
+        set({ aiChecking: false, aiIssues: issues, aiAbortController: null });
+      },
+      onError(error) {
+        set({ aiChecking: false, aiError: error, aiAbortController: null });
+      },
     });
-
-    const controller = checkSyntaxStream(
-      content,
-      {
-        onChunk(chunk) {
-          set((s) => ({ aiStreamContent: s.aiStreamContent + chunk }));
-        },
-        onDone(issues) {
-          set({
-            aiChecking: false,
-            aiIssues: issues,
-            aiAbortController: null,
-          });
-        },
-        onError(error) {
-          set({
-            aiChecking: false,
-            aiError: error,
-            aiAbortController: null,
-          });
-        },
-      }
-    );
 
     set({ aiAbortController: controller });
   },
@@ -475,123 +549,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const { aiAbortController } = get();
     if (aiAbortController) {
       aiAbortController.abort();
-      set({
-        aiChecking: false,
-        aiAbortController: null,
-      });
+      set({ aiChecking: false, aiAbortController: null });
     }
   },
 }));
-
-// ─── 辅助：findPackageClose ─────────────────────────────────────────────
-
-function findPackageClose(text: string, pkgOffset: number): number {
-  let i = pkgOffset;
-  while (i < text.length && text[i] !== '{') i++;
-  if (i >= text.length) return text.length;
-  let depth = 1;
-  i++;
-  while (i < text.length && depth > 0) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') depth--;
-    i++;
-  }
-  return i - 1; // `}` 之前
-}
-
-// ─── 辅助：从 model 中按 name 找最新声明的 node id ───────────────────────
-
-function findNewNodeId(model: SysMLModel, name: string): string | undefined {
-  for (const pkg of model.packages) {
-    const found = walkForName(pkg, name);
-    if (found) return found;
-  }
-  for (const sm of model.stateMachines) {
-    for (const s of sm.states) if (s.name === name) return `state:${s.id}`;
-  }
-  for (const act of model.activities) {
-    for (const a of act.actions) if (a.name === name) return `action:${a.id}`;
-  }
-  for (const req of model.requirements) {
-    if (req.name === name) return `req:${req.id}`;
-  }
-  for (const cb of model.constraintBlocks) {
-    if (cb.name === name) return `cb:${cb.id}`;
-  }
-  return undefined;
-}
-
-function walkForName(pkg: any, name: string): string | undefined {
-  for (const m of pkg.members) {
-    if (m.kind === 'partDef' && m.name === name) return `pd:${m.id}`;
-    if (m.kind === 'partUsage' && m.name === name) return `pu:${m.id}`;
-    if (m.kind === 'portDef' && m.name === name) return `portdef:${m.id}`;
-    if (m.kind === 'stateMachine') {
-      for (const s of m.states ?? []) if (s.name === name) return `state:${s.id}`;
-    }
-    if (m.kind === 'requirement' && m.name === name) return `req:${m.id}`;
-    if (m.kind === 'constraintBlock' && m.name === name) return `cb:${m.id}`;
-    if (m.kind === 'activity') {
-      for (const a of m.actions ?? []) if (a.name === name) return `action:${a.id}`;
-    }
-    if (m.kind === 'package') {
-      const f = walkForName(m, name);
-      if (f) return f;
-    }
-  }
-  return undefined;
-}
-
-// ─── 辅助：从 node id 反查短名 ────────────────────────────────────────────
-
-function shortNameFromNodeId(model: SysMLModel, nodeId: string): string | undefined {
-  const map: Record<string, string> = {
-    'pd:': 'partDef',
-    'pu:': 'partUsage',
-    'portdef:': 'portDef',
-    'state:': 'stateDef',
-    'action:': 'actionDef',
-    'req:': 'requirement',
-    'cb:': 'constraintBlock',
-  };
-  for (const [prefix, kind] of Object.entries(map)) {
-    if (nodeId.startsWith(prefix)) {
-      const astId = nodeId.slice(prefix.length);
-      return walkForShortName(model, astId, kind);
-    }
-  }
-  return undefined;
-}
-
-function walkForShortName(model: SysMLModel, astId: string, kind: string): string | undefined {
-  for (const pkg of model.packages) {
-    const r = walkPkgForShortName(pkg, astId, kind);
-    if (r) return r;
-  }
-  for (const sm of model.stateMachines) {
-    for (const s of sm.states) {
-      if (s.id === astId && kind === 'stateDef') return s.name;
-    }
-  }
-  for (const req of model.requirements) {
-    if (req.id === astId && kind === 'requirement') return req.name;
-  }
-  for (const cb of model.constraintBlocks) {
-    if (cb.id === astId && kind === 'constraintBlock') return cb.name;
-  }
-  return undefined;
-}
-
-function walkPkgForShortName(pkg: any, astId: string, kind: string): string | undefined {
-  for (const m of pkg.members) {
-    if (m.id === astId && m.kind === kind && m.name) return m.name;
-    if (m.kind === 'package') {
-      const r = walkPkgForShortName(m, astId, kind);
-      if (r) return r;
-    }
-    if (m.kind === 'stateMachine') {
-      for (const s of m.states ?? []) if (s.id === astId) return s.name;
-    }
-  }
-  return undefined;
-}
