@@ -443,10 +443,10 @@ RequirementDef
     }
 
 ReqId
-  = WS "(" WS id:$(!")" .)+ WS ")" { return id.trim(); }
+  = WS "(" _ id:$(!")" .)* _ ")" { return id.trim(); }
 
 ReqText
-  = WS "{" WS t:$(!"}" .)+ WS "}" { return t.trim(); }
+  = WS "{" t:$(!"}" .)* _ "}" { return t.trim(); }
 
 // ─── Trace Statement（M5 需求追溯）────────────────────────────────────
 

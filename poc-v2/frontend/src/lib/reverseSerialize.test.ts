@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { parse } from '../../../parser/parser';
-import { applyFieldEdit } from './reverseSerialize';
+import { applyFieldEdit, applyListEdit } from './reverseSerialize';
 
 const SIMPLE_MODEL = `package Demo {
   part def Engine {
@@ -102,5 +102,61 @@ describe('reverseSerialize', () => {
     const r = applyFieldEdit(SIMPLE_MODEL, model, puId, { fieldKey: 'typeRef', value: 'Vehicle' });
     expect(r.changed).toBe(true);
     expect(r.text).toContain('part engine : Vehicle');
+  });
+
+  // ─── M11.x: 列表字段（attributes / ports）增删改 ─────────────────
+
+  it('adds new attribute to part def body', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyListEdit(SIMPLE_MODEL, model, pdId, {
+      kind: 'attribute',
+      op: 'add',
+      item: { name: 'power', typeRef: 'Real' },
+    });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('attribute power : Real;');
+  });
+
+  it('removes attribute from part def body by oldName', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyListEdit(SIMPLE_MODEL, model, pdId, {
+      kind: 'attribute',
+      op: 'remove',
+      item: { oldName: 'mass', name: 'mass', typeRef: 'Real' },
+    });
+    expect(r.changed).toBe(true);
+    // Engine 体应该空了
+    expect(r.text).toMatch(/part def Engine\s*\{\s*\}/);
+    // Constraint def MassLimit 中的同名 attribute 不应被误删
+    expect(r.text).toContain('constraint def MassLimit');
+  });
+
+  it('updates attribute name + typeRef', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyListEdit(SIMPLE_MODEL, model, pdId, {
+      kind: 'attribute',
+      op: 'update',
+      item: { oldName: 'mass', name: 'weight', typeRef: 'Real' },
+    });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('attribute weight : Real;');
+    // Constraint def MassLimit 中的同名 attribute 不应被替换
+    expect(r.text).toMatch(/constraint def MassLimit[\s\S]*attribute\s+mass\s*:/);
+  });
+
+  it('returns no-change when part def has no body', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyListEdit(SIMPLE_MODEL, model, pdId, {
+      kind: 'port',
+      op: 'add',
+      item: { name: 'p1', typeRef: 'P' },
+    });
+    // Engine has body so it must succeed
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('port p1 : P;');
   });
 });

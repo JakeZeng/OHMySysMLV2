@@ -487,6 +487,11 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
       onMount={handleEditorDidMount}
       options={{ readOnly, automaticLayout: true }}
       theme="vs-dark"
+      loading={
+        <div className="flex h-full items-center justify-center bg-[#1e1e1e] font-mono text-[11px] text-gray-500">
+          <span className="animate-pulse">编辑器加载中…</span>
+        </div>
+      }
     />
   );
 });

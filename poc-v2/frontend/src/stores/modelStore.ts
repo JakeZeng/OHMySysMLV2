@@ -509,6 +509,9 @@ function findNewNodeId(model: SysMLModel, name: string): string | undefined {
   for (const sm of model.stateMachines) {
     for (const s of sm.states) if (s.name === name) return `state:${s.id}`;
   }
+  for (const act of model.activities) {
+    for (const a of act.actions) if (a.name === name) return `action:${a.id}`;
+  }
   for (const req of model.requirements) {
     if (req.name === name) return `req:${req.id}`;
   }
@@ -528,6 +531,9 @@ function walkForName(pkg: any, name: string): string | undefined {
     }
     if (m.kind === 'requirement' && m.name === name) return `req:${m.id}`;
     if (m.kind === 'constraintBlock' && m.name === name) return `cb:${m.id}`;
+    if (m.kind === 'activity') {
+      for (const a of m.actions ?? []) if (a.name === name) return `action:${a.id}`;
+    }
     if (m.kind === 'package') {
       const f = walkForName(m, name);
       if (f) return f;

@@ -8,9 +8,7 @@
  *   - 单字段（isAbstract、reqId、text、constraint、direction、isInitial、isFinal）：
  *     找到声明的范围，精确替换该字段 token
  *   - description：在 `}` 之前插入注释块（如不存在）
- *
- * 注意：复杂结构（attributes、ports 列表）的反向序列化留给后续 M11.x；
- * MVP 阶段表单只支持 simple fields（M11.2 范围）。
+ *   - M11.x：列表字段（attributes / ports）：增删改 + 行级反序列化
  */
 
 import type { SysMLModel } from '../../../ast/model';
@@ -277,4 +275,133 @@ function editStateField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseR
 function editActionField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
   // action 字段编辑与 state 相同模式
   return editStateField(text, decl, edit);
+}
+
+// ─── M11.x: 列表字段（attributes / ports）增删改 ─────────────────────
+
+export interface ListItem {
+  /** 原 name（用于定位）；新增项时为空 */
+  oldName?: string;
+  name: string;
+  typeRef: string;
+}
+
+export interface ListEdit {
+  kind: 'attribute' | 'port';
+  /** 插入或删除或更新 */
+  op: 'add' | 'remove' | 'update';
+  item: ListItem;
+}
+
+/**
+ * applyListEdit — 增删改 part def 内的 attribute / port。
+ *
+ * 找到 part def 体的 `{` 位置，在闭合 `}` 之前插入（或在匹配行删除）。
+ */
+export function applyListEdit(
+  text: string,
+  model: SysMLModel,
+  nodeId: string,
+  edit: ListEdit
+): ReverseResult {
+  // nodeId 形如 pd:<id>
+  if (!nodeId.startsWith('pd:')) return { text, changed: false };
+  const astId = nodeId.slice(3);
+  const decl = findPartDefById(model, astId);
+  if (!decl) return { text, changed: false };
+
+  // 找 part def 体的 `{` 与 `}` 边界
+  const bodyRange = findBlockBodyRange(text, decl.location.offset);
+  if (!bodyRange) return { text, changed: false };
+  const [openBrace, closeBrace] = bodyRange;
+  // (测试用 type guard：openBrace 必须 < closeBrace)
+  if (openBrace >= closeBrace) return { text, changed: false };
+
+  const bodyText = text.slice(openBrace + 1, closeBrace);
+
+  if (edit.op === 'add') {
+    const line = edit.kind === 'attribute'
+      ? `  attribute ${edit.item.name} : ${edit.item.typeRef};\n`
+      : `  port ${edit.item.name} : ${edit.item.typeRef};\n`;
+    // 插入位置：体末尾（`}` 之前）
+    const newText = text.slice(0, closeBrace) + line + text.slice(closeBrace);
+    return { text: newText, changed: newText !== text };
+  }
+
+  if (edit.op === 'remove') {
+    // 找到匹配的行并删除（含换行）
+    const re = edit.kind === 'attribute'
+      ? new RegExp(`^[ \\t]*attribute\\s+${escapeRegex(edit.item.oldName ?? edit.item.name)}\\s*:.*\\n`, 'm')
+      : new RegExp(`^[ \\t]*port\\s+${escapeRegex(edit.item.oldName ?? edit.item.name)}\\s*:.*\\n`, 'm');
+    const m = bodyText.match(re);
+    if (!m) return { text, changed: false };
+    const startInText = openBrace + 1 + (m.index ?? 0);
+    const endInText = startInText + m[0].length;
+    const newText = text.slice(0, startInText) + text.slice(endInText);
+    return { text: newText, changed: newText !== text };
+  }
+
+  if (edit.op === 'update') {
+    // 更新 name 或 typeRef
+    const re = edit.kind === 'attribute'
+      ? new RegExp(`([ \\t]*attribute\\s+)${escapeRegex(edit.item.oldName ?? '')}\\s*:\\s*([\\w.]+)?`)
+      : new RegExp(`([ \\t]*port\\s+)${escapeRegex(edit.item.oldName ?? '')}\\s*:\\s*([\\w.]+)?`);
+    const m = bodyText.match(re);
+    if (!m) return { text, changed: false };
+    const startInText = openBrace + 1 + (m.index ?? 0);
+    const endInText = startInText + m[0].length;
+    const replacement = `${m[1]}${edit.item.name} : ${edit.item.typeRef}`;
+    const newText = text.slice(0, startInText) + replacement + text.slice(endInText);
+    return { text: newText, changed: newText !== text };
+  }
+
+  return { text, changed: false };
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 找到 part def 的体 `{ ... }` 边界；空体（`part def X;`）返回 null */
+function findBlockBodyRange(text: string, declOffset: number): [number, number] | null {
+  let i = declOffset;
+  while (i < text.length && text[i] !== '{' && text[i] !== ';') i++;
+  if (i >= text.length || text[i] === ';') return null;
+  const openBrace = i;
+  let depth = 1;
+  i++;
+  while (i < text.length && depth > 0) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') depth--;
+    i++;
+  }
+  // i 现在是 `}` 之后的位置；closeBrace 是 `}` 本身
+  const closeBrace = i - 1;
+  if (closeBrace <= openBrace) return null;
+  return [openBrace, closeBrace];
+}
+
+interface DeclLocationInfo {
+  location: { line: number; column: number; offset: number };
+}
+
+function findPartDefById(model: SysMLModel, id: string): DeclLocationInfo | undefined {
+  for (const pkg of model.packages) {
+    const f = walkForPartDef(pkg, id);
+    if (f) return f;
+  }
+  return undefined;
+}
+
+function walkForPartDef(pkg: any, id: string): DeclLocationInfo | undefined {
+  for (const m of pkg.members) {
+    if (m.kind === 'partDef' && m.id === id) {
+      return { location: { line: m.location.line, column: m.location.column, offset: m.location.offset } };
+    }
+    if (m.kind === 'package') {
+      const r = walkForPartDef(m, id);
+      if (r) return r;
+    }
+  }
+  return undefined;
 }

@@ -384,6 +384,8 @@ export const ModelEditor: React.FC = () => {
         const result = createNodeFromPalette(snippet, name1.trim(), dropXY);
         if (!result.ok) {
           showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+        } else if (result.newNodeId) {
+          diagramRef.current?.focusNode(result.newNodeId);
         }
         return;
       }
@@ -396,6 +398,8 @@ export const ModelEditor: React.FC = () => {
         const result = createNodeFromPalette(snippet, name.trim(), dropXY);
         if (!result.ok) {
           showToast({ title: '创建失败', description: result.reason, variant: 'error' });
+        } else if (result.newNodeId) {
+          diagramRef.current?.focusNode(result.newNodeId);
         }
         return;
       }
@@ -412,6 +416,7 @@ export const ModelEditor: React.FC = () => {
         showToast({ title: '创建失败', description: result.reason, variant: 'error' });
       } else {
         showToast({ title: '已添加', description: `${item.label} "${trimmed}" 已插入`, variant: 'success' });
+        if (result.newNodeId) diagramRef.current?.focusNode(result.newNodeId);
       }
     },
     [createNodeFromPalette, showToast]

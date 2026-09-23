@@ -17,6 +17,14 @@ export type FieldKey =
   | 'constraint'
   | 'description';
 
+/** M11.x: 可重复列表字段模板（用于 attributes / ports 列表） */
+export interface RepeatableFieldTemplate {
+  key: 'name' | 'typeRef';
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+}
+
 export type FieldWidget =
   | 'text'
   | 'textarea'
@@ -56,6 +64,8 @@ export interface FormSchema {
     fields: FormField[];
     /** repeatable 表：用于 attributes / ports / nesting */
     repeatable?: boolean;
+    /** repeatable 字段模板：定义列表项的列布局（M11.x） */
+    repeatableFields?: RepeatableFieldTemplate[];
   }>;
 }
 
@@ -83,12 +93,20 @@ export const PART_DEF_SCHEMA: FormSchema = {
       label: '属性',
       repeatable: true,
       fields: [],
+      repeatableFields: [
+        { key: 'name', label: '名称', placeholder: 'mass', required: true },
+        { key: 'typeRef', label: '类型', placeholder: 'Real', required: true },
+      ],
     },
     {
       key: 'ports',
       label: '端口',
       repeatable: true,
       fields: [],
+      repeatableFields: [
+        { key: 'name', label: '名称', placeholder: 'fuelPort', required: true },
+        { key: 'typeRef', label: '类型', placeholder: 'FuelPort', required: true },
+      ],
     },
     {
       key: 'description',

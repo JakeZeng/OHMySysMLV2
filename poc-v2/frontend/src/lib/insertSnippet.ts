@@ -114,9 +114,9 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     label: 'Requirement',
     icon: '📋',
     category: '需求',
-    description: '需求：requirement R1 { /* ... */ }',
+    description: '需求：requirement def R1 { /* 说明 */ };',
     defaultName: 'NewReq',
-    generate: (n) => `requirement ${n};\n  /** 说明 */\n`,
+    generate: (n) => `requirement def ${n} { /* 说明 */ };`,
   },
   {
     kind: 'constraint',

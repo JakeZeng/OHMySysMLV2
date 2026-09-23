@@ -3,15 +3,18 @@
  *
  * 替代 PropertyPanel：基于 schema 渲染节点字段。
  * 字段修改 debounce 150ms → reverseSerialize → setContent → 重新 pipeline。
+ *
+ * M11.x: 列表字段（attributes / ports）支持增删改，调用 applyListEdit。
  */
 
 import * as React from 'react';
-import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle, Plus, Minus } from 'lucide-react';
 import type { Node } from '@xyflow/react';
+import type { SysMLModel } from '../../../../ast/model';
 import { useModelStore } from '../../stores/modelStore';
 import { useViewStore } from '../../stores/viewStore';
-import { schemaFor, type FormSchema, type FormField } from '../../lib/elementFormSchema';
-import { applyFieldEdit } from '../../lib/reverseSerialize';
+import { schemaFor, type FormSchema, type FormField, type RepeatableFieldTemplate, type SectionKey } from '../../lib/elementFormSchema';
+import { applyFieldEdit, applyListEdit, type ListItem } from '../../lib/reverseSerialize';
 import { Button } from '../ui/Button';
 
 const KIND_COLOR: Record<string, string> = {
@@ -39,6 +42,14 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const setContent = useModelStore((s) => s.setContent);
   const deleteNode = useModelStore((s) => s.deleteNode);
   const currentView = useViewStore((s) => s.views.find((v) => v.id === s.currentViewId));
+
+  // M11.x: 列表字段（attributes / ports）— 从 AST 读取当前列表。
+  // 必须在 early return 之前调用，避免 React hooks 顺序不一致（"Rendered more hooks"）。
+  const listData = React.useMemo(() => {
+    if (!selectedNode) return { attributes: [], ports: [] };
+    return extractListData(pipeline.model, String(selectedNode.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipeline.model, selectedNode]);
 
   if (!selectedNode) {
     return (
@@ -93,6 +104,30 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
     if (result.changed) {
       setContent(result.text);
     }
+  };
+
+  const handleListAdd = (sectionKey: SectionKey, item: ListItem) => {
+    if (readOnly || !isFromModel) return;
+    const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
+    const result = applyListEdit(
+      useModelStore.getState().content,
+      pipeline.model,
+      String(selectedNode.id),
+      { kind, op: 'add', item }
+    );
+    if (result.changed) setContent(result.text);
+  };
+
+  const handleListRemove = (sectionKey: SectionKey, item: ListItem) => {
+    if (readOnly || !isFromModel) return;
+    const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
+    const result = applyListEdit(
+      useModelStore.getState().content,
+      pipeline.model,
+      String(selectedNode.id),
+      { kind, op: 'remove', item: { ...item, oldName: item.name } }
+    );
+    if (result.changed) setContent(result.text);
   };
 
   const handleDelete = () => {
@@ -153,11 +188,22 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
           >
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
               {section.label}
+              {section.repeatable && (section.key === 'attributes' || section.key === 'ports') && (
+                <span className="ml-1 normal-case text-gray-400">
+                  （{(section.key === 'attributes' ? listData.attributes : listData.ports).length}）
+                </span>
+              )}
             </div>
-            {section.repeatable ? (
-              <div className="text-[10px] italic text-gray-400">
-                （可重复列表字段，MVP 暂未实现编辑，请在编辑器中维护）
-              </div>
+            {section.repeatable && section.repeatableFields ? (
+              <RepeatableList
+                section={section}
+                listItems={
+                  section.key === 'attributes' ? listData.attributes : listData.ports
+                }
+                onAdd={(item) => handleListAdd(section.key, item)}
+                onRemove={(item) => handleListRemove(section.key, item)}
+                disabled={readOnly || !isFromModel}
+              />
             ) : (
               <div className="space-y-2">
                 {section.fields.map((field) => (
@@ -338,3 +384,136 @@ function normalize(field: FormField, value: unknown): string | boolean {
   if (field.widget === 'checkbox') return Boolean(value);
   return value === undefined || value === null ? '' : String(value);
 }
+
+// ─── M11.x: 列表字段提取与渲染 ──────────────────────────────────────
+
+interface ListData {
+  attributes: ListItem[];
+  ports: ListItem[];
+}
+
+/** 从 AST 中按 partDefId 读取 attribute / port 列表 */
+function extractListData(model: SysMLModel, nodeId: string): ListData {
+  if (!nodeId.startsWith('pd:')) return { attributes: [], ports: [] };
+  const astId = nodeId.slice(3);
+  const partDef = findPartDef(model, astId);
+  if (!partDef) return { attributes: [], ports: [] };
+  const attributes: ListItem[] = [];
+  const ports: ListItem[] = [];
+  for (const m of partDef.body as any[]) {
+    if (m.kind === 'attributeUsage') {
+      attributes.push({ name: m.name, typeRef: m.typeRef });
+    } else if (m.kind === 'portUsage') {
+      if (m.name) ports.push({ name: m.name, typeRef: m.typeRef ?? '' });
+    }
+  }
+  return { attributes, ports };
+}
+
+function findPartDef(model: SysMLModel, id: string): any {
+  for (const pkg of model.packages) {
+    const f = walkForPartDef(pkg, id);
+    if (f) return f;
+  }
+  return undefined;
+}
+function walkForPartDef(pkg: any, id: string): any {
+  for (const m of pkg.members) {
+    if (m.kind === 'partDef' && m.id === id) return m;
+    if (m.kind === 'package') {
+      const r = walkForPartDef(m, id);
+      if (r) return r;
+    }
+  }
+  return undefined;
+}
+
+// ─── RepeatableList 子组件 ────────────────────────────────────────────
+
+interface RepeatableListProps {
+  section: { key: SectionKey; repeatableFields?: RepeatableFieldTemplate[] };
+  listItems: ListItem[];
+  onAdd: (item: ListItem) => void;
+  onRemove: (item: ListItem) => void;
+  disabled: boolean;
+}
+
+const RepeatableList: React.FC<RepeatableListProps> = ({ section, listItems, onAdd, onRemove, disabled }) => {
+  const [name, setName] = React.useState('');
+  const [typeRef, setTypeRef] = React.useState('');
+
+  const fields = section.repeatableFields ?? [];
+  const nameField = fields.find((f) => f.key === 'name');
+  const typeField = fields.find((f) => f.key === 'typeRef');
+
+  const canAdd = !disabled && name.trim() && typeRef.trim();
+
+  const handleAdd = () => {
+    if (!canAdd) return;
+    onAdd({ name: name.trim(), typeRef: typeRef.trim() });
+    setName('');
+    setTypeRef('');
+  };
+
+  return (
+    <div className="space-y-1.5" data-testid={`form-list-${section.key}`}>
+      {listItems.length === 0 ? (
+        <div className="text-[10px] italic text-gray-400">（空）</div>
+      ) : (
+        listItems.map((item, idx) => (
+          <div
+            key={`${item.name}-${idx}`}
+            className="flex items-center gap-1 rounded border border-gray-100 bg-gray-50 px-1.5 py-1 dark:border-gray-700 dark:bg-gray-900"
+            data-testid={`form-list-item-${section.key}-${idx}`}
+          >
+            <span className="flex-1 truncate font-mono text-[11px] text-gray-700 dark:text-gray-200">
+              {item.name}
+              <span className="text-gray-400"> : </span>
+              <span className="text-blue-600 dark:text-blue-300">{item.typeRef}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onRemove(item)}
+              disabled={disabled}
+              className="rounded p-0.5 text-red-500 hover:bg-red-50 disabled:opacity-30 dark:hover:bg-red-900/30"
+              data-testid={`form-list-remove-${section.key}-${idx}`}
+              title="删除"
+            >
+              <Minus className="h-3 w-3" />
+            </button>
+          </div>
+        ))
+      )}
+
+      {!disabled && (
+        <div className="flex items-center gap-1 rounded border border-dashed border-gray-300 px-1.5 py-1 dark:border-gray-600">
+          <input
+            value={name}
+            placeholder={nameField?.placeholder}
+            onChange={(e) => setName(e.target.value)}
+            className="h-6 flex-1 rounded border border-gray-200 bg-white px-1 font-mono text-[11px] focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800"
+            data-testid={`form-list-add-name-${section.key}`}
+          />
+          <span className="text-gray-400">:</span>
+          <input
+            value={typeRef}
+            placeholder={typeField?.placeholder}
+            onChange={(e) => setTypeRef(e.target.value)}
+            className="h-6 flex-1 rounded border border-gray-200 bg-white px-1 font-mono text-[11px] focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800"
+            data-testid={`form-list-add-type-${section.key}`}
+          />
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className="rounded p-0.5 text-green-600 hover:bg-green-50 disabled:opacity-30 dark:hover:bg-green-900/30"
+            data-testid={`form-list-add-btn-${section.key}`}
+            title="添加"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
