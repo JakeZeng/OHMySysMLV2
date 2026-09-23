@@ -1,8 +1,12 @@
 # SysMLv2 MBSE 系统数据库设计
 
 > **技术栈**: PostgreSQL 16 + MongoDB 7 + Redis 7 + MinIO
-> **文档版本**: 1.0
-> **更新日期**: 2026-09-12
+> **文档版本**: 1.1（M12 重构）
+> **更新日期**: 2026-09-24
+>
+> **POC 实际存储说明**：POC 阶段为快速迭代，所有结构化数据落地 SQLite 单文件（`poc-v2/backend/data/sysmlv2.db`）；本文档仍按 PostgreSQL 16 描述最终态 schema，迁移通过 GORM AutoMigrate 完成（参见 `backend/internal/repository/repository.go:initSchema`）。
+>
+> **M12 变更摘要**：删除 `models` 表（SysML v2 不区分 model 与 package），新增 `packages`（含 content/parent_package_id/metadata）和 `views`（含 content/exposed_elements/metadata）两张表。
 
 ---
 
@@ -169,39 +173,76 @@ COMMENT ON TABLE permissions IS '通用权限表，支持细粒度访问控制';
 
 ---
 
-### 1.5 模型版本表 (model_versions)
+### 1.5 包表 (packages, M12 新增)
 
 ```sql
-CREATE TABLE model_versions (
-    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
-    model_id        UUID            NOT NULL,  -- MongoDB ObjectId 存储为字符串
-    version_number  INTEGER         NOT NULL,
-    version_name    VARCHAR(100),
-    message         TEXT,
-    content_hash    VARCHAR(64)     NOT NULL,
-    file_size       BIGINT,
-    storage_path    TEXT,           -- MinIO 对象路径
-    created_by      UUID            NOT NULL REFERENCES users(id),
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    parent_version_id UUID          REFERENCES model_versions(id),
-    tags            TEXT[],
-    UNIQUE(model_id, version_number)
+CREATE TABLE packages (
+    id                  UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id          UUID            NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_package_id   UUID            REFERENCES packages(id) ON DELETE SET NULL,
+    name                VARCHAR(100)    NOT NULL,
+    description         TEXT,
+    content             TEXT            NOT NULL DEFAULT '',          -- SysML v2 文本
+    metadata            JSONB           NOT NULL DEFAULT '{}',         -- K-V 标注
+    version             INTEGER         NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    deleted_at          TIMESTAMPTZ,
+    UNIQUE(project_id, parent_package_id, name)                        -- 同父下唯一
 );
 
-CREATE INDEX idx_model_versions_model ON model_versions(model_id);
-CREATE INDEX idx_model_versions_created_by ON model_versions(created_by);
-CREATE INDEX idx_model_versions_created_at ON model_versions(created_at DESC);
-CREATE INDEX idx_model_versions_hash ON model_versions(content_hash);
+CREATE INDEX idx_packages_project    ON packages(project_id);
+CREATE INDEX idx_packages_parent     ON packages(parent_package_id);
+CREATE INDEX idx_packages_updated_at ON packages(updated_at DESC);
 ```
 
-**说明**:
-- `content_hash`: SHA-256 哈希，用于去重和变更检测
-- `storage_path`: MinIO 中的实际存储路径
-- `parent_version_id`: 支持分支和合并场景
+**说明**：
+- `content`：SysML v2 文本（取代旧 `models.content` 字段）
+- `parent_package_id` 自引用 FK，支持包任意嵌套
+- `UNIQUE(project_id, parent_package_id, name)` 约束 → 同名返业务码 `PackageNameConflict (15003)`
+- `metadata` JSONB K-V 字典，编辑器右侧 K-V 列表写入
 
 ---
 
-### 1.6 模板表 (templates)
+### 1.6 视图表 (views, M12 新增)
+
+```sql
+CREATE TABLE views (
+    id                  UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id          UUID            NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    package_id          UUID            REFERENCES packages(id) ON DELETE SET NULL,
+    name                VARCHAR(100)    NOT NULL,
+    description         TEXT,
+    content             TEXT            NOT NULL DEFAULT '',          -- view definition 文本
+    color_tag           VARCHAR(16)                                       -- UI 标识（8 种 hex）
+                        CHECK (color_tag IS NULL OR color_tag IN (
+                            '#3b82f6','#10b981','#f59e0b','#ef4444',
+                            '#8b5cf6','#ec4899','#14b8a6','#6b7280'
+                        )),
+    rendering_category  VARCHAR(50),                                    -- UI hint: "diagram" | "tree" | "matrix" | "tabulate"
+    exposed_elements    JSONB           NOT NULL DEFAULT '[]',          -- 解析缓存
+    metadata            JSONB           NOT NULL DEFAULT '{}',
+    version             INTEGER         NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    deleted_at          TIMESTAMPTZ,
+    UNIQUE(project_id, package_id, name)
+);
+
+CREATE INDEX idx_views_project    ON views(project_id);
+CREATE INDEX idx_views_package    ON views(package_id);
+CREATE INDEX idx_views_updated_at ON views(updated_at DESC);
+```
+
+**说明**：
+- `package_id` FK → packages，视图可挂载到包或顶层（NULL）
+- `exposed_elements` JSONB：写入/更新后由后端 mini-parser 重算，缓存 `[ {qualifiedName, kind}, ... ]`
+- `color_tag` 8 种 hex，CHECK 约束保证枚举（M11 沿用至 M12，UI 标签语义）
+- `rendering_category` 软提示，画布过滤由 view content `expose` 语句决定（不再硬过滤）
+
+---
+
+### 1.7 模板表 (templates, 沿用)
 
 ```sql
 CREATE TABLE templates (
@@ -229,7 +270,7 @@ CREATE INDEX idx_templates_creator ON templates(created_by);
 
 ---
 
-### 1.7 审计日志表 (audit_logs)
+### 1.8 审计日志表 (audit_logs)
 
 ```sql
 CREATE TABLE audit_logs (
@@ -238,7 +279,11 @@ CREATE TABLE audit_logs (
     actor_ip        INET,
     actor_user_agent TEXT,
     action          VARCHAR(100)   NOT NULL,
-    resource_type   VARCHAR(50)    NOT NULL,
+    resource_type   VARCHAR(50)    NOT NULL
+                                CHECK (resource_type IN (
+                                    'user','project','package','view',
+                                    'team','permission','template','metamodel'
+                                )),
     resource_id     UUID,
     details         JSONB           NOT NULL DEFAULT '{}',
     status          VARCHAR(20)     NOT NULL DEFAULT 'success'
@@ -260,21 +305,25 @@ CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
 ```
 
-**审计事件参考**:
+**审计事件参考** (M12 已增 `package.*` / `view.*`):
 
-| 动作                    | 说明              |
-| ---------------------- | ---------------- |
-| user.login             | 用户登录          |
-| user.logout            | 用户登出          |
-| user.register          | 用户注册          |
-| project.create         | 创建项目          |
-| project.update         | 更新项目          |
-| project.delete         | 删除项目          |
-| model.create           | 创建模型          |
-| model.commit           | 提交模型版本       |
-| model.share            | 共享模型          |
-| permission.grant       | 授予权限          |
-| permission.revoke      | 撤销权限          |
+| 动作                    | resource_type | 说明              |
+| ---------------------- | ------------- | ---------------- |
+| user.login             | user          | 用户登录          |
+| user.logout            | user          | 用户登出          |
+| user.register          | user          | 用户注册          |
+| project.create         | project       | 创建项目          |
+| project.update         | project       | 更新项目          |
+| project.delete         | project       | 删除项目          |
+| package.create         | package       | 创建包（M12 新增）|
+| package.update         | package       | 更新包内容          |
+| package.delete         | package       | 删除包            |
+| view.create            | view          | 创建视图（M12 新增）|
+| view.update            | view          | 更新视图内容（含 exposedElements 重算）|
+| view.delete            | view          | 删除视图          |
+| model.*                | —             | **M12 删除**：不再有 model 实体 |
+| permission.grant       | permission    | 授予权限          |
+| permission.revoke      | permission    | 撤销权限          |
 
 ---
 
@@ -770,7 +819,7 @@ CREATE INDEX idx_templates_search ON templates
 
 ## 5. 表关系说明
 
-### 5.1 ER 关系图
+### 5.1 ER 关系图（M12 更新）
 
 ```
 ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
@@ -791,48 +840,55 @@ CREATE INDEX idx_templates_search ON templates
        │        │    │ role       │                          │
        │        │    └────────────┘                          │
        │        │                                            │
-       │        │    ┌─────────────────┐      ┌─────────────────┐
-       │        │    │ permissions     │      │ model_versions  │
-       │        └────│ id (PK)        │      ├─────────────────┤
-       │             │ resource_type  │      │ id (PK)         │
-       │             │ resource_id    │      │ model_id        │
-       │             │ subject_type   │      │ version_number  │
-       │             │ subject_id    ─┼──────│ created_by (FK) │
-       │             │ action        │      │ ...             │
-       │             └───────────────┘      └─────────────────┘
-       │
-       │        ┌─────────────┐       ┌─────────────────────┐
-       │        │  templates  │       │    audit_logs       │
-       ├────────│ id (PK)     │       ├─────────────────────┤
-       │        │ name        │       │ id (PK)             │
-       │        │ category    │       │ actor_id (FK)       │
-       │        │ created_by  │───────│ action              │
-       │        │ ...         │       │ resource_type       │
-       └────────└─────────────┘       │ resource_id         │
-                                      │ created_at         │
-                                      └─────────────────────┘
+       │        │    ┌─────────────────┐                     │
+       │        │    │ permissions     │                     │
+       │        └────│ id (PK)        │                     │
+       │             │ resource_type  │  ← 'package'/'view' │
+       │             │ resource_id    │     (M12 新增 scope) │
+       │             │ subject_type   │                     │
+       │             │ subject_id    ─┼─────┐               │
+       │             │ action        │     │               │
+       │             └───────────────┘     │               │
+       │                                   │               │
+       │        ┌──────────────┐           │               │
+       │        │   packages   │           │               │
+       ├────────│ id (PK)      │           │               │
+       │        │ project_id(FK)───────────┘               │
+       │        │ parent_package_id (FK, self)             │
+       │        │ name                                    │
+       │        │ content (SysML v2 TEXT)                  │
+       │        │ metadata (JSONB K-V)                     │
+       │        │ version (乐观锁)                          │
+       │        └──────────────┘                           │
+       │              │                                    │
+       │              │ (1:N)                              │
+       │              ▼                                    │
+       │        ┌──────────────┐     ┌─────────────────┐  │
+       │        │    views     │     │   templates     │  │
+       ├────────│ id (PK)      │     ├─────────────────┤  │
+       │        │ project_id(FK)─────│ id (PK)         │  │
+       │        │ package_id(FK)│    │ name            │  │
+       │        │ name         │     │ category        │  │
+       │        │ content      │     │ created_by (FK) │  │
+       │        │ color_tag    │     │ ...             │  │
+       │        │ rendering_category │ └─────────────────┘  │
+       │        │ exposed_elements │                         │
+       │        │ metadata      │     ┌─────────────────┐  │
+       │        │ version       │     │   audit_logs    │  │
+       │        └──────────────┘     ├─────────────────┤  │
+       │                            │ id (PK)         │  │
+       │                            │ actor_id (FK)   │  │
+       │                            │ action          │  │
+       │                            │ resource_type   │  │
+       │                            │ resource_id     │  │
+       │                            │ created_at      │  │
+       │                            └─────────────────┘  │
+       │                                                   │
+       └───────────────────────────────────────────────────┘
 
-MongoDB Collections:
-┌─────────────────────┐     ┌─────────────────────┐
-│       models        │     │   model_revisions   │
-├─────────────────────┤     ├─────────────────────┤
-│ _id (ObjectId)      │────▶│ _id (ObjectId)       │
-│ name                │     │ model_id (FK)       │
-│ project_id (UUID)   │     │ version_number       │
-│ structure (JSON)    │     │ changes              │
-│ ...                 │     │ snapshot             │
-└─────────────────────┘     └─────────────────────┘
-         │
-         │
-┌─────────────────────┐     ┌─────────────────────┐
-│  collaborative_edits │     │  ai_conversations    │
-├─────────────────────┤     ├─────────────────────┤
-│ _id (ObjectId)      │     │ _id (ObjectId)       │
-│ model_id (FK)       │     │ user_id (UUID)      │
-│ session_id          │     │ model_id (FK)       │
-│ participants        │     │ messages            │
-│ operations          │     │ context_refs         │
-└─────────────────────┘     └─────────────────────┘
+（已删除 — M12）：
+  - PostgreSQL model_versions（Model 实体已下线，乐观锁 version 字段内置于 packages/views）
+  - MongoDB models / model_revisions（统一迁入 packages 表 content 字段）
 ```
 
 ---
@@ -854,15 +910,24 @@ MongoDB Collections:
 - 一个团队可拥有多个项目
 - 通过 `team_id` 外键关联
 
-#### 项目与模型 (一对多)
-- 一个项目可包含多个 SysML 模型
-- 模型存储在 MongoDB `models` 集合
-- 版本信息存储在 PostgreSQL `model_versions` 表
+#### 项目与包 (一对多)
+- 一个项目可包含多个顶级包（`parent_package_id IS NULL`）
+- 包内 SysML v2 文本存储在 `packages.content` 字段
+- 乐观锁 `version INTEGER` 字段内置（同 Model 时代的 `model_versions` 表删除）
 
-#### 模型与版本 (一对多)
-- 每个模型有多个版本
-- `model_versions` 表记录版本元数据
-- 实际模型内容存储在 MinIO
+#### 包嵌套 (自引用一对多)
+- `parent_package_id` 自引用 FK；`ON DELETE SET NULL` 保证子包不级联丢失
+- 同父包下 `name` 唯一约束 → 同名返 409 `PackageNameConflict (15003)`
+- `deleted_at` 软删除标记
+
+#### 包与视图 (一对多)
+- 一个包可挂载多个视图；视图也可不挂任何包（顶层视图，`package_id` IS NULL）
+- 视图 `content` 是 SysML view definition 文本
+- 写视图后由后端 mini-parser 重算 `exposed_elements` 缓存（M12 新增字段）
+
+#### 项目与模型 (一对多) — M12 已删除
+- SysML v2 不区分 model 与 package；`models` 集合已下线
+- 所有 SysML 内容统一收敛到 `packages.content` 字段
 
 #### 权限继承关系
 ```

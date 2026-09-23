@@ -17,6 +17,7 @@
 | `ui_ux_design.md` | UI/UX 设计 | [Trpsd2dRfoTaYkx752HcLPjhnwh](https://mcngebz48hm1.feishu.cn/docx/Trpsd2dRfoTaYkx752HcLPjhnwh) |
 | `metamodel_design.md` | 元模型详细设计 | [RR5FdZ6PkoJcBDxchgdcAcOin99](https://mcngebz48hm1.feishu.cn/docx/RR5FdZ6PkoJcBDxchgdcAcOin99) |
 | `tech_review_report.md` | 技术方案复审报告（4.4/10） | [QADsdqxjZomgb6xpv68cfiZfnmg](https://mcngebz48hm1.feishu.cn/docx/QADsdqxjZomgb6xpv68cfiZfnmg) |
+| `poc-v2/docs/m12-summary.md` | M12 工程树 + 三栏布局 + SysML v2 业务重构交付总结 | — |
 
 ### POC 代码示例
 

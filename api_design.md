@@ -785,9 +785,67 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 5. 模型模块 (Models)
+## 5. 包/视图模块 (Packages & Views, M12 重构)
 
-### 5.1 获取项目内模型列表
+> **M12 改造摘要**：本节替换原"模型模块"。SysML v2 官方语义只有 Package 与 View 两个一等实体，Model 概念已下线。
+>
+> 旧 `/api/v1/models/*` 端点（§5.1-§5.11）已废弃，前端不再调用；保留此节作为历史参考 + 迁移文档。新端点以 `/packages` 和 `/views` 为顶层。
+
+### 5.0 M12 端点速查
+
+#### Package 端点
+
+| 方法 | 路径 | 说明 | 权限 scope |
+|------|------|------|----------|
+| `GET` | `/api/v1/projects/:id/packages` | 列出工程内包（摘要，不含 content） | `package:read` |
+| `POST` | `/api/v1/projects/:id/packages` | 创建包（含可选 content + parent_package_id） | `package:write` |
+| `GET` | `/api/v1/packages/:id` | 获取包详情（含 content） | `package:read` |
+| `PUT` | `/api/v1/packages/:id` | 更新包（乐观锁 `version` 字段） | `package:write` |
+| `DELETE` | `/api/v1/packages/:id` | 删除包（子包 `parent_package_id` 置 NULL） | `package:write` |
+| `GET` | `/api/v1/packages/search?q=&limit=` | 全局搜索包 | `package:read` |
+
+#### View 端点
+
+| 方法 | 路径 | 说明 | 权限 scope |
+|------|------|------|----------|
+| `GET` | `/api/v1/projects/:id/views` | 列出工程内视图（摘要，不含 content） | `view:read` |
+| `POST` | `/api/v1/projects/:id/views` | 创建视图（解析 content 写入 `exposed_elements` 缓存） | `view:write` |
+| `GET` | `/api/v1/views/:id` | 获取视图详情（含 content + exposed_elements） | `view:read` |
+| `PUT` | `/api/v1/views/:id` | 更新视图（乐观锁；写后重算 exposed_elements） | `view:write` |
+| `DELETE` | `/api/v1/views/:id` | 删除视图 | `view:write` |
+| `GET` | `/api/v1/views/search?q=&limit=` | 全局搜索视图 | `view:read` |
+
+#### 新错误码
+
+| 业务码 | HTTP | 说明 |
+|--------|------|------|
+| `15003` `PackageNameConflict` | 409 | 同父包下 name 重复（`UNIQUE(project_id, parent_package_id, name)`）|
+| `15004` `ViewNameConflict` | 409 | 同父视图下 name 重复 |
+| `15005` `VersionConflict` | 409 | 包/视图乐观锁失败（version 不匹配），前端自动 reload 后提示用户重试 |
+
+#### 新权限 Scopes（M12 鉴权粒度）
+
+| Scope | 资源 | 动作 |
+|-------|------|------|
+| `package:read` | Package | 读详情 / 列表 / 搜索 |
+| `package:write` | Package | 创建 / 更新 / 删除 |
+| `view:read` | View | 读详情 / 列表 / 搜索 |
+| `view:write` | View | 创建 / 更新 / 删除 |
+
+#### Project 统计字段（M12 已删 `model_count`，新增）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `package_count` | int | 工程顶级包数（不含嵌套） |
+| `view_count` | int | 工程视图总数 |
+
+---
+
+## 5.模型模块 (Models) — M12 已下线（历史参考）
+
+> 以下端点自 M12.0（commit `f5c9a88`）起废弃。前端代码已删除 `services/modelApi.ts`；旧 `/models/:modelId` 路由由 `<LegacyModelRedirect />` 跳转到 `/projects/:projectId` 工程页。保留此节作为迁移文档。
+
+### 5.1 ~~获取项目内模型列表~~ [已下线]
 
 ```
 GET /api/v1/models

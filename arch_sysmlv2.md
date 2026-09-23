@@ -1,8 +1,10 @@
 # SysMLv2 MBSE 建模软件 - 详细架构设计
 
-> 版本：v0.1
-> 状态：架构初稿
-> 最后更新：2026年1月
+> 版本：v0.2（M12 重构）
+> 状态：业务架构对齐 SysML v2 一等实体
+> 最后更新：2026-09-24
+>
+> **M12 变更摘要**：删除单一"模型服务"概念，拆分为 **Package Service**（SysML 唯一命名空间实体）与 **View Service**（SysML v2 一等公民），统一收敛到工程详情页的三栏 IDE 工作区。
 
 ## 1. 系统架构总览
 
@@ -37,26 +39,29 @@
                           │
         ┌─────────────────┼─────────────────┐
         │                 │                 │
-┌───────▼───────┐ ┌───────▼───────┐ ┌─────▼─────┐
-│   用户服务     │ │   模型服务     │ │  AI 服务   │
-│  User Service │ │ Model Service │ │ AI Service │
-│  ────────────  │ │ ────────────  │ │ ─────────  │
-│  • 注册/登录   │ │ • CRUD        │ │ • LLM 调用 │
-│  • 权限管理   │ │ • 版本控制     │ │ • Prompt   │
-│  • 团队管理   │ │ • 导入/导出   │ │   工程    │
-└───────┬───────┘ └───────┬───────┘ └─────┬─────┘
-        │                 │               │
-        └─────────────────┼─────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────────────────────┐
+┌───────▼───────┐ ┌───────▼───────┐ ┌───────▼───────┐ ┌─────▼─────┐
+│   用户服务     │ │  Package Svc  │ │   View Svc    │ │  AI 服务   │
+│  User Service │ │  (M12 拆分)   │ │  (M12 一等)   │ │ AI Service │
+│  ────────────  │ │ ────────────  │ │ ────────────  │ │ ─────────  │
+│  • 注册/登录   │ │ • 包 CRUD     │ │ • 视图 CRUD   │ │ • LLM 调用 │
+│  • 权限管理   │ │ • 嵌套包树     │ │ • 暴露元素    │ │ • Prompt   │
+│  • 团队管理   │ │ • 唯一名约束   │ │   解析缓存     │ │   工程    │
+│               │ │ • 元数据 K-V   │ │ • 渲染类别 hint│ │           │
+└───────┬───────┘ └───────┬───────┘ └───────┬───────┘ └─────┬─────┘
+        │                 │                 │               │
+        └─────────────────┼─────────────────┼─────────────┘
+                          │                 │
+┌─────────────────────────▼─────────────────▼───────────────────────────────┐
 │                              数据层（Data Layer）                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │
 │  │ PostgreSQL  │  │  MongoDB    │  │   Redis     │  │   对象存储      │   │
-│  │ 用户/项目   │  │ 模型文档    │  │ 缓存/Session│  │ 文件/模板/插件  │   │
+│  │ 用户/项目   │  │ 包/视图文档  │  │ 缓存/Session│  │ 文件/模板/插件  │   │
 │  │ 元数据     │  │ 版本历史    │  │  队列      │  │  (MinIO/S3)    │   │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+> **M12 业务重构决策**：合并旧的"模型服务"为 Package + View 两个一等实体服务，与 SysML v2 官方语义对齐；前端仅暴露 `/projects/:projectId` 工作区，不再有独立 `/models/:mid` 路由。
 
 ### 1.2 技术选型总表
 
@@ -283,21 +288,24 @@ interface UIStore {
 
 ## 3. 后端架构
 
-### 3.1 服务拆分
+### 3.1 服务拆分（M12）
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Backend Services                          │
 │                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Gateway    │  │   User Svc   │  │  Model Svc   │       │
-│  │   (Gin)      │  │   (Go)       │  │   (Go)       │       │
-│  │              │  │              │  │              │       │
-│  │ • 路由       │  │ • 注册登录   │  │ • CRUD      │       │
-│  │ • 认证       │  │ • JWT       │  │ • 版本控制  │       │
-│  │ • 限流       │  │ • 权限      │  │ • 导入/导出 │       │
-│  │ • 日志       │  │ • 团队      │  │ • Schema验证 │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────┐│
+│  │   Gateway    │  │   User Svc   │  │  Package Svc │  │View ││
+│  │   (Gin)      │  │   (Go)       │  │   (Go, M12)  │  │Svc  ││
+│  │              │  │              │  │              │  │(M12)││
+│  │ • 路由       │  │ • 注册登录   │  │ • 包 CRUD    │  │• 视 ││
+│  │ • 认证       │  │ • JWT       │  │ • 嵌套包树   │  │ 图CR││
+│  │ • 限流       │  │ • 权限      │  │ • UNIQUE     │  │UD   ││
+│  │ • 日志       │  │ • 团队      │  │ (proj,par,name)│ │• 暴 ││
+│  │              │  │              │  │ • 元数据 K-V │  │ 露元││
+│  │              │  │              │  │ • 版本乐观锁  │  │ 素解││
+│  │              │  │              │  │               │  │析缓存│
+│  └──────────────┘  └──────────────┘  └──────────────┘  └─────┘│
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │  Template Svc│  │    AI Svc    │  │  MetaModel   │       │
@@ -372,28 +380,72 @@ backend/
 
 ### 3.3 核心服务设计
 
-#### 3.3.1 模型服务
+#### 3.3.1 Package 服务（M12）
 
 ```go
-// Model Service 接口
-type ModelService interface {
+// Package Service 接口
+type PackageService interface {
     // CRUD
-    CreateModel(ctx context.Context, req *CreateModelRequest) (*Model, error)
-    GetModel(ctx context.Context, id string) (*Model, error)
-    UpdateModel(ctx context.Context, req *UpdateModelRequest) (*Model, error)
-    DeleteModel(ctx context.Context, id string) error
+    CreatePackage(ctx context.Context, req *CreatePackageRequest) (*Package, error)
+    GetPackage(ctx context.Context, id string) (*Package, error)
+    ListPackagesByProject(ctx context.Context, projectID string) ([]*PackageSummary, error)
+    UpdatePackage(ctx context.Context, req *UpdatePackageRequest) (*Package, error)
+    DeletePackage(ctx context.Context, id string) error
     
-    // 版本控制
-    GetVersions(ctx context.Context, modelID string) ([]*Version, error)
-    GetVersion(ctx context.Context, modelID string, version int) (*Model, error)
-    RevertToVersion(ctx context.Context, modelID string, version int) error
+    // 版本控制（乐观锁）
+    // UNIQUE(project_id, parent_package_id, name) 约束 → 同名返 409
+}
+
+// Package 实体
+type Package struct {
+    ID              string            `json:"id"`
+    ProjectID       string            `json:"projectId"`
+    ParentPackageID string            `json:"parentPackageId,omitempty"`  // 顶层包 = ""
+    Name            string            `json:"name"`
+    Description     string            `json:"description,omitempty"`
+    Content         string            `json:"content"`                    // SysML v2 文本
+    Metadata        map[string]string `json:"metadata,omitempty"`
+    Version         int               `json:"version"`
+    CreatedAt       time.Time         `json:"createdAt"`
+    UpdatedAt       time.Time         `json:"updatedAt"`
+}
+```
+
+#### 3.3.2 View 服务（M12 新增）
+
+```go
+// View Service 接口
+type ViewService interface {
+    // CRUD（与 Package 镜像）
+    CreateView(ctx context.Context, req *CreateViewRequest) (*View, error)
+    GetView(ctx context.Context, id string) (*View, error)
+    ListViewsByProject(ctx context.Context, projectID string) ([]*ViewSummary, error)
+    UpdateView(ctx context.Context, req *UpdateViewRequest) (*View, error)
+    DeleteView(ctx context.Context, id string) error
     
-    // 导入导出
-    ImportJSON(ctx context.Context, data []byte) (*Model, error)
-    ExportJSON(ctx context.Context, modelID string) ([]byte, error)
-    
-    // Schema 验证
-    Validate(ctx context.Context, model *Model) (*ValidationResult, error)
+    // 暴露元素重算（写后缓存更新）
+    RecomputeExposedElements(ctx context.Context, viewID string) error
+}
+
+type View struct {
+    ID               string            `json:"id"`
+    ProjectID        string            `json:"projectId"`
+    PackageID        string            `json:"packageId,omitempty"`         // 顶层 = ""
+    Name             string            `json:"name"`
+    Description      string            `json:"description,omitempty"`
+    Content          string            `json:"content"`                     // SysML view definition 文本
+    ColorTag         string            `json:"colorTag,omitempty"`          // UI metadata
+    RenderingCategory string           `json:"renderingCategory,omitempty"` // UI hint
+    ExposedElements  []ExposedElement  `json:"exposedElements,omitempty"`   // 解析缓存
+    Metadata         map[string]string `json:"metadata,omitempty"`
+    Version          int               `json:"version"`
+    CreatedAt        time.Time         `json:"createdAt"`
+    UpdatedAt        time.Time         `json:"updatedAt"`
+}
+
+type ExposedElement struct {
+    QualifiedName string `json:"qualifiedName"`  // "Pkg1.Pkg2.PartDef1"
+    Kind          string `json:"kind"`           // "PartDef" | "PortDef" | ...
 }
 ```
 
