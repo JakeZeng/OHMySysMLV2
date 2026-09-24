@@ -119,6 +119,10 @@ export interface CreateViewRequest {
   colorTag?: string;
   renderingCategory?: string;
   metadata?: Record<string, string>;
+  /** M15：缺省 = definition（ViewDefinition 模板） */
+  kind?: 'definition' | 'usage';
+  /** M15：kind='usage' 时必填 —— 实例化的 ViewDefinition ID */
+  viewDefinitionId?: string;
 }
 
 export interface UpdateViewRequest {

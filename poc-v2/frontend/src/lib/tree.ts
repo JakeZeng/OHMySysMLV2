@@ -60,6 +60,8 @@ export interface TreeNode {
   renderKind?: string;
   /** M15：视图种类（definition = 模板 / usage = 实例） */
   viewKind?: 'definition' | 'usage';
+  /** M15：ViewUsage 实例化自哪个 ViewDefinition（徽章 tooltip / 溯源） */
+  viewDefinitionName?: string;
   /** M15：满足的 Viewpoint qualified name（解析自 `view V satisfies VP;`） */
   satisfiesQualifiedName?: string;
   /** M15：满足的 Viewpoint ID（可点击跳转） */
@@ -179,6 +181,10 @@ export function buildTree(input: BuildTreeInput): TreeNode {
       colorTag: v.colorTag,
       renderKind: v.renderKind,
       viewKind: v.kind,
+      // 实例节点要能说清"我是谁的实例"——只存 ID 的话徽章没法展示
+      viewDefinitionName: v.viewDefinitionId
+        ? views.find((x) => x.id === v.viewDefinitionId)?.name
+        : undefined,
       satisfiesQualifiedName: v.viewpointQualifiedName,
       satisfiesViewpointId: v.viewpointId,
       exposeCount: v.exposeCount,

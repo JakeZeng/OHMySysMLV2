@@ -325,6 +325,75 @@ describe('Parser - 注释与空白', () => {
   });
 });
 
+// ─── M15 §7.26：view 是顶层 Namespace ─────────────────────────────────
+
+describe('Parser - View (§7.26)', () => {
+  it('24. `view def V satisfies VP { ... }` 解析为 ViewDefinition', () => {
+    const r = parse(`
+      package VehicleModel { part def Vehicle; }
+      view def StructureView satisfies SafetyViewpoint {
+        expose VehicleModel::Vehicle;
+        expose VehicleModel::Engine;
+        render as tree;
+        filter @PartUsage;
+      }
+    `);
+    expect(r.ok).toBe(true);
+    expect(r.model.views).toHaveLength(1);
+    const v = r.model.views[0];
+    expect(v.name).toBe('StructureView');
+    expect(v.isDefinition).toBe(true);
+    expect(v.satisfies).toBe('SafetyViewpoint');
+    expect(v.renderKind).toBe('tree');
+    expect(v.reveals).toEqual(['VehicleModel::Vehicle', 'VehicleModel::Engine']);
+    expect(v.filters).toEqual(['PartUsage']);
+    // view 不进 packages —— 它是独立的 Namespace 类别
+    expect(r.model.packages).toHaveLength(1);
+  });
+
+  it('25. `view V { part def X; }` 的 body 成员归 view 所有（V::X）', () => {
+    const r = parse(`
+      view LocalHelperView {
+        part def HelperPort;
+        expose VehicleModel::Vehicle;
+      }
+    `);
+    expect(r.ok).toBe(true);
+    const v = r.model.views[0];
+    expect(v.isDefinition).toBe(false);
+    expect(v.reveals).toEqual(['VehicleModel::Vehicle']);
+    expect(v.members).toHaveLength(1);
+    expect(v.members[0].kind).toBe('partDef');
+    expect(v.members[0].name).toBe('HelperPort');
+  });
+
+  it('26. view body 内的 state machine 参与扁平化（可视化依赖顶层数组）', () => {
+    const r = parse(`
+      view BehaviorView {
+        state machine Order {
+          initial state Idle;
+          state Running;
+          transition Idle to Running;
+        }
+      }
+    `);
+    expect(r.ok).toBe(true);
+    expect(r.model.stateMachines).toHaveLength(1);
+    expect(r.model.stateMachines[0].name).toBe('Order');
+    // 扁平化后不应在 view.members 里重复
+    expect(r.model.views[0].members).toHaveLength(0);
+  });
+
+  it('27. render as <kind> 只接受标准取值', () => {
+    const ok = parse('view V { render as requirement; }');
+    expect(ok.ok).toBe(true);
+    expect(ok.model.views[0].renderKind).toBe('requirement');
+
+    const bad = parse('view V { render as hologram; }');
+    expect(bad.ok).toBe(false);
+  });
+});
+
 describe('Parser - 错误处理', () => {
   it('21. 报告语法错误位置（缺分号）', () => {
     const r = parse('package P { part def F { attribute x : Real } }');

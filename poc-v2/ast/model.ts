@@ -247,6 +247,29 @@ export interface CommentBlock extends SysMLNode {
 /**
  * 解析后的整个模型。M5 扩展支持行为视图、需求视图、参数视图。
  */
+/**
+ * M15 §7.26：View 是 Namespace —— body 内既有子句（expose/render/filter），
+ * 也有 owned 成员（`part def X` 等，qualified name = `V::X`）。
+ */
+export interface SysMLView {
+  kind: 'view';
+  id: string;
+  name: string;
+  /** `view def Name` 形式（ViewDefinition）vs `view Name` 简写 */
+  isDefinition?: boolean;
+  /** 解析自 `view V satisfies VP;` 的 VP qualified name */
+  satisfies?: string;
+  /** `expose A::B::C;` 列表（引用，不改变元素归属） */
+  reveals: string[];
+  /** `filter @X;` 列表 */
+  filters: string[];
+  /** 解析自 `render as <kind>;` */
+  renderKind?: string;
+  /** body 内 owned 成员（与 package body 同一套成员规则） */
+  members: NamespaceMember[];
+  location: SourceLocation;
+}
+
 export interface SysMLModel {
   packages: Package[];
   /** 顶层 connect 语句（不在任何 package 内时归到这里） */
@@ -265,6 +288,8 @@ export interface SysMLModel {
   enums: EnumDefinition[];
   /** 注释块 */
   comments: CommentBlock[];
+  /** M15 §7.26：顶层 view（ViewDefinition / ViewUsage） */
+  views: SysMLView[];
 }
 
 // ─── Parser Result ──────────────────────────────────────────────────────

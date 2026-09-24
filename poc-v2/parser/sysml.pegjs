@@ -71,6 +71,33 @@
       location: locationOf(loc),
     };
   }
+
+  // M15 §7.26：view 是 Namespace，body 里同时有「子句」(expose/render/filter)
+  // 和 owned 成员（part def 等）。按 kind 分拣后返回。
+  function makeView(loc, name, satisfies, clauses, isDef) {
+    const reveals = [];
+    const filters = [];
+    const members = [];
+    let renderKind;
+    for (const cl of clauses) {
+      if (cl.kind === 'expose') reveals.push(cl.path);
+      else if (cl.kind === 'filter') filters.push(cl.path);
+      else if (cl.kind === 'render') renderKind = cl.renderKind;
+      else members.push(cl);
+    }
+    return {
+      kind: 'view',
+      id: nextId('view'),
+      name,
+      isDefinition: !!isDef,
+      satisfies: satisfies || undefined,
+      reveals,
+      filters,
+      renderKind,
+      members,
+      location: locationOf(loc),
+    };
+  }
 }}
 
 // ─── 入口 ──────────────────────────────────────────────────────────────
@@ -87,6 +114,7 @@ File
       const constraintBlocks = [];
       const enums = [];
       const comments = [];
+      const views = [];
       for (const pair of items) {
         const it = pair[1];
         if (it.kind === 'package') packages.push(it);
@@ -98,12 +126,14 @@ File
         else if (it.kind === 'constraintBlock') constraintBlocks.push(it);
         else if (it.kind === 'enumDef') enums.push(it);
         else if (it.kind === 'comment') comments.push(it);
+        else if (it.kind === 'view') views.push(it);
       }
-      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments };
+      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments, views };
     }
 
 NamespaceOrTopLevel
-  = Package
+  = ViewDef
+  / Package
   / StateMachine
   / Activity
   / RequirementDef
@@ -112,6 +142,48 @@ NamespaceOrTopLevel
   / EnumDef
   / CommentBlock
   / ConnectStatement
+
+// ─── View (§7.26) ──────────────────────────────────────────────────────
+//
+// 标准写法是 `view def Name { ... }`（ViewDefinition）与
+// `view name : Def { ... }`（ViewUsage）；本 POC 另外直接支持
+// `view Name { ... }` 简写（M12 起应用自己生成的内容就是这个形状）。
+// 两种都解析，用 isDefinition 区分。
+
+ViewDef
+  = "view" WS "def" WS name:QualifiedName sat:ViewSatisfies? clauses:ViewBody
+    { return makeView(location().start.offset, name, sat, clauses, true); }
+  / "view" WS name:QualifiedName sat:ViewSatisfies? clauses:ViewBody
+    { return makeView(location().start.offset, name, sat, clauses, false); }
+
+ViewSatisfies
+  = WS "satisfies" WS qn:QualifiedName { return qn; }
+
+ViewBody
+  = OPEN _ clauses:(_ ViewBodyClause)* CLOSE
+    { return clauses.map(c => c[1]); }
+
+ViewBodyClause
+  = ExposeStatement
+  / RenderStatement
+  / FilterStatement
+  / PackageMember
+
+ExposeStatement
+  = "expose" WS path:QualifiedName _ ";"
+    { return { kind: 'expose', path }; }
+
+RenderStatement
+  = "render" WS "as" WS k:RenderKindName _ ";"
+    { return { kind: 'render', renderKind: k }; }
+
+RenderKindName
+  = ("interconnection" / "requirement" / "snapshot" / "state" / "action" / "tree")
+    { return text(); }
+
+FilterStatement
+  = "filter" WS "@" _ path:QualifiedName _ ";"
+    { return { kind: 'filter', path }; }
 
 // ─── Package ───────────────────────────────────────────────────────────
 

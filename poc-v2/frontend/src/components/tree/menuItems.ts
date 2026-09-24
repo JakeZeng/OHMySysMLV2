@@ -28,10 +28,16 @@ import type { TreeAction, ElementRef } from './types';
 const icon = (C: React.ComponentType<{ className?: string }>) =>
   React.createElement(C, { className: 'h-3.5 w-3.5' });
 
-/** 节点类型 → 菜单项（element 节点按 ownerKind 区分 owned vs view-private） */
+/**
+ * 节点类型 → 菜单项。
+ *
+ * - `elementOwnerKind`：element 节点按归属区分公共元素 vs view-private
+ * - `viewKind`：view 节点区分 ViewDefinition（可派生实例）vs ViewUsage（不可）
+ */
 export function menuItemsFor(
   kind: TreeNodeKind,
   elementOwnerKind: 'package' | 'view' | 'viewpoint' = 'package',
+  viewKind: 'definition' | 'usage' = 'definition',
 ): ContextMenuItem[] {
   switch (kind) {
     case 'project':
@@ -57,6 +63,11 @@ export function menuItemsFor(
     case 'view':
       return [
         { id: 'open-view', label: '打开', icon: icon(Eye) },
+        // M15 §7.26：只有 ViewDefinition（模板）能派生 ViewUsage（实例）；
+        // ViewUsage 再派生就成了 usage-of-usage，标准里不成立。
+        ...(viewKind === 'definition'
+          ? [{ id: 'create-view-usage', label: '新建视图实例', icon: icon(FilePlus) }]
+          : []),
         { id: 'view-properties', label: '视图属性', icon: icon(Settings2) },
         { id: 'rename', label: '重命名', icon: icon(Pencil), separatorBefore: true, hint: 'F2' },
         { id: 'duplicate-view', label: '复制', icon: icon(Copy) },
@@ -168,6 +179,13 @@ export function actionFor(
         type: 'create-viewpoint',
         packageId: target.kind === 'package' ? target.id : null,
       };
+
+    case 'create-view-usage':
+      // 实例与模板同包（§7.26 里 ViewUsage 在模板所在的命名空间内实例化）
+      if (target.kind === 'view') {
+        return { type: 'create-view-usage', viewDefinitionId: target.id };
+      }
+      return null;
 
     case 'create-element-trigger':
       return {

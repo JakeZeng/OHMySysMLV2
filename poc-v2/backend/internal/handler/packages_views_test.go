@@ -318,6 +318,156 @@ func TestViewsCRUD(t *testing.T) {
 	})
 }
 
+// TestViewDefinitionUsage 覆盖 M15 §7.26 的 ViewDefinition → ViewUsage 派生：
+// kind 判定、viewDefinitionId 校验、以及「普通内容保存不得静默降级 usage」这条回归。
+func TestViewDefinitionUsage(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	resp := registerUser(t, r, "viewusage", "viewusage@example.com", "pass123456")
+	token := authToken(t, resp)
+	authHeader := "Bearer " + token
+
+	newProject := func(name string) string {
+		body := jsonBody(gin.H{"name": name})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+	}
+	postView := func(projectID string, payload gin.H) (int, map[string]any) {
+		body := jsonBody(payload)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/views", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var data map[string]any
+		if parsed := parseJSON(t, w.Body.Bytes()); parsed != nil {
+			if d, ok := parsed["data"].(map[string]any); ok {
+				data = d
+			}
+		}
+		return w.Code, data
+	}
+
+	projectID := newProject("ViewUsageProject")
+
+	var defID string
+	t.Run("Create_Definition_DefaultsKind", func(t *testing.T) {
+		code, data := postView(projectID, gin.H{
+			"name":    "StructureDef",
+			"content": "view StructureDef { render as tree; }",
+		})
+		if code != http.StatusOK {
+			t.Fatalf("status = %d", code)
+		}
+		defID, _ = data["id"].(string)
+		// 未传 kind → 归一化为 definition（M15 之前的客户端兼容路径）
+		if data["kind"] != "definition" {
+			t.Errorf("kind = %v, want definition", data["kind"])
+		}
+		if data["viewDefinitionId"] != nil && data["viewDefinitionId"] != "" {
+			t.Errorf("definition 不应带 viewDefinitionId: %v", data["viewDefinitionId"])
+		}
+	})
+
+	var usageID string
+	var usageV float64
+	t.Run("Create_Usage", func(t *testing.T) {
+		code, data := postView(projectID, gin.H{
+			"name":             "StructureUsage",
+			"content":          "view StructureUsage { render as tree; }",
+			"kind":             "usage",
+			"viewDefinitionId": defID,
+		})
+		if code != http.StatusOK {
+			t.Fatalf("status = %d", code)
+		}
+		usageID, _ = data["id"].(string)
+		usageV = data["version"].(float64)
+		if data["kind"] != "usage" {
+			t.Errorf("kind = %v, want usage", data["kind"])
+		}
+		if data["viewDefinitionId"] != defID {
+			t.Errorf("viewDefinitionId = %v, want %s", data["viewDefinitionId"], defID)
+		}
+	})
+
+	t.Run("Create_Usage_RequiresDefinitionID", func(t *testing.T) {
+		code, _ := postView(projectID, gin.H{"name": "OrphanUsage", "kind": "usage"})
+		if code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("Create_Usage_RejectsMissingDefinition", func(t *testing.T) {
+		code, _ := postView(projectID, gin.H{
+			"name": "GhostUsage", "kind": "usage", "viewDefinitionId": "no-such-id",
+		})
+		if code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("Create_Usage_RejectsUsageAsTemplate", func(t *testing.T) {
+		// usage-of-usage 在 §7.26 里不成立
+		code, _ := postView(projectID, gin.H{
+			"name": "NestedUsage", "kind": "usage", "viewDefinitionId": usageID,
+		})
+		if code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("Create_RejectsUnknownKind", func(t *testing.T) {
+		code, _ := postView(projectID, gin.H{"name": "WeirdView", "kind": "blueprint"})
+		if code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("Create_Usage_RejectsCrossProjectDefinition", func(t *testing.T) {
+		otherProject := newProject("OtherProject")
+		code, otherDef := postView(otherProject, gin.H{"name": "ForeignDef"})
+		if code != http.StatusOK {
+			t.Fatalf("setup foreign def: status = %d", code)
+		}
+		code, _ = postView(projectID, gin.H{
+			"name":             "CrossUsage",
+			"kind":             "usage",
+			"viewDefinitionId": otherDef["id"].(string),
+		})
+		if code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", code)
+		}
+	})
+
+	// 回归守卫：前端普通保存不带 kind，绝不能把 usage 降级成 definition
+	t.Run("Update_WithoutKind_PreservesUsage", func(t *testing.T) {
+		body := jsonBody(gin.H{
+			"name":    "StructureUsage",
+			"content": "view StructureUsage { render as snapshot; }",
+			"version": int(usageV),
+		})
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/views/"+usageID, body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+		if data["kind"] != "usage" {
+			t.Errorf("kind = %v, want usage（省略 kind 的更新不得降级）", data["kind"])
+		}
+		if data["viewDefinitionId"] != defID {
+			t.Errorf("viewDefinitionId = %v, want %s", data["viewDefinitionId"], defID)
+		}
+	})
+}
+
 func TestViewsAuth(t *testing.T) {
 	r, _ := setupTestRouter(t)
 

@@ -98,6 +98,57 @@ func (h *Handler) resolveSatisfiedViewpointID(c *gin.Context, projectID, qualifi
 	return ""
 }
 
+// resolveViewKind 校验并归一化 ViewDefinition / ViewUsage 判定（SysML v2 §7.26）。
+//
+// 规则：
+//   - kind 空 → definition（向后兼容：M15 之前建的视图没有 kind 字段）
+//   - kind = definition → 不允许带 viewDefinitionId（模板不实例化别的模板）
+//   - kind = usage      → viewDefinitionId 必填，且必须是同工程下 kind='definition' 的视图
+//   - 其它值 → 400
+//
+// 校验失败时已写好响应，返回 ok=false，调用方直接 return。
+func (h *Handler) resolveViewKind(
+	c *gin.Context,
+	projectID, kind, viewDefID string,
+) (model.ViewKind, string, bool) {
+	k := model.ViewKind(strings.TrimSpace(kind))
+	if k == "" {
+		k = model.ViewKindDefinition
+	}
+	switch k {
+	case model.ViewKindDefinition:
+		// 显式忽略 viewDefinitionId：definition 不是任何 template 的实例
+		return k, "", true
+	case model.ViewKindUsage:
+		if viewDefID == "" {
+			badRequest(c, "ViewUsage 必须指定 viewDefinitionId", nil)
+			return k, "", false
+		}
+		def, err := h.repo.GetView(c.Request.Context(), viewDefID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				badRequest(c, "引用的 ViewDefinition 不存在", nil)
+				return k, "", false
+			}
+			serverError(c, "校验 ViewDefinition 失败", err)
+			return k, "", false
+		}
+		if def.ProjectID != projectID {
+			badRequest(c, "引用的 ViewDefinition 不属于本工程", nil)
+			return k, "", false
+		}
+		// 不允许 usage-of-usage：SysML v2 里 ViewUsage 实例化的是 ViewDefinition
+		if def.Kind == model.ViewKindUsage {
+			badRequest(c, "引用的视图本身是 ViewUsage，不能作为模板", nil)
+			return k, "", false
+		}
+		return k, def.ID, true
+	default:
+		badRequest(c, "kind 只能是 definition 或 usage", nil)
+		return k, "", false
+	}
+}
+
 func (h *Handler) Health(c *gin.Context) {
 	// M4.5 增量：附带 DB ping + 资源计数，便于运维探活与监控。
 	// 失败时仍返回 200（健康探针不应被资源统计拖死），但 status 字段标 degraded。
@@ -931,6 +982,11 @@ type createViewReq struct {
 	ColorTag          string            `json:"colorTag"`
 	RenderingCategory string            `json:"renderingCategory"`
 	Metadata          map[string]string `json:"metadata"`
+	// M15：ViewDefinition（模板）/ ViewUsage（实例）判定。
+	// 空 = "definition"（向后兼容：M12/M15 之前创建的视图都是 definition）。
+	Kind string `json:"kind,omitempty"`
+	// M15：kind='usage' 时必填 —— 实例化的 ViewDefinition。
+	ViewDefinitionID string `json:"viewDefinitionId,omitempty"`
 }
 
 type updateViewReq struct {
@@ -942,6 +998,9 @@ type updateViewReq struct {
 	RenderingCategory string            `json:"renderingCategory"`
 	Metadata          map[string]string `json:"metadata"`
 	Version           int               `json:"version" binding:"required,min=1"`
+	// M15：允许改判 definition/usage（同一套校验）
+	Kind             string `json:"kind,omitempty"`
+	ViewDefinitionID string `json:"viewDefinitionId,omitempty"`
 	// M13：force 强制覆盖；BaseVersion 用于 diff
 	Force       bool `json:"force"`
 	BaseVersion int  `json:"baseVersion"`
@@ -990,6 +1049,11 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 			return
 		}
 	}
+	// M15：ViewDefinition vs ViewUsage 判定（含 viewDefinitionId 校验）
+	kind, viewDefID, ok := h.resolveViewKind(c, projectID, req.Kind, req.ViewDefinitionID)
+	if !ok {
+		return
+	}
 	v := &model.View{
 		ID:                uuid.NewString(),
 		ProjectID:         projectID,
@@ -1000,7 +1064,8 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 		ColorTag:          req.ColorTag,
 		RenderingCategory: req.RenderingCategory,
 		Metadata:          req.Metadata,
-		Kind:              model.ViewKindDefinition,
+		Kind:              kind,
+		ViewDefinitionID:  viewDefID,
 		RenderKind:        model.RenderKindInterconnection,
 		Version:           1,
 		CreatedAt:         time.Now().UTC(),
@@ -1075,6 +1140,16 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	v.RenderingCategory = req.RenderingCategory
 	if req.Metadata != nil {
 		v.Metadata = req.Metadata
+	}
+	// M15：kind 为空 = 调用方不关心（普通内容保存），保持既有判定不变 ——
+	// 否则每次保存都会把 ViewUsage 静默降级成 ViewDefinition。
+	if req.Kind != "" || req.ViewDefinitionID != "" {
+		kind, viewDefID, ok := h.resolveViewKind(c, v.ProjectID, req.Kind, req.ViewDefinitionID)
+		if !ok {
+			return
+		}
+		v.Kind = kind
+		v.ViewDefinitionID = viewDefID
 	}
 	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
 	v.Version = req.Version

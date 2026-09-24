@@ -334,7 +334,11 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
         position={menu?.position ?? null}
         items={
           menu
-            ? menuItemsFor(menu.node.kind, menu.node.elementOwnerKind ?? 'package')
+            ? menuItemsFor(
+                menu.node.kind,
+                menu.node.elementOwnerKind ?? 'package',
+                menu.node.viewKind ?? 'definition',
+              )
             : []
         }
         onSelect={handleMenuSelect}

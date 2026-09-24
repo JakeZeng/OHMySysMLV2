@@ -178,6 +178,21 @@ export const TreeRow: React.FC<TreeRowProps> = ({
         </span>
       )}
 
+      {/* M15：ViewUsage 徽章（§7.26）—— 模板是常态，只标实例，避免噪音 */}
+      {node.kind === 'view' && node.viewKind === 'usage' && (
+        <span
+          data-testid={`tree-viewkind-${node.encodedId}`}
+          title={
+            node.viewDefinitionName
+              ? `ViewUsage — 实例化自 ViewDefinition「${node.viewDefinitionName}」`
+              : 'ViewUsage（视图实例）'
+          }
+          className="shrink-0 rounded bg-teal-100 px-1 text-[10px] text-teal-700 dark:bg-teal-900/40 dark:text-teal-200"
+        >
+          实例
+        </span>
+      )}
+
       {/* M15：视图节点的 renderKind 徽章（默认 interconnection 不显示，避免噪音） */}
       {node.kind === 'view' &&
         node.renderKind &&

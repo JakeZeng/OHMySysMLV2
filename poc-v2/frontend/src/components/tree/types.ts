@@ -36,6 +36,11 @@ export type TreeAction =
   | { type: 'create-view'; packageId: string | null }
   /** M15：在 packageId 下新建视角（SysML v2 Viewpoint §7.26）；null = 顶层 */
   | { type: 'create-viewpoint'; packageId: string | null }
+  /**
+   * M15：基于某个 ViewDefinition 新建 ViewUsage（实例）。
+   * 实例继承模板的 content 副本 + viewDefinitionId 链接，落同包。
+   */
+  | { type: 'create-view-usage'; viewDefinitionId: string }
   /** M14：触发"新建元素"类型选择 modal（modal 选完后由宿主创建） */
   | { type: 'create-element-trigger'; parentPackageId: string }
   /** M14：元素节点上的操作 */

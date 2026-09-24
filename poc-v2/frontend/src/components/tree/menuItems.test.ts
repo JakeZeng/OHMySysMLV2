@@ -24,8 +24,21 @@ describe('menuItemsFor', () => {
     ]);
   });
 
-  it('view offers open / properties / rename / duplicate / delete', () => {
+  it('view (definition) offers open / create-usage / properties / rename / duplicate / delete', () => {
     expect(ids('view')).toEqual([
+      'open-view',
+      'create-view-usage',
+      'view-properties',
+      'rename',
+      'duplicate-view',
+      'delete',
+    ]);
+  });
+
+  it('view (usage) cannot derive another usage — no create-view-usage item', () => {
+    const usageIds = menuItemsFor('view', 'package', 'usage').map((i) => i.id);
+    expect(usageIds).not.toContain('create-view-usage');
+    expect(usageIds).toEqual([
       'open-view',
       'view-properties',
       'rename',
@@ -212,5 +225,17 @@ describe('actionFor', () => {
       id: 'vp1',
       name: '视角A',
     });
+  });
+
+  // ── M15 §7.26：ViewDefinition → ViewUsage ────────────
+  it('create-view-usage carries the target view as the instantiated definition', () => {
+    expect(actionFor('create-view-usage', viewTarget)).toEqual({
+      type: 'create-view-usage',
+      viewDefinitionId: 'v1',
+    });
+  });
+
+  it('create-view-usage on a non-view target produces no action', () => {
+    expect(actionFor('create-view-usage', pkgTarget)).toBeNull();
   });
 });

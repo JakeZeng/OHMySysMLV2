@@ -518,6 +518,71 @@ test.describe.serial('M15 截图归档', () => {
     }
   });
 
+  // ── 17：ViewDefinition → ViewUsage 派生（§7.26 实例化）───────
+  test('17. 基于 ViewDefinition 新建 ViewUsage（实例）', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm15shot17');
+    const s = await seed(request, auth);
+    await injectAuth(page, auth);
+
+    await openProject(page, auth, [`pkg:${s.vehPkg}`]);
+
+    const defRow = page.locator(`[data-testid="tree-row-view:${s.vStructure}"]`).first();
+    await expect(defRow).toBeVisible({ timeout: 15_000 });
+    await defRow.click({ button: 'right' });
+    await expect(page.locator('[data-testid="tree-context-menu"]')).toBeVisible({
+      timeout: 8000,
+    });
+    // 定义节点才有「新建视图实例」入口
+    const createUsage = page.locator('[data-testid="ctx-create-view-usage"]');
+    await expect(createUsage).toBeVisible();
+    await shot(page, '17-viewusage-context-menu.png');
+
+    await createUsage.click();
+    // 新实例节点带 `实例` 徽章
+    const usageBadge = page.locator('[data-testid^="tree-viewkind-view:"]').first();
+    await expect(usageBadge).toBeVisible({ timeout: 15_000 });
+    await expect(usageBadge).toHaveText('实例');
+    await page.waitForTimeout(600);
+    await shot(page, '18-viewusage-instance-badge.png');
+  });
+
+  // ── 19：Promote to Package（view-private → 包）──────────────
+  test('19. 提升到包：view-private 元素移回所属包', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm15shot19');
+    const s = await seed(request, auth);
+    await injectAuth(page, auth);
+
+    await openProject(page, auth, [`pkg:${s.vehPkg}`, `view:${s.vLocalHelper}`]);
+
+    // promote 前：HelperPort 是 LocalHelperView 的 view-private 元素
+    const ownedRow = page.locator(
+      `[data-testid^="tree-local-elem:${s.vLocalHelper}:HelperPort"]`,
+    ).first();
+    await expect(ownedRow).toBeVisible({ timeout: 15_000 });
+    // 包下不应存在同名元素
+    await expect(
+      page.locator(`[data-testid^="tree-row-elem:${s.vehPkg}:HelperPort"]`),
+    ).toHaveCount(0);
+
+    await ownedRow.click({ button: 'right' });
+    await expect(page.locator('[data-testid="tree-context-menu"]')).toBeVisible({
+      timeout: 8000,
+    });
+    await expect(page.locator('[data-testid="ctx-element-promote"]')).toBeVisible();
+    await shot(page, '19-promote-menu.png');
+
+    await page.locator('[data-testid="ctx-element-promote"]').click();
+    // promote 后：从 view 子树消失，出现在所属包下
+    await expect(
+      page.locator(`[data-testid^="tree-row-elem:${s.vehPkg}:HelperPort"]`).first(),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.locator(`[data-testid^="tree-local-elem:${s.vLocalHelper}:HelperPort"]`),
+    ).toHaveCount(0);
+    await page.waitForTimeout(600);
+    await shot(page, '20-promoted-to-package.png');
+  });
+
   // ── 08：元素右键菜单 ──────────────────────────────────────
   test('08. 元素右键菜单（跳到画布 / 重命名 / 删除）', async ({ page, request }) => {
     const auth = await bootstrap(request, 'm15shot8');

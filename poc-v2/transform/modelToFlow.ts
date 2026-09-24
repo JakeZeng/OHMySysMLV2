@@ -86,6 +86,11 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   for (const pkg of model.packages) {
     collectMembers(pkg, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
+  // M15 §7.26：view 是 Namespace，body 内的 owned 成员也要上图
+  // （否则打开一个只含 view 定义的视图，画布会是空的）
+  for (const v of model.views ?? []) {
+    collectMembers(v, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+  }
   connections.push(...model.connections);
   stateMachines.push(...model.stateMachines);
   activities.push(...model.activities);
@@ -463,8 +468,14 @@ function makeEdge(
 
 // ─── 收集 ──────────────────────────────────────────────────────────────
 
+/**
+ * 递归收集 namespace 内的可渲染成员。
+ *
+ * 参数只用到 `.members` —— package 与 view（M15 §7.26，view 也是 Namespace）
+ * 都满足，所以按结构取而不是按 `Package` 取。
+ */
 function collectMembers(
-  pkg: Package,
+  ns: { members: any[] },
   partDefs: PartDefinition[],
   portDefs: PortDefinition[],
   partUsages: PartUsage[],
@@ -474,7 +485,7 @@ function collectMembers(
   requirements?: Requirement[],
   constraintBlocks?: ConstraintBlock[]
 ): void {
-  for (const m of pkg.members) {
+  for (const m of ns.members) {
     switch (m.kind) {
       case 'partDef':
         partDefs.push(m);

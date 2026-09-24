@@ -61,6 +61,18 @@ const DEFAULT_VIEW_BODY = (name: string) => `view ${name} {
 }
 `;
 
+/**
+ * M15 §7.26：ViewUsage 模板 —— 视图实例继承模板的 render/expose 语义。
+ * 新实例给一份可直接编辑的骨架，并注明它实例化自哪个 ViewDefinition。
+ */
+const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view ${name} {
+  // 实例化自 ViewDefinition「${definitionName}」（§7.26 ViewUsage）
+  // 在这里按该实例的语境重写 expose / render：
+  // expose ::SomeElement;
+  // render as interconnection;
+}
+`;
+
 const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint ${name} {
   // 描述利益相关方关注点（UI hint；非 SysML 强制）
   // stakeholder: <stakeholder>;
@@ -333,6 +345,49 @@ export const ProjectDetail: React.FC = () => {
       } catch (e) {
         showToast({
           title: '创建视图失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [projectId, views, refreshViews, showToast, setSearchParams],
+  );
+
+  /**
+   * M15 §7.26：基于 ViewDefinition 新建 ViewUsage（实例）。
+   * 实例落同包、携带 viewDefinitionId；内容用骨架而不是模板副本 ——
+   * 模板的 expose 是模板语境的引用，实例应当按自己的语境重写。
+   */
+  const handleCreateViewUsage = React.useCallback(
+    async (viewDefinitionId: string) => {
+      const def = views.find((v) => v.id === viewDefinitionId);
+      if (!def) {
+        showToast({ title: '找不到该 ViewDefinition', variant: 'error' });
+        return;
+      }
+      const packageId = def.packageId ?? null;
+      const siblingNames = views
+        .filter((v) => (v.packageId ?? null) === packageId)
+        .map((v) => v.name);
+      const name = generateUniqueName(`${def.name}Usage`, siblingNames);
+      try {
+        const usage = await viewApi.create(projectId, {
+          packageId: packageId ?? undefined,
+          name,
+          content: DEFAULT_VIEW_USAGE_BODY(name, def.name),
+          kind: 'usage',
+          viewDefinitionId: def.id,
+        });
+        await refreshViews();
+        showToast({
+          title: `已创建视图实例「${name}」`,
+          description: `实例化自 ${def.name}`,
+          variant: 'success',
+        });
+        setSearchParams({ view: usage.id });
+      } catch (e) {
+        showToast({
+          title: '创建视图实例失败',
           description: (e as Error).message,
           variant: 'error',
         });
@@ -654,6 +709,9 @@ export const ProjectDetail: React.FC = () => {
         case 'create-viewpoint':
           void handleCreateViewpoint(action.packageId);
           break;
+        case 'create-view-usage':
+          void handleCreateViewUsage(action.viewDefinitionId);
+          break;
         case 'create-element-trigger':
           setCreateElementFor(action.parentPackageId);
           break;
@@ -704,6 +762,7 @@ export const ProjectDetail: React.FC = () => {
     [
       handleCreatePackage,
       handleCreateView,
+      handleCreateViewUsage,
       handleCreateViewpoint,
       handlePromoteElement,
       handleRename,

@@ -63,7 +63,7 @@ export function parse(source: string): ParseResult {
     });
     return {
       ok: false,
-      model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] },
+      model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [], views: [] },
       errors,
     };
   } finally {
@@ -132,6 +132,9 @@ function flattenNestedMembers(model: SysMLModel): void {
     for (const m of pkg.members) {
       if (m.kind === 'package') {
         walk(m);
+        // 子包本身必须留在父包 members 里：本函数只负责把可可视化元素
+        // 提到顶层，子包被丢掉的话它体内的 part def 就再也到不了画布。
+        remaining.push(m);
       } else if (m.kind === 'stateMachine') {
         collected.push(m);
       } else if (m.kind === 'activity') {
@@ -147,6 +150,8 @@ function flattenNestedMembers(model: SysMLModel): void {
     pkg.members = remaining;
   };
   for (const pkg of model.packages) walk(pkg);
+  // M15：view body 内的 owned 成员同样需要扁平化（view 是 Namespace）
+  for (const v of model.views ?? []) walk(v);
   model.stateMachines.push(...collected);
   model.activities.push(...collectedActs);
   model.requirements.push(...collectedReqs);
