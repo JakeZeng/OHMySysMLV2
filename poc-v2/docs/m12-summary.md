@@ -127,14 +127,11 @@ URL 范式：`/projects/:projectId?package=:pkgId` 或 `?view=:viewId`（**互�
 
 ## 8. 截图归档
 
-**状态**：⚠️ **本会话未归档**（无 Playwright 浏览器 + 无 Go 后端运行时）
+**状态**：✅ **已归档 11/18 张**（commit `b3d0966`，tag `m12-screenshot`，2026-09-24）
 
-归档清单（18 张）见 `poc-v2/docs/screenshots/m12/README.md`。下次执行需要：
+归档清单 + 重跑命令见 `poc-v2/docs/screenshots/m12/README.md`。
 
-1. 启动 Go 后端 `cd poc-v2/backend && go run cmd/server`（本机目前未安装 Go）
-2. 启动前端 `cd poc-v2/frontend && npm run dev`
-3. `npx playwright install chromium` 下载浏览器
-4. 编写 `e2e/m12-screenshots.spec.ts` 按 README 清单拍图
-5. `git add poc-v2/docs/screenshots/m12/*.png && git commit -m "docs(m12.5): 归档自测截图" && git tag m12-screenshot`
-
-占位 README 已 commit（commit `93cbea2` 的补充）。
+补拍路径（M12.x）：
+- 11 (text 模式)、12 (Palette dropdown 展开) — 修复 testid 后可拍
+- 13 (AI 模态)、16/17 (错误路径) — 需新增 test 用例
+- 09 (键盘导航) — 需新增键盘交互断言
