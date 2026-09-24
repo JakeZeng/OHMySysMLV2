@@ -6,10 +6,32 @@
  */
 
 import * as React from 'react';
-import { ChevronRight, ChevronDown, FolderTree, Package as PackageIcon, Eye } from 'lucide-react';
+import {
+  ChevronRight,
+  ChevronDown,
+  FolderTree,
+  Package as PackageIcon,
+  Eye,
+  Circle,
+} from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { COLOR_TAG_CLASS } from '../../types/view';
 import type { TreeNode } from '../../lib/tree';
+
+/** 元素 kind → 显示图标 + 颜色（M14） */
+const ELEMENT_KIND_META: Record<string, { icon: string; color: string }> = {
+  partDef: { icon: '🧱', color: 'text-blue-600 dark:text-blue-300' },
+  partUsage: { icon: '🔌', color: 'text-orange-600 dark:text-orange-300' },
+  portDef: { icon: '🔘', color: 'text-cyan-600 dark:text-cyan-300' },
+  portUsage: { icon: '🔘', color: 'text-cyan-600 dark:text-cyan-300' },
+  attributeUsage: { icon: '📐', color: 'text-slate-500 dark:text-slate-300' },
+  state: { icon: '⚪', color: 'text-violet-600 dark:text-violet-300' },
+  initialState: { icon: '▶', color: 'text-violet-600 dark:text-violet-300' },
+  finalState: { icon: '⏹', color: 'text-violet-600 dark:text-violet-300' },
+  actionUsage: { icon: '⚡', color: 'text-violet-600 dark:text-violet-300' },
+  requirement: { icon: '📋', color: 'text-amber-600 dark:text-amber-300' },
+  constraint: { icon: '⛔', color: 'text-amber-700 dark:text-amber-300' },
+};
 
 export interface TreeRowProps {
   node: TreeNode;
@@ -39,13 +61,34 @@ export const TreeRow: React.FC<TreeRowProps> = ({
 }) => {
   const hasChildren = node.children.length > 0;
 
+  const isElement = node.kind === 'element';
+  const elementMeta = isElement
+    ? ELEMENT_KIND_META[node.elementKind ?? ''] ?? null
+    : null;
+
+  // 元素节点用 emoji 图标（替换 lucide RowIcon）
   const RowIcon =
-    node.kind === 'project' ? FolderTree : node.kind === 'package' ? PackageIcon : Eye;
+    node.kind === 'project'
+      ? FolderTree
+      : node.kind === 'package'
+        ? PackageIcon
+        : node.kind === 'view'
+          ? Eye
+          : Circle; // element 占位（实际渲染走 elementEmoji）
 
   const colorClass =
     node.kind === 'view' && node.colorTag
       ? COLOR_TAG_CLASS[node.colorTag]
       : undefined;
+
+  const iconColorClass =
+    node.kind === 'project'
+      ? 'text-gray-500'
+      : node.kind === 'package'
+        ? 'text-amber-600 dark:text-amber-400'
+        : node.kind === 'view'
+          ? 'text-brand-600 dark:text-brand-400'
+          : elementMeta?.color ?? 'text-gray-400';
 
   return (
     <div
@@ -97,13 +140,15 @@ export const TreeRow: React.FC<TreeRowProps> = ({
       <RowIcon
         className={cn(
           'h-3.5 w-3.5 shrink-0',
-          node.kind === 'project'
-            ? 'text-gray-500'
-            : node.kind === 'package'
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-brand-600 dark:text-brand-400',
+          iconColorClass,
         )}
       />
+
+      {isElement && elementMeta && (
+        <span className="text-xs leading-none" title={node.elementKind}>
+          {elementMeta.icon}
+        </span>
+      )}
 
       <span className="flex-1 truncate" title={node.name}>
         {node.name}

@@ -343,6 +343,8 @@ export interface DiagramCanvasProps {
 /** 暴露给父组件的操作接口 */
 export interface DiagramCanvasHandle {
   focusNode(nodeId: string): void;
+  /** M14：通过元素名（label）查找并聚焦节点 */
+  focusNodeByName(name: string): boolean;
   exportPng(): Promise<Blob | null>;
   exportSvg(): Promise<Blob | null>;
 }
@@ -385,6 +387,18 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         setHighlightedNodeId(nodeId);
         scheduleClear();
       }
+    },
+    focusNodeByName(name: string): boolean {
+      const instance = rfInstanceRef.current;
+      if (!instance) return false;
+      const target = nodes.find(
+        (n) => String((n.data as { label?: string } | undefined)?.label ?? '') === name,
+      );
+      if (!target) return false;
+      instance.fitView({ nodes: [target], duration: 500, padding: 0.5 });
+      setHighlightedNodeId(target.id);
+      scheduleClear();
+      return true;
     },
     async exportPng(): Promise<Blob | null> {
       const rfElement = document.querySelector('.react-flow') as HTMLElement | null;

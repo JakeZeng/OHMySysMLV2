@@ -5,6 +5,7 @@
  *   工程 (Project — 我们的域容器，非 SysML)
  *   └── 包 (Package — 唯一 SysML 实体，可嵌套，含 content)
  *       ├── 包 (子包，递归)
+ *       ├── 元素 (Element — M14，从 package.content 解析的顶层成员)
  *       └── 视图 (View — 一等 SysML 实体)
  *
  * 与组件解耦，便于单测；ProjectTree 只负责渲染。
@@ -12,10 +13,22 @@
 
 import type { PackageSummary } from '../types/package';
 import type { ViewSummary } from '../types/view';
-import { encodeNodeId, type TreeNodeKind } from '../stores/treeStore';
+import {
+  encodeNodeId,
+  encodeElementId,
+  type TreeNodeKind,
+} from '../stores/treeStore';
+
+/** 元素节点元信息（M14 — 树中展示元素用） */
+export interface ElementNodeInfo {
+  /** 元素名（同一包内 name 唯一） */
+  name: string;
+  /** AST kind（partDef / portDef / state / ...） */
+  kind: string;
+}
 
 export interface TreeNode {
-  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` */
+  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` / `elem:<pkgId>:<name>` */
   encodedId: string;
   kind: TreeNodeKind;
   /** 原始实体 ID */
@@ -23,6 +36,10 @@ export interface TreeNode {
   name: string;
   /** 视图的 UI 颜色标签（包无此字段） */
   colorTag?: string;
+  /** M14：父节点 ID（用于 element 节点回溯到所属 package） */
+  parentId?: string;
+  /** M14：元素节点的 AST kind */
+  elementKind?: string;
   children: TreeNode[];
 }
 
@@ -31,6 +48,12 @@ export interface BuildTreeInput {
   projectName: string;
   packages: PackageSummary[];
   views: ViewSummary[];
+  /**
+   * M14：每个 package 内的元素节点列表。
+   * key = packageId；value = 该包的顶层成员。
+   * 由 usePackageElements hook 注入（懒加载）。
+   */
+  packageElements?: Record<string, ElementNodeInfo[]>;
 }
 
 /** 空 parentPackageId / packageId 归一为 ''（顶层） */
@@ -45,9 +68,12 @@ function parentOf(parentId: string | undefined): string {
  * - 父包不存在的包 → 挂到工程根（不丢数据）
  * - packageId 不存在的视图 → 挂到工程根
  * - 父子成环的包 → 断开环后挂到工程根
+ * - M14：packageElements[packageId] 注入的元素节点 → 挂在对应包下
+ *
+ * 节点顺序：包 → 元素 → 视图（M14）
  */
 export function buildTree(input: BuildTreeInput): TreeNode {
-  const { projectId, projectName, packages, views } = input;
+  const { projectId, projectName, packages, views, packageElements } = input;
 
   const packageIds = new Set(packages.map((p) => p.id));
 
@@ -86,8 +112,43 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     });
   }
 
-  // 组装：包在前、视图在后（同类保持接口返回顺序）
+  // M14：元素节点：按 packageId 分组（挂在对应包下）
+  if (packageElements) {
+    for (const [pkgId, elements] of Object.entries(packageElements)) {
+      if (!packageIds.has(pkgId)) continue; // 跳过无效 package
+      for (const el of elements) {
+        if (!el?.name) continue;
+        push(pkgId, {
+          encodedId: encodeElementId(pkgId, el.name),
+          kind: 'element',
+          id: `${pkgId}:${el.name}`,
+          name: el.name,
+          parentId: pkgId,
+          elementKind: el.kind,
+          children: [],
+        });
+      }
+    }
+  }
+
+  // 同层子节点排序：包 < 元素 < 视图
+  const order: Record<TreeNodeKind, number> = {
+    package: 0,
+    element: 1,
+    view: 2,
+    project: 3,
+  };
+  const sortChildren = (parentKey: string) => {
+    const nodes = childrenOf.get(parentKey);
+    if (!nodes) return undefined;
+    const sorted = [...nodes].sort((a, b) => order[a.kind] - order[b.kind]);
+    childrenOf.set(parentKey, sorted);
+    return sorted;
+  };
+
+  // 组装：包嵌套递归（保持原行为），同时附加元素/视图作为叶子
   const assemble = (parentKey: string, visited: Set<string>): TreeNode[] => {
+    sortChildren(parentKey);
     const nodes = childrenOf.get(parentKey) ?? [];
     const out: TreeNode[] = [];
     for (const node of nodes) {

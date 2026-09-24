@@ -9,6 +9,7 @@
  * 编码规则（避免包/视图 ID 撞车）：
  *   - 包：  `pkg:<packageId>`
  *   - 视图：`view:<viewId>`
+ *   - 元素：`elem:<packageId>:<elementName>`（M14）
  *   - 工程根：`project:<projectId>`
  *
  * 持久化：localStorage key = `sysmlv2.tree.${projectId}`
@@ -16,11 +17,14 @@
 
 import { create } from 'zustand';
 
-export type TreeNodeKind = 'project' | 'package' | 'view';
+export type TreeNodeKind = 'project' | 'package' | 'view' | 'element';
 
 /** 编码一个树节点 ID */
 export function encodeNodeId(kind: TreeNodeKind, id: string): string {
-  return `${kind === 'package' ? 'pkg' : kind}:${id}`;
+  if (kind === 'package') return `pkg:${id}`;
+  if (kind === 'view') return `view:${id}`;
+  if (kind === 'element') return `elem:${id}`;
+  return `${kind}:${id}`;
 }
 
 /** 解码树节点 ID；非法输入返回 null */
@@ -35,8 +39,25 @@ export function decodeNodeId(
   if (!id) return null;
   if (prefix === 'pkg') return { kind: 'package', id };
   if (prefix === 'view') return { kind: 'view', id };
+  if (prefix === 'elem') return { kind: 'element', id };
   if (prefix === 'project') return { kind: 'project', id };
   return null;
+}
+
+/** 解码 element 节点的 id（`pkg:xxx:Name` → {packageId, elementName}） */
+export function decodeElementId(
+  encodedId: string,
+): { packageId: string; elementName: string } | null {
+  if (!encodedId.startsWith('elem:')) return null;
+  const rest = encodedId.slice('elem:'.length);
+  const idx = rest.indexOf(':');
+  if (idx <= 0 || idx >= rest.length - 1) return null;
+  return { packageId: rest.slice(0, idx), elementName: rest.slice(idx + 1) };
+}
+
+/** 编码 element 节点 id */
+export function encodeElementId(packageId: string, elementName: string): string {
+  return `elem:${packageId}:${elementName}`;
 }
 
 interface PersistedTree {

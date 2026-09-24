@@ -2,13 +2,25 @@
  * M12 工程树右键菜单配置。
  *
  * 纯函数：给节点类型 → 菜单项列表。便于单测。
+ *
+ * M14：包节点新增"新建元素"；元素节点新增"跳到画布/重命名/删除"。
  */
 
 import * as React from 'react';
-import { FolderPlus, FilePlus, Pencil, Trash2, Copy, Settings2, Eye } from 'lucide-react';
+import {
+  FolderPlus,
+  FilePlus,
+  Pencil,
+  Trash2,
+  Copy,
+  Settings2,
+  Eye,
+  Square,
+  Crosshair,
+} from 'lucide-react';
 import type { ContextMenuItem } from './ContextMenu';
 import type { TreeNodeKind } from '../../stores/treeStore';
-import type { TreeAction, TreeEntityKind } from './types';
+import type { TreeAction, TreeEntityKind, ElementRef } from './types';
 
 const icon = (C: React.ComponentType<{ className?: string }>) =>
   React.createElement(C, { className: 'h-3.5 w-3.5' });
@@ -25,6 +37,12 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
       return [
         { id: 'create-package', label: '新建子包', icon: icon(FolderPlus) },
         { id: 'create-view', label: '新建视图', icon: icon(FilePlus) },
+        {
+          id: 'create-element-trigger',
+          label: '新建元素',
+          icon: icon(Square),
+          separatorBefore: true,
+        },
         { id: 'rename', label: '重命名', icon: icon(Pencil), separatorBefore: true, hint: 'F2' },
         { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
       ];
@@ -37,6 +55,29 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
         { id: 'duplicate-view', label: '复制', icon: icon(Copy) },
         { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
       ];
+
+    case 'element':
+      return [
+        {
+          id: 'element-goto-canvas',
+          label: '跳到画布',
+          icon: icon(Crosshair),
+        },
+        {
+          id: 'element-rename',
+          label: '重命名',
+          icon: icon(Pencil),
+          separatorBefore: true,
+          hint: 'F2',
+        },
+        {
+          id: 'element-delete',
+          label: '删除',
+          icon: icon(Trash2),
+          danger: true,
+          hint: 'Del',
+        },
+      ];
   }
 }
 
@@ -48,12 +89,13 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
 export function actionFor(
   menuItemId: string,
   target: { kind: TreeNodeKind; id: string; name: string },
+  /** 当 kind === 'element' 时携带 */
+  elementRef?: ElementRef,
 ): TreeAction | null {
   switch (menuItemId) {
     case 'create-package':
       return {
         type: 'create-package',
-        // 工程根 → 顶层包；包 → 其子包
         parentPackageId: target.kind === 'package' ? target.id : null,
       };
 
@@ -63,10 +105,45 @@ export function actionFor(
         packageId: target.kind === 'package' ? target.id : null,
       };
 
+    case 'create-element-trigger':
+      return {
+        type: 'create-element-trigger',
+        parentPackageId: target.kind === 'package' ? target.id : '',
+      };
+
+    case 'element-goto-canvas':
+      if (target.kind === 'element' && elementRef) {
+        return { type: 'element-action', action: 'goto-canvas', ref: elementRef };
+      }
+      return null;
+
+    case 'element-rename':
+      if (target.kind === 'element' && elementRef) {
+        return { type: 'element-action', action: 'rename', ref: elementRef };
+      }
+      // 退回到旧的 rename 协议（仅 package/view；element 不会出现此路径）
+      return {
+        type: 'rename',
+        kind: target.kind === 'view' ? 'view' : 'package',
+        id: target.id,
+        currentName: target.name,
+      };
+
+    case 'element-delete':
+      if (target.kind === 'element' && elementRef) {
+        return { type: 'element-action', action: 'delete', ref: elementRef };
+      }
+      return {
+        type: 'delete',
+        kind: target.kind === 'view' ? 'view' : 'package',
+        id: target.id,
+        name: target.name,
+      };
+
     case 'rename':
       return {
         type: 'rename',
-        kind: target.kind as TreeEntityKind,
+        kind: target.kind === 'view' ? 'view' : 'package',
         id: target.id,
         currentName: target.name,
       };
@@ -74,7 +151,7 @@ export function actionFor(
     case 'delete':
       return {
         type: 'delete',
-        kind: target.kind as TreeEntityKind,
+        kind: target.kind === 'view' ? 'view' : 'package',
         id: target.id,
         name: target.name,
       };

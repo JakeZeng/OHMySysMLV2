@@ -7,6 +7,7 @@
 import * as React from 'react';
 import type { Node } from '@xyflow/react';
 import { ModelingPane, type ModelingAdapter } from './ModelingPane';
+import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { useViewContent } from '../../hooks/useViewContent';
 import { useModelStore } from '../../stores/modelStore';
 import { TemplateChooserModal } from '../modals/TemplateChooserModal';
@@ -18,12 +19,15 @@ export interface ViewModelingPaneProps {
   viewId: string;
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
+  /** M14：暴露 diagramRef 给宿主 */
+  onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
 }
 
 export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
   viewId,
   selectedNode,
   onSelectNode,
+  onDiagramReady,
 }) => {
   const { showToast } = useToast();
   const view = useViewContent(viewId);
@@ -90,7 +94,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
 
   return (
     <>
-      <ModelingPane adapter={adapter} />
+      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} />
       <TemplateChooserModal
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}

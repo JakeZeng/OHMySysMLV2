@@ -21,6 +21,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useModelStore } from '../../stores/modelStore';
 import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
+import { generateUniqueName } from '../../lib/naming';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
@@ -80,12 +81,21 @@ export interface ModelingAdapter {
 
 export interface ModelingPaneProps {
   adapter: ModelingAdapter;
+  /** M14：暴露 diagramRef 给宿主（用于从树点击元素后聚焦画布节点） */
+  onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
 }
 
-export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter }) => {
+export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramReady }) => {
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const modelingMode = useUIStore((s) => s.modelingMode);
+
+  // M14：每次 adapter.content 切换时通知宿主重绑 diagramRef
+  React.useEffect(() => {
+    onDiagramReady?.(diagramRef.current);
+    return () => onDiagramReady?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adapter.content]);
   const interactive = modelingMode !== 'text';
 
   // ── M13：从 modelStore 取 entityKind/Id 派生 scope ──
@@ -136,68 +146,52 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enableSimulation, stateMachines[0]?.id]);
 
-  // ── 拖拽建模 ──
+  // ── 拖拽建模（M14：自动命名，无 prompt） ──
   const { showToast } = useToast();
+  const existingNodeNames = useModelStore((s) =>
+    s.pipeline.nodes.map((n) => String((n.data as { label?: string } | undefined)?.label ?? '')).filter(Boolean),
+  );
+  const latestPartDefName = useModelStore((s) => {
+    const ns = s.pipeline.nodes;
+    for (let i = ns.length - 1; i >= 0; i--) {
+      if ((ns[i].data as { nodeType?: string } | undefined)?.nodeType === 'sysmlPartDef') {
+        return String((ns[i].data as { label?: string } | undefined)?.label ?? '');
+      }
+    }
+    return '';
+  });
+
   const handlePaletteDrop = React.useCallback(
     (kind: string, dropXY: { x: number; y: number }) => {
       const item = PALETTE_ITEMS.find((p) => p.kind === kind);
       if (!item) return;
+      const name = generateUniqueName(item.defaultName, existingNodeNames);
+      let snippet: string;
       if (item.kind === 'partUsage') {
-        const name = window.prompt(`${item.label}（实例名）:`, item.defaultName);
-        if (!name) return;
-        const typeRef = window.prompt(`${item.label}（类型名）:`, item.defaultName2);
-        if (!typeRef) return;
-        const snippet = `part ${name.trim()} : ${typeRef.trim()};`;
-        const r = adapter.createNodeFromPalette(snippet, name.trim(), dropXY);
-        if (!r.ok) showToast({ title: '创建失败', description: r.reason, variant: 'error' });
-        else if (r.newNodeId) diagramRef.current?.focusNode(r.newNodeId);
-        return;
-      }
-      if (item.defaultName2) {
-        const name1 = window.prompt(`${item.label}（第一个名字）:`, item.defaultName);
-        if (!name1) return;
-        const name2 = window.prompt(`${item.label}（第二个名字）:`, item.defaultName2);
-        if (!name2) return;
-        const snippet = item.generate(name1.trim(), name2.trim());
-        const r = adapter.createNodeFromPalette(snippet, name1.trim(), dropXY);
-        if (!r.ok) showToast({ title: '创建失败', description: r.reason, variant: 'error' });
-        else if (r.newNodeId) diagramRef.current?.focusNode(r.newNodeId);
-        return;
-      }
-      const name = window.prompt(`${item.label}（名字）:`, item.defaultName);
-      if (!name) return;
-      const trimmed = name.trim();
-      if (!/^[A-Za-z_][\w]*$/.test(trimmed)) {
-        showToast({ title: '非法标识符', variant: 'error' });
-        return;
-      }
-      const snippet = item.generate(trimmed);
-      const r = adapter.createNodeFromPalette(snippet, trimmed, dropXY);
-      if (!r.ok) {
-        showToast({ title: '创建失败', description: r.reason, variant: 'error' });
+        const typeRef = latestPartDefName || 'Part';
+        snippet = `part ${name} : ${typeRef};`;
       } else {
+        snippet = item.generate(name);
+      }
+      const r = adapter.createNodeFromPalette(snippet, name, dropXY);
+      if (!r.ok) showToast({ title: '创建失败', description: r.reason, variant: 'error' });
+      else {
         showToast({ title: '已添加', variant: 'success' });
         if (r.newNodeId) diagramRef.current?.focusNode(r.newNodeId);
       }
     },
-    [adapter, showToast],
+    [adapter, showToast, existingNodeNames, latestPartDefName],
   );
 
   const handlePaneDoubleClick = React.useCallback(
     (dropXY: { x: number; y: number }) => {
       const item = PALETTE_ITEMS.find((p) => p.kind === 'partDef');
       if (!item) return;
-      const name = window.prompt(`${item.label}（名字）:`, item.defaultName);
-      if (!name) return;
-      const trimmed = name.trim();
-      if (!/^[A-Za-z_][\w]*$/.test(trimmed)) {
-        showToast({ title: '非法标识符', variant: 'error' });
-        return;
-      }
-      const r = adapter.createNodeFromPalette(item.generate(trimmed), trimmed, dropXY);
+      const name = generateUniqueName(item.defaultName, existingNodeNames);
+      const r = adapter.createNodeFromPalette(item.generate(name), name, dropXY);
       if (!r.ok) showToast({ title: '创建失败', description: r.reason, variant: 'error' });
     },
-    [adapter, showToast],
+    [adapter, showToast, existingNodeNames],
   );
 
   const handleConnectCreate = React.useCallback(

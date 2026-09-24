@@ -14,7 +14,12 @@
 
 import * as React from 'react';
 import { useTreeStore } from '../../stores/treeStore';
-import { buildTree, visibleRows, type TreeNode } from '../../lib/tree';
+import {
+  buildTree,
+  visibleRows,
+  type TreeNode,
+  type ElementNodeInfo,
+} from '../../lib/tree';
 import { TreeRow } from './TreeRow';
 import { ContextMenu, type ContextMenuPosition } from './ContextMenu';
 import { menuItemsFor, actionFor } from './menuItems';
@@ -32,6 +37,8 @@ export interface ProjectTreeProps {
   error?: string | null;
   /** 视图行的节点数徽章（可选，key = viewId） */
   viewNodeCounts?: Record<string, number>;
+  /** M14：每个 package 内的元素节点列表（key = packageId） */
+  packageElements?: Record<string, ElementNodeInfo[]>;
   onAction: (action: TreeAction) => void;
   /** 选中变化（宿主用于同步 URL） */
   onSelect?: (encodedId: string | null) => void;
@@ -46,6 +53,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   loading = false,
   error = null,
   viewNodeCounts,
+  packageElements,
   onAction,
   onSelect,
   className,
@@ -70,8 +78,8 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   }, [projectId, setProject]);
 
   const root = React.useMemo(
-    () => buildTree({ projectId, projectName, packages, views }),
-    [projectId, projectName, packages, views],
+    () => buildTree({ projectId, projectName, packages, views, packageElements }),
+    [projectId, projectName, packages, views, packageElements],
   );
 
   const rows = React.useMemo(
@@ -111,11 +119,20 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
         handleSelect(node.encodedId);
         return;
       }
-      const action = actionFor(menuItemId, {
-        kind: node.kind,
-        id: node.id,
-        name: node.name,
-      });
+      // M14：element 节点需要 ElementRef 才能路由到 element-action
+      const elementRef =
+        node.kind === 'element'
+          ? {
+              packageId: node.parentId ?? '',
+              elementName: node.name,
+              elementKind: node.elementKind,
+            }
+          : undefined;
+      const action = actionFor(
+        menuItemId,
+        { kind: node.kind, id: node.id, name: node.name },
+        elementRef,
+      );
       if (action) onAction(action);
     },
     [menu, handleSelect, onAction],
@@ -198,7 +215,15 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
 
         case 'F2':
           e.preventDefault();
-          if (current.kind !== 'project') {
+          if (current.kind === 'element') {
+            // 元素节点：跳到画布节点用 F2 重命名
+            const ref = {
+              packageId: current.parentId ?? '',
+              elementName: current.name,
+              elementKind: current.elementKind,
+            };
+            onAction({ type: 'element-action', action: 'rename', ref });
+          } else if (current.kind !== 'project') {
             onAction({
               type: 'rename',
               kind: current.kind,
@@ -210,7 +235,14 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
 
         case 'Delete':
           e.preventDefault();
-          if (current.kind !== 'project') {
+          if (current.kind === 'element') {
+            const ref = {
+              packageId: current.parentId ?? '',
+              elementName: current.name,
+              elementKind: current.elementKind,
+            };
+            onAction({ type: 'element-action', action: 'delete', ref });
+          } else if (current.kind !== 'project') {
             onAction({
               type: 'delete',
               kind: current.kind,
