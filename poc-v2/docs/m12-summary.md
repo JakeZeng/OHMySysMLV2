@@ -127,11 +127,10 @@ URL 范式：`/projects/:projectId?package=:pkgId` 或 `?view=:viewId`（**互�
 
 ## 8. 截图归档
 
-**状态**：✅ **已归档 11/18 张**（commit `b3d0966`，tag `m12-screenshot`，2026-09-24）
+**状态**：✅ **全部 18 张已归档**（2026-09-24）
 
 归档清单 + 重跑命令见 `poc-v2/docs/screenshots/m12/README.md`。
 
-补拍路径（M12.x）：
-- 11 (text 模式)、12 (Palette dropdown 展开) — 修复 testid 后可拍
-- 13 (AI 模态)、16/17 (错误路径) — 需新增 test 用例
-- 09 (键盘导航) — 需新增键盘交互断言
+补拍历史：
+- M12.5a: 11 张首批（commit `b3d0966`，tag `m12-screenshot`）
+- M12.5d: 补拍剩余 7 张（09/04-canvas/11/12/13/16/17）
