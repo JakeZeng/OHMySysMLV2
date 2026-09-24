@@ -13,10 +13,11 @@ describe('menuItemsFor', () => {
     expect(ids('project')).toEqual(['create-package']);
   });
 
-  it('package offers create child package / create view / rename / delete', () => {
+  it('package offers create child package / create view / create element / rename / delete', () => {
     expect(ids('package')).toEqual([
       'create-package',
       'create-view',
+      'create-element-trigger',
       'rename',
       'delete',
     ]);
@@ -32,6 +33,14 @@ describe('menuItemsFor', () => {
     ]);
   });
 
+  it('element offers goto-canvas / rename / delete', () => {
+    expect(ids('element')).toEqual([
+      'element-goto-canvas',
+      'element-rename',
+      'element-delete',
+    ]);
+  });
+
   it('marks delete as dangerous on both package and view', () => {
     for (const kind of ['package', 'view'] as const) {
       const del = menuItemsFor(kind).find((i) => i.id === 'delete');
@@ -40,14 +49,14 @@ describe('menuItemsFor', () => {
   });
 
   it('never marks a non-delete item as dangerous', () => {
-    for (const kind of ['project', 'package', 'view'] as const) {
-      const others = menuItemsFor(kind).filter((i) => i.id !== 'delete');
+    for (const kind of ['project', 'package', 'view', 'element'] as const) {
+      const others = menuItemsFor(kind).filter((i) => i.id !== 'delete' && i.id !== 'element-delete');
       expect(others.every((i) => !i.danger)).toBe(true);
     }
   });
 
   it('gives every item a unique id and a label', () => {
-    for (const kind of ['project', 'package', 'view'] as const) {
+    for (const kind of ['project', 'package', 'view', 'element'] as const) {
       const items = menuItemsFor(kind);
       expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
       expect(items.every((i) => i.label.length > 0)).toBe(true);
@@ -118,5 +127,39 @@ describe('actionFor', () => {
 
   it('returns null for an unknown menu item id', () => {
     expect(actionFor('nonexistent', pkgTarget)).toBeNull();
+  });
+
+  // ── M14 ─────────────────────────────────────────────
+  it('create-element-trigger on a package targets that package', () => {
+    expect(actionFor('create-element-trigger', pkgTarget)).toEqual({
+      type: 'create-element-trigger',
+      parentPackageId: 'p1',
+    });
+  });
+
+  it('element-goto-canvas requires an ElementRef', () => {
+    const ref = { packageId: 'p1', elementName: 'Part_1' };
+    expect(
+      actionFor('element-goto-canvas', { kind: 'element', id: 'elem:Part_1', name: 'Part_1' }, ref),
+    ).toEqual({ type: 'element-action', action: 'goto-canvas', ref });
+  });
+
+  it('element-rename and element-delete route to element-action', () => {
+    const ref = { packageId: 'p1', elementName: 'Part_1' };
+    expect(
+      actionFor('element-rename', { kind: 'element', id: 'elem:Part_1', name: 'Part_1' }, ref),
+    ).toEqual({ type: 'element-action', action: 'rename', ref });
+    expect(
+      actionFor('element-delete', { kind: 'element', id: 'elem:Part_1', name: 'Part_1' }, ref),
+    ).toEqual({ type: 'element-action', action: 'delete', ref });
+  });
+
+  it('element-* on a non-element target falls back to legacy rename/delete', () => {
+    expect(actionFor('element-rename', pkgTarget)).toEqual({
+      type: 'rename',
+      kind: 'package',
+      id: 'p1',
+      currentName: '结构包',
+    });
   });
 });

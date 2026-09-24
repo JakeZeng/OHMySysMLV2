@@ -7,6 +7,8 @@ import {
   useTreeStore,
   encodeNodeId,
   decodeNodeId,
+  encodeElementId,
+  decodeElementId,
 } from './treeStore';
 
 // localStorage mock（vitest 默认 node 环境）
@@ -51,6 +53,35 @@ describe('encodeNodeId / decodeNodeId', () => {
     expect(decodeNodeId('unknown:x')).toBeNull();
     expect(decodeNodeId('pkg:')).toBeNull();
     expect(decodeNodeId(':x')).toBeNull();
+  });
+});
+
+// ── M14：element 节点编码 ──────────────────────────────────
+
+describe('encodeElementId / decodeElementId (M14)', () => {
+  it('encodes element id with elem prefix', () => {
+    expect(encodeElementId('p1', 'Part_1')).toBe('elem:p1:Part_1');
+  });
+
+  it('decodeNodeId returns element kind for elem prefix', () => {
+    expect(decodeNodeId('elem:p1:Part_1')).toEqual({
+      kind: 'element',
+      id: 'p1:Part_1',
+    });
+  });
+
+  it('decodeElementId splits packageId and elementName', () => {
+    expect(decodeElementId('elem:p1:Part_1')).toEqual({
+      packageId: 'p1',
+      elementName: 'Part_1',
+    });
+  });
+
+  it('decodeElementId returns null for non-elem ids', () => {
+    expect(decodeElementId('pkg:p1')).toBeNull();
+    expect(decodeElementId('view:v1')).toBeNull();
+    expect(decodeElementId('elem:')).toBeNull();
+    expect(decodeElementId('elem:nocolon')).toBeNull();
   });
 });
 

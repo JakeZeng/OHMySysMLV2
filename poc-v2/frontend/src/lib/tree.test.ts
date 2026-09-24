@@ -249,3 +249,67 @@ describe('findNode / findNodePath / ancestorsToExpand', () => {
     expect(ancestorsToExpand(root, 'project:proj1')).toEqual([]);
   });
 });
+
+// ── M14：元素节点（packageElements） ──────────────────────────────
+
+describe('buildTree with packageElements (M14)', () => {
+  it('attaches element nodes under their parent package', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [],
+      packageElements: {
+        p1: [
+          { name: 'Part_1', kind: 'partDef' },
+          { name: 'Port_1', kind: 'portDef' },
+        ],
+      },
+    });
+    const p1 = root.children.find((c) => c.kind === 'package')!;
+    expect(p1.children.map((c) => `${c.kind}:${c.name}`)).toEqual([
+      'element:Part_1',
+      'element:Port_1',
+    ]);
+    expect(p1.children[0].elementKind).toBe('partDef');
+    expect(p1.children[0].parentId).toBe('p1');
+  });
+
+  it('orders children: package → element → view', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包'), pkg('p2', '子包', 'p1')],
+      views: [view('v1', '视图A', 'p1')],
+      packageElements: {
+        p1: [{ name: 'Part_1', kind: 'partDef' }],
+      },
+    });
+    const p1 = root.children.find((c) => c.kind === 'package' && c.id === 'p1')!;
+    expect(p1.children.map((c) => c.kind)).toEqual(['package', 'element', 'view']);
+  });
+
+  it('ignores element entries for unknown package ids', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [],
+      packageElements: {
+        ghost: [{ name: 'Part_1', kind: 'partDef' }],
+        p1: [{ name: 'Part_2', kind: 'partDef' }],
+      },
+    });
+    const p1 = root.children.find((c) => c.kind === 'package')!;
+    expect(p1.children).toHaveLength(1);
+    expect(p1.children[0].name).toBe('Part_2');
+  });
+
+  it('element nodes have empty children array (leaf)', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [],
+      packageElements: { p1: [{ name: 'Part_1', kind: 'partDef' }] },
+    });
+    const el = root.children[0].children[0];
+    expect(el.children).toEqual([]);
+  });
+});
