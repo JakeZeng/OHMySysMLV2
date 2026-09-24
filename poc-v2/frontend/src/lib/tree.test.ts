@@ -13,6 +13,7 @@ import {
 } from './tree';
 import type { PackageSummary } from '../types/package';
 import type { ViewSummary } from '../types/view';
+import type { ViewpointSummary } from '../types/viewpoint';
 
 function pkg(
   id: string,
@@ -38,6 +39,25 @@ function view(id: string, name: string, packageId = '', colorTag?: string): View
     name,
     description: '',
     colorTag,
+    version: 1,
+    updatedAt: '2026-09-23T00:00:00Z',
+  };
+}
+
+function viewpoint(
+  id: string,
+  name: string,
+  packageId = '',
+  stakeholder = '',
+): ViewpointSummary {
+  return {
+    id,
+    projectId: 'proj1',
+    packageId,
+    name,
+    description: '',
+    stakeholder,
+    concern: '',
     version: 1,
     updatedAt: '2026-09-23T00:00:00Z',
   };
@@ -168,6 +188,51 @@ describe('buildTree', () => {
       views: [],
     });
     expect(root.children[0].children[0].children[0].name).toBe('L3');
+  });
+
+  // ─── M15：Viewpoint 节点 ─────────────────────────────────────
+  it('places viewpoints under their parent package', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [],
+      viewpoints: [viewpoint('vp1', '安全视角', 'p1', 'SafetyOfficer')],
+    });
+    expect(childNames(root.children[0])).toEqual(['安全视角']);
+    const vpNode = root.children[0].children[0];
+    expect(vpNode.kind).toBe('viewpoint');
+    expect(vpNode.encodedId).toBe('viewpoint:vp1');
+    expect(vpNode.viewpointStakeholder).toBe('SafetyOfficer');
+  });
+
+  it('keeps root-level viewpoints (empty packageId) under the project root', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [],
+      viewpoints: [viewpoint('vp1', '全局视角', '', 'Architect')],
+    });
+    expect(childNames(root)).toEqual(['结构包', '全局视角']);
+  });
+
+  it('orders package < view < viewpoint within the same parent', () => {
+    const root = buildTree({
+      ...base,
+      packages: [pkg('p1', '结构包')],
+      views: [view('v1', '视图A', 'p1')],
+      viewpoints: [viewpoint('vp1', '视角A', 'p1', 'X')],
+    });
+    expect(childNames(root.children[0])).toEqual(['视图A', '视角A']);
+  });
+
+  it('re-parents a viewpoint whose package is missing to the root (no data loss)', () => {
+    const root = buildTree({
+      ...base,
+      packages: [],
+      views: [],
+      viewpoints: [viewpoint('vp1', '孤儿视角', 'ghost')],
+    });
+    expect(childNames(root)).toEqual(['孤儿视角']);
   });
 });
 

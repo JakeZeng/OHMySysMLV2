@@ -33,10 +33,12 @@ describe('encodeNodeId / decodeNodeId', () => {
     expect(encodeNodeId('package', 'p1')).toBe('pkg:p1');
     expect(encodeNodeId('view', 'v1')).toBe('view:v1');
     expect(encodeNodeId('project', 'proj1')).toBe('project:proj1');
+    // M15：
+    expect(encodeNodeId('viewpoint', 'vp1')).toBe('viewpoint:vp1');
   });
 
   it('round-trips every kind', () => {
-    for (const kind of ['project', 'package', 'view'] as const) {
+    for (const kind of ['project', 'package', 'view', 'viewpoint'] as const) {
       const encoded = encodeNodeId(kind, 'abc');
       expect(decodeNodeId(encoded)).toEqual({ kind, id: 'abc' });
     }

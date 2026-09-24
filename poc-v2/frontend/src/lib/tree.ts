@@ -6,13 +6,15 @@
  *   └── 包 (Package — 唯一 SysML 实体，可嵌套，含 content)
  *       ├── 包 (子包，递归)
  *       ├── 元素 (Element — M14，从 package.content 解析的顶层成员)
- *       └── 视图 (View — 一等 SysML 实体)
+ *       ├── 视图 (View — 一等 SysML 实体，M12+)
+ *       └── 视角 (Viewpoint — SysML v2 §7.26 一等元素，M15)
  *
  * 与组件解耦，便于单测；ProjectTree 只负责渲染。
  */
 
 import type { PackageSummary } from '../types/package';
 import type { ViewSummary } from '../types/view';
+import type { ViewpointSummary } from '../types/viewpoint';
 import {
   encodeNodeId,
   encodeElementId,
@@ -28,7 +30,7 @@ export interface ElementNodeInfo {
 }
 
 export interface TreeNode {
-  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` / `elem:<pkgId>:<name>` */
+  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` / `viewpoint:<id>` / `elem:<pkgId>:<name>` */
   encodedId: string;
   kind: TreeNodeKind;
   /** 原始实体 ID */
@@ -40,6 +42,8 @@ export interface TreeNode {
   parentId?: string;
   /** M14：元素节点的 AST kind */
   elementKind?: string;
+  /** M15：视角的利益相关方（UI hint；显示在徽章上） */
+  viewpointStakeholder?: string;
   children: TreeNode[];
 }
 
@@ -48,6 +52,8 @@ export interface BuildTreeInput {
   projectName: string;
   packages: PackageSummary[];
   views: ViewSummary[];
+  /** M15：SysML v2 视角（ViewpointSummary 列表） */
+  viewpoints?: ViewpointSummary[];
   /**
    * M14：每个 package 内的元素节点列表。
    * key = packageId；value = 该包的顶层成员。
@@ -69,11 +75,19 @@ function parentOf(parentId: string | undefined): string {
  * - packageId 不存在的视图 → 挂到工程根
  * - 父子成环的包 → 断开环后挂到工程根
  * - M14：packageElements[packageId] 注入的元素节点 → 挂在对应包下
+ * - M15：viewpoints 节点 → 按 packageId 分组挂在对应包下；packageId 不存在时挂顶层
  *
- * 节点顺序：包 → 元素 → 视图（M14）
+ * 节点顺序：包 < 元素 < 视图 < 视角（M15）
  */
 export function buildTree(input: BuildTreeInput): TreeNode {
-  const { projectId, projectName, packages, views, packageElements } = input;
+  const {
+    projectId,
+    projectName,
+    packages,
+    views,
+    viewpoints,
+    packageElements,
+  } = input;
 
   const packageIds = new Set(packages.map((p) => p.id));
 
@@ -112,6 +126,21 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     });
   }
 
+  // M15：视角节点：按 packageId 分组
+  if (viewpoints && viewpoints.length > 0) {
+    for (const vp of viewpoints) {
+      const parent = parentOf(vp.packageId);
+      push(packageIds.has(parent) ? parent : '', {
+        encodedId: encodeNodeId('viewpoint', vp.id),
+        kind: 'viewpoint',
+        id: vp.id,
+        name: vp.name,
+        viewpointStakeholder: vp.stakeholder,
+        children: [],
+      });
+    }
+  }
+
   // M14：元素节点：按 packageId 分组（挂在对应包下）
   if (packageElements) {
     for (const [pkgId, elements] of Object.entries(packageElements)) {
@@ -131,12 +160,13 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     }
   }
 
-  // 同层子节点排序：包 < 元素 < 视图
+  // 同层子节点排序：包 < 元素 < 视图 < 视角（M15）
   const order: Record<TreeNodeKind, number> = {
     package: 0,
     element: 1,
     view: 2,
-    project: 3,
+    viewpoint: 3,
+    project: 4,
   };
   const sortChildren = (parentKey: string) => {
     const nodes = childrenOf.get(parentKey);

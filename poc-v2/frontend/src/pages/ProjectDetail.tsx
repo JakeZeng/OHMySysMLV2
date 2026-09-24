@@ -27,8 +27,10 @@ import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePackages } from '../hooks/usePackages';
 import { useViews } from '../hooks/useViews';
+import { useViewpoints } from '../hooks/useViewpoints';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
+import { viewpointApi } from '../services/viewpointApi';
 import { useToast } from '../components/ui/Toast';
 import { VisibilityBadge } from '../components/VisibilityBadge';
 import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
@@ -59,6 +61,13 @@ const DEFAULT_VIEW_BODY = (name: string) => `view ${name} {
 }
 `;
 
+const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint ${name} {
+  // 描述利益相关方关注点（UI hint；非 SysML 强制）
+  // stakeholder: <stakeholder>;
+  // concern: <concern>;
+}
+`;
+
 export const ProjectDetail: React.FC = () => {
   const { projectId = '' } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -79,6 +88,12 @@ export const ProjectDetail: React.FC = () => {
     usePackages(projectId);
   const { views, loading: viewsLoading, error: viewsError, refresh: refreshViews } =
     useViews(projectId);
+  const {
+    viewpoints,
+    loading: vpsLoading,
+    error: vpsError,
+    refresh: refreshViewpoints,
+  } = useViewpoints(projectId);
 
   // ── 加载工程 ─────────────────────────────────────────────
   const [projectLoading, setProjectLoading] = React.useState(true);
@@ -121,20 +136,22 @@ export const ProjectDetail: React.FC = () => {
 
   const queryPackage = searchParams.get('package');
   const queryView = searchParams.get('view');
+  const queryViewpoint = searchParams.get('viewpoint');
 
   React.useEffect(() => {
-    // 优先 package，再 view；都不存在选工程根
+    // 优先 package，再 view，再 viewpoint；都不存在选工程根
     let encoded: string | null;
     if (queryPackage) encoded = encodeNodeId('package', queryPackage);
     else if (queryView) encoded = encodeNodeId('view', queryView);
+    else if (queryViewpoint) encoded = encodeNodeId('viewpoint', queryViewpoint);
     else encoded = encodeNodeId('project', projectId);
     treeSelect(encoded);
     if (encoded) {
       // 展开工程根
       treeExpandAll([encoded]);
     }
-    // treeSelect 是稳定的，但只读 queryPackage/queryView/projectId
-  }, [queryPackage, queryView, projectId, treeSelect, treeExpandAll]);
+    // treeSelect 是稳定的，但只读 queryPackage/queryView/queryViewpoint/projectId
+  }, [queryPackage, queryView, queryViewpoint, projectId, treeSelect, treeExpandAll]);
 
   // ── treeStore 选中 → MiddlePane 输入 ──────────────────────
   const treeSelectedId = useTreeStore((s) => s.selectedId);
@@ -145,6 +162,8 @@ export const ProjectDetail: React.FC = () => {
   const selectedPackageId =
     decoded?.kind === 'package' ? decoded.id : null;
   const selectedViewId = decoded?.kind === 'view' ? decoded.id : null;
+  const selectedViewpointId =
+    decoded?.kind === 'viewpoint' ? decoded.id : null;
 
   // ── 画布节点选中（提升到 ProjectDetail 共享给 RightPane） ──
   const [selectedCanvasNode, setSelectedCanvasNode] = React.useState<Node | null>(
@@ -263,8 +282,35 @@ export const ProjectDetail: React.FC = () => {
     [projectId, views, refreshViews, showToast, setSearchParams],
   );
 
+  // M15：创建视角（SysML v2 §7.26 Viewpoint）
+  const handleCreateViewpoint = React.useCallback(
+    async (packageId: string | null) => {
+      const siblingNames = viewpoints
+        .filter((v) => (v.packageId ?? null) === packageId)
+        .map((v) => v.name);
+      const name = generateUniqueName('Viewpoint', siblingNames);
+      try {
+        const vp = await viewpointApi.create(projectId, {
+          packageId: packageId ?? undefined,
+          name,
+          content: DEFAULT_VIEWPOINT_BODY(name),
+        });
+        await refreshViewpoints();
+        showToast({ title: `已创建视角「${name}」`, variant: 'success' });
+        setSearchParams({ viewpoint: vp.id });
+      } catch (e) {
+        showToast({
+          title: '创建视角失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [projectId, viewpoints, refreshViewpoints, showToast, setSearchParams],
+  );
+
   const handleRename = React.useCallback(
-    async (kind: 'package' | 'view', id: string, currentName: string) => {
+    async (kind: 'package' | 'view' | 'viewpoint', id: string, currentName: string) => {
       const next = window.prompt('重命名为', currentName);
       if (next === null) return;
       const trimmed = next.trim();
@@ -281,7 +327,7 @@ export const ProjectDetail: React.FC = () => {
             version: full.version,
           });
           await refreshPackages();
-        } else {
+        } else if (kind === 'view') {
           const full = await viewApi.get(id);
           await viewApi.update(id, {
             name: trimmed,
@@ -294,6 +340,19 @@ export const ProjectDetail: React.FC = () => {
             version: full.version,
           });
           await refreshViews();
+        } else {
+          const full = await viewpointApi.get(id);
+          await viewpointApi.update(id, {
+            name: trimmed,
+            packageId: full.packageId,
+            description: full.description,
+            content: full.content,
+            stakeholder: full.stakeholder,
+            concern: full.concern,
+            metadata: full.metadata,
+            version: full.version,
+          });
+          await refreshViewpoints();
         }
         showToast({ title: '已重命名', variant: 'success' });
       } catch (e) {
@@ -304,14 +363,15 @@ export const ProjectDetail: React.FC = () => {
         });
       }
     },
-    [refreshPackages, refreshViews, showToast],
+    [refreshPackages, refreshViews, refreshViewpoints, showToast],
   );
 
   const handleDelete = React.useCallback(
-    async (kind: 'package' | 'view', id: string, name: string) => {
+    async (kind: 'package' | 'view' | 'viewpoint', id: string, name: string) => {
+      const kindLabel = kind === 'package' ? '包' : kind === 'view' ? '视图' : '视角';
       if (
         !window.confirm(
-          `确认删除${kind === 'package' ? '包' : '视图'}「${name}」？此操作不可撤销。`,
+          `确认删除${kindLabel}「${name}」？此操作不可撤销。`,
         )
       )
         return;
@@ -319,14 +379,21 @@ export const ProjectDetail: React.FC = () => {
         if (kind === 'package') {
           await packageApi.remove(id);
           await refreshPackages();
-        } else {
+        } else if (kind === 'view') {
           await viewApi.remove(id);
           await refreshViews();
+        } else {
+          await viewpointApi.remove(id);
+          await refreshViewpoints();
         }
         showToast({ title: '已删除', variant: 'success' });
         // 清掉选中态
         treeSelect(encodeNodeId('project', projectId));
-        if (searchParams.get('package') === id || searchParams.get('view') === id) {
+        if (
+          searchParams.get('package') === id ||
+          searchParams.get('view') === id ||
+          searchParams.get('viewpoint') === id
+        ) {
           setSearchParams({});
         }
       } catch (e) {
@@ -425,6 +492,9 @@ export const ProjectDetail: React.FC = () => {
         case 'create-view':
           void handleCreateView(action.packageId);
           break;
+        case 'create-viewpoint':
+          void handleCreateViewpoint(action.packageId);
+          break;
         case 'create-element-trigger':
           setCreateElementFor(action.parentPackageId);
           break;
@@ -464,11 +534,15 @@ export const ProjectDetail: React.FC = () => {
         case 'view-properties':
           setSearchParams({ view: action.id });
           break;
+        case 'viewpoint-properties':
+          setSearchParams({ viewpoint: action.id });
+          break;
       }
     },
     [
       handleCreatePackage,
       handleCreateView,
+      handleCreateViewpoint,
       handleRename,
       handleDelete,
       handleDuplicateView,
@@ -483,6 +557,7 @@ export const ProjectDetail: React.FC = () => {
       if (!dec) return;
       if (dec.kind === 'package') setSearchParams({ package: dec.id });
       else if (dec.kind === 'view') setSearchParams({ view: dec.id });
+      else if (dec.kind === 'viewpoint') setSearchParams({ viewpoint: dec.id });
       else setSearchParams({});
     },
     [setSearchParams],
@@ -590,9 +665,10 @@ export const ProjectDetail: React.FC = () => {
               projectName={current.name}
               packages={packages}
               views={views}
+              viewpoints={viewpoints}
               packageElements={packageElements}
-              loading={pkgsLoading || viewsLoading}
-              error={pkgsError ?? viewsError ?? null}
+              loading={pkgsLoading || viewsLoading || vpsLoading}
+              error={pkgsError ?? viewsError ?? vpsError ?? null}
               onAction={handleTreeAction}
               onSelect={handleSelect}
             />
@@ -601,6 +677,7 @@ export const ProjectDetail: React.FC = () => {
             <MiddlePane
               selectedPackageId={selectedPackageId}
               selectedViewId={selectedViewId}
+              selectedViewpointId={selectedViewpointId}
               selectedNode={selectedCanvasNode}
               onSelectNode={setSelectedCanvasNode}
               onCreatePackage={() => void handleCreatePackage(null)}

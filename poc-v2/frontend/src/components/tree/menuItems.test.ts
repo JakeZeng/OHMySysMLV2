@@ -17,6 +17,7 @@ describe('menuItemsFor', () => {
     expect(ids('package')).toEqual([
       'create-package',
       'create-view',
+      'create-viewpoint',
       'create-element-trigger',
       'rename',
       'delete',
@@ -33,6 +34,14 @@ describe('menuItemsFor', () => {
     ]);
   });
 
+  it('viewpoint offers properties / rename / delete', () => {
+    expect(ids('viewpoint')).toEqual([
+      'viewpoint-properties',
+      'rename',
+      'delete',
+    ]);
+  });
+
   it('element offers goto-canvas / rename / delete', () => {
     expect(ids('element')).toEqual([
       'element-goto-canvas',
@@ -42,21 +51,21 @@ describe('menuItemsFor', () => {
   });
 
   it('marks delete as dangerous on both package and view', () => {
-    for (const kind of ['package', 'view'] as const) {
+    for (const kind of ['package', 'view', 'viewpoint'] as const) {
       const del = menuItemsFor(kind).find((i) => i.id === 'delete');
       expect(del?.danger).toBe(true);
     }
   });
 
   it('never marks a non-delete item as dangerous', () => {
-    for (const kind of ['project', 'package', 'view', 'element'] as const) {
+    for (const kind of ['project', 'package', 'view', 'viewpoint', 'element'] as const) {
       const others = menuItemsFor(kind).filter((i) => i.id !== 'delete' && i.id !== 'element-delete');
       expect(others.every((i) => !i.danger)).toBe(true);
     }
   });
 
   it('gives every item a unique id and a label', () => {
-    for (const kind of ['project', 'package', 'view', 'element'] as const) {
+    for (const kind of ['project', 'package', 'view', 'viewpoint', 'element'] as const) {
       const items = menuItemsFor(kind);
       expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
       expect(items.every((i) => i.label.length > 0)).toBe(true);
@@ -160,6 +169,48 @@ describe('actionFor', () => {
       kind: 'package',
       id: 'p1',
       currentName: '结构包',
+    });
+  });
+
+  // ── M15 ─────────────────────────────────────────────
+  it('create-viewpoint on a package targets that package', () => {
+    expect(actionFor('create-viewpoint', pkgTarget)).toEqual({
+      type: 'create-viewpoint',
+      packageId: 'p1',
+    });
+  });
+
+  it('create-viewpoint on the project root creates a top-level viewpoint', () => {
+    expect(
+      actionFor('create-viewpoint', { kind: 'project', id: 'proj1', name: '工程' }),
+    ).toEqual({ type: 'create-viewpoint', packageId: null });
+  });
+
+  it('viewpoint-properties maps to the properties action', () => {
+    const vpTarget = { kind: 'viewpoint' as const, id: 'vp1', name: '视角A' };
+    expect(actionFor('viewpoint-properties', vpTarget)).toEqual({
+      type: 'viewpoint-properties',
+      id: 'vp1',
+    });
+  });
+
+  it('rename on a viewpoint carries kind=viewpoint', () => {
+    const vpTarget = { kind: 'viewpoint' as const, id: 'vp1', name: '视角A' };
+    expect(actionFor('rename', vpTarget)).toEqual({
+      type: 'rename',
+      kind: 'viewpoint',
+      id: 'vp1',
+      currentName: '视角A',
+    });
+  });
+
+  it('delete on a viewpoint carries kind=viewpoint', () => {
+    const vpTarget = { kind: 'viewpoint' as const, id: 'vp1', name: '视角A' };
+    expect(actionFor('delete', vpTarget)).toEqual({
+      type: 'delete',
+      kind: 'viewpoint',
+      id: 'vp1',
+      name: '视角A',
     });
   });
 });

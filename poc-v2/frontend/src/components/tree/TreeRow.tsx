@@ -3,6 +3,8 @@
  *
  * 无障碍：role="treeitem" + aria-level/expanded/selected，配合 ProjectTree 的
  * roving tabindex（只有聚焦行 tabIndex=0）。
+ *
+ * M15：新增 viewpoint 节点渲染（Compass 图标 + stakeholder 徽章）。
  */
 
 import * as React from 'react';
@@ -12,6 +14,7 @@ import {
   FolderTree,
   Package as PackageIcon,
   Eye,
+  Compass,
   Circle,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -74,7 +77,9 @@ export const TreeRow: React.FC<TreeRowProps> = ({
         ? PackageIcon
         : node.kind === 'view'
           ? Eye
-          : Circle; // element 占位（实际渲染走 elementEmoji）
+          : node.kind === 'viewpoint' // M15
+            ? Compass
+            : Circle; // element 占位（实际渲染走 elementEmoji）
 
   const colorClass =
     node.kind === 'view' && node.colorTag
@@ -88,7 +93,13 @@ export const TreeRow: React.FC<TreeRowProps> = ({
         ? 'text-amber-600 dark:text-amber-400'
         : node.kind === 'view'
           ? 'text-brand-600 dark:text-brand-400'
-          : elementMeta?.color ?? 'text-gray-400';
+          : node.kind === 'viewpoint' // M15
+            ? 'text-indigo-600 dark:text-indigo-300'
+            : elementMeta?.color ?? 'text-gray-400';
+
+  // M15：视角节点的 stakeholder 徽章（仅当存在时显示）
+  const viewpointStakeholder =
+    node.kind === 'viewpoint' ? node.viewpointStakeholder : undefined;
 
   return (
     <div
@@ -153,6 +164,19 @@ export const TreeRow: React.FC<TreeRowProps> = ({
       <span className="flex-1 truncate" title={node.name}>
         {node.name}
       </span>
+
+      {/* M15：视角节点的 stakeholder 徽章（短文本） */}
+      {viewpointStakeholder && (
+        <span
+          data-testid={`tree-stakeholder-${node.encodedId}`}
+          title={`利益相关方：${viewpointStakeholder}`}
+          className="shrink-0 rounded bg-indigo-100 px-1 text-[10px] text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200"
+        >
+          {viewpointStakeholder.length > 12
+            ? viewpointStakeholder.slice(0, 11) + '…'
+            : viewpointStakeholder}
+        </span>
+      )}
 
       {typeof badge === 'number' && badge > 0 && (
         <span

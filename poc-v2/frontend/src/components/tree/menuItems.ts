@@ -4,6 +4,7 @@
  * 纯函数：给节点类型 → 菜单项列表。便于单测。
  *
  * M14：包节点新增"新建元素"；元素节点新增"跳到画布/重命名/删除"。
+ * M15：包节点新增"新建视角"；视角节点新增"视角属性/重命名/删除"。
  */
 
 import * as React from 'react';
@@ -17,10 +18,11 @@ import {
   Eye,
   Square,
   Crosshair,
+  Compass,
 } from 'lucide-react';
 import type { ContextMenuItem } from './ContextMenu';
 import type { TreeNodeKind } from '../../stores/treeStore';
-import type { TreeAction, TreeEntityKind, ElementRef } from './types';
+import type { TreeAction, ElementRef } from './types';
 
 const icon = (C: React.ComponentType<{ className?: string }>) =>
   React.createElement(C, { className: 'h-3.5 w-3.5' });
@@ -37,6 +39,7 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
       return [
         { id: 'create-package', label: '新建子包', icon: icon(FolderPlus) },
         { id: 'create-view', label: '新建视图', icon: icon(FilePlus) },
+        { id: 'create-viewpoint', label: '新建视角', icon: icon(Compass) },
         {
           id: 'create-element-trigger',
           label: '新建元素',
@@ -53,6 +56,19 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
         { id: 'view-properties', label: '视图属性', icon: icon(Settings2) },
         { id: 'rename', label: '重命名', icon: icon(Pencil), separatorBefore: true, hint: 'F2' },
         { id: 'duplicate-view', label: '复制', icon: icon(Copy) },
+        { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
+      ];
+
+    case 'viewpoint':
+      return [
+        { id: 'viewpoint-properties', label: '视角属性', icon: icon(Settings2) },
+        {
+          id: 'rename',
+          label: '重命名',
+          icon: icon(Pencil),
+          separatorBefore: true,
+          hint: 'F2',
+        },
         { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
       ];
 
@@ -82,6 +98,19 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
 }
 
 /**
+ * 把 TreeNodeKind 映射成 rename/delete 协议的 kind 字段（'package' | 'view' | 'viewpoint'）。
+ *
+ * element 节点不进 rename/delete 协议（走 element-action），不会调用本函数。
+ */
+function entityKindFor(
+  targetKind: TreeNodeKind,
+): 'package' | 'view' | 'viewpoint' {
+  if (targetKind === 'viewpoint') return 'viewpoint';
+  if (targetKind === 'view') return 'view';
+  return 'package';
+}
+
+/**
  * 菜单项 ID → 业务动作。
  *
  * 返回 null 表示该项不产生动作（如 `open-view` 由宿主用选中态处理）。
@@ -105,6 +134,12 @@ export function actionFor(
         packageId: target.kind === 'package' ? target.id : null,
       };
 
+    case 'create-viewpoint':
+      return {
+        type: 'create-viewpoint',
+        packageId: target.kind === 'package' ? target.id : null,
+      };
+
     case 'create-element-trigger':
       return {
         type: 'create-element-trigger',
@@ -121,10 +156,10 @@ export function actionFor(
       if (target.kind === 'element' && elementRef) {
         return { type: 'element-action', action: 'rename', ref: elementRef };
       }
-      // 退回到旧的 rename 协议（仅 package/view；element 不会出现此路径）
+      // 退回到旧的 rename 协议（仅 package/view/viewpoint）
       return {
         type: 'rename',
-        kind: target.kind === 'view' ? 'view' : 'package',
+        kind: entityKindFor(target.kind),
         id: target.id,
         currentName: target.name,
       };
@@ -135,7 +170,7 @@ export function actionFor(
       }
       return {
         type: 'delete',
-        kind: target.kind === 'view' ? 'view' : 'package',
+        kind: entityKindFor(target.kind),
         id: target.id,
         name: target.name,
       };
@@ -143,7 +178,7 @@ export function actionFor(
     case 'rename':
       return {
         type: 'rename',
-        kind: target.kind === 'view' ? 'view' : 'package',
+        kind: entityKindFor(target.kind),
         id: target.id,
         currentName: target.name,
       };
@@ -151,7 +186,7 @@ export function actionFor(
     case 'delete':
       return {
         type: 'delete',
-        kind: target.kind === 'view' ? 'view' : 'package',
+        kind: entityKindFor(target.kind),
         id: target.id,
         name: target.name,
       };
@@ -161,6 +196,9 @@ export function actionFor(
 
     case 'view-properties':
       return { type: 'view-properties', id: target.id };
+
+    case 'viewpoint-properties':
+      return { type: 'viewpoint-properties', id: target.id };
 
     default:
       return null;

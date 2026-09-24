@@ -7,22 +7,24 @@
  *   - selectedId:  当前选中的树节点（编码字符串）
  *
  * 编码规则（避免包/视图 ID 撞车）：
- *   - 包：  `pkg:<packageId>`
- *   - 视图：`view:<viewId>`
- *   - 元素：`elem:<packageId>:<elementName>`（M14）
- *   - 工程根：`project:<projectId>`
+ *   - 包：      `pkg:<packageId>`
+ *   - 视图：    `view:<viewId>`
+ *   - 视角：    `viewpoint:<viewpointId>`（M15）
+ *   - 元素：    `elem:<packageId>:<elementName>`（M14）
+ *   - 工程根：  `project:<projectId>`
  *
  * 持久化：localStorage key = `sysmlv2.tree.${projectId}`
  */
 
 import { create } from 'zustand';
 
-export type TreeNodeKind = 'project' | 'package' | 'view' | 'element';
+export type TreeNodeKind = 'project' | 'package' | 'view' | 'viewpoint' | 'element';
 
 /** 编码一个树节点 ID */
 export function encodeNodeId(kind: TreeNodeKind, id: string): string {
   if (kind === 'package') return `pkg:${id}`;
   if (kind === 'view') return `view:${id}`;
+  if (kind === 'viewpoint') return `viewpoint:${id}`;
   if (kind === 'element') return `elem:${id}`;
   return `${kind}:${id}`;
 }
@@ -39,6 +41,7 @@ export function decodeNodeId(
   if (!id) return null;
   if (prefix === 'pkg') return { kind: 'package', id };
   if (prefix === 'view') return { kind: 'view', id };
+  if (prefix === 'viewpoint') return { kind: 'viewpoint', id };
   if (prefix === 'elem') return { kind: 'element', id };
   if (prefix === 'project') return { kind: 'project', id };
   return null;

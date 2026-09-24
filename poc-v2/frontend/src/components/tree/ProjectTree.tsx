@@ -10,6 +10,8 @@
  *   ↑/↓ 上下移动    →/← 展开/折叠或进出子级
  *   Enter 选中       F2 重命名       Delete 删除
  *   Home/End 首/末行
+ *
+ * M15：视角节点（viewpoint）作为一等节点加入树。
  */
 
 import * as React from 'react';
@@ -26,6 +28,7 @@ import { menuItemsFor, actionFor } from './menuItems';
 import type { TreeAction } from './types';
 import type { PackageSummary } from '../../types/package';
 import type { ViewSummary } from '../../types/view';
+import type { ViewpointSummary } from '../../types/viewpoint';
 import { cn } from '../../lib/utils';
 
 export interface ProjectTreeProps {
@@ -33,6 +36,8 @@ export interface ProjectTreeProps {
   projectName: string;
   packages: PackageSummary[];
   views: ViewSummary[];
+  /** M15：SysML v2 视角列表（summary） */
+  viewpoints?: ViewpointSummary[];
   loading?: boolean;
   error?: string | null;
   /** 视图行的节点数徽章（可选，key = viewId） */
@@ -50,6 +55,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   projectName,
   packages,
   views,
+  viewpoints,
   loading = false,
   error = null,
   viewNodeCounts,
@@ -78,8 +84,16 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   }, [projectId, setProject]);
 
   const root = React.useMemo(
-    () => buildTree({ projectId, projectName, packages, views, packageElements }),
-    [projectId, projectName, packages, views, packageElements],
+    () =>
+      buildTree({
+        projectId,
+        projectName,
+        packages,
+        views,
+        viewpoints,
+        packageElements,
+      }),
+    [projectId, projectName, packages, views, viewpoints, packageElements],
   );
 
   const rows = React.useMemo(
