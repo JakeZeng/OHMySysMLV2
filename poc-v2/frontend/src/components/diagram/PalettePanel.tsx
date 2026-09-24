@@ -1,24 +1,26 @@
 /**
- * M10 绘图建模（MVP）：左侧调色板
+ * M10 绘图建模（MVP）：左侧调色板。
  *
- * 把可创建的 SysML 元素分类列出；点击某项时：
- *   1. 弹出输入框获取元素名（带默认名）
- *   2. 生成 SysML 片段
- *   3. 追加到 useModelStore.content 末尾
- *   4. parser 重新解析 → canvas 自动出现新节点
+ * M14 重构：
+ *   - 移除所有 window.prompt；点击直接插入并自动命名
+ *   - 命名与 pipeline.nodes 中现有 name 去重
+ *   - partUsage 自动选取最近创建的 partDef 作为类型引用
+ *   - 移除 transition / connect（改由画布连线自动生成）
  *
- * 同时支持直接拖拽到画布（MVP：拖拽 = 点击 + 固定位置；M10.2 再做真正的位置）
+ * 拖拽行为不变：拖到画布 = 点击 + 落点位置。
  */
 
 import * as React from 'react';
-import { Plus, Package2, Zap, FileText, Link2, GripVertical } from 'lucide-react';
+import { Plus, Package2, Zap, FileText, GripVertical, Sparkles } from 'lucide-react';
 import {
   PALETTE_ITEMS,
   appendSnippet,
   type PaletteItem,
+  type PaletteKind,
 } from '../../lib/insertSnippet';
 import { useModelStore } from '../../stores/modelStore';
 import { useToast } from '../ui/Toast';
+import { generateUniqueName } from '../../lib/naming';
 
 const CATEGORIES: Array<{
   key: PaletteItem['category'];
@@ -29,60 +31,51 @@ const CATEGORIES: Array<{
   { key: '结构', label: '结构', icon: Package2, color: 'text-blue-600 dark:text-blue-300' },
   { key: '行为', label: '行为', icon: Zap, color: 'text-violet-600 dark:text-violet-300' },
   { key: '需求', label: '需求', icon: FileText, color: 'text-amber-600 dark:text-amber-300' },
-  { key: '连接', label: '连接', icon: Link2, color: 'text-cyan-600 dark:text-cyan-300' },
 ];
 
 export const PalettePanel: React.FC = () => {
   const content = useModelStore((s) => s.content);
   const setContent = useModelStore((s) => s.setContent);
+  const nodes = useModelStore((s) => s.pipeline.nodes);
   const { showToast } = useToast();
 
-  const handleAdd = (item: PaletteItem) => {
-    // 弹窗获取名字（双名字的需求如 connect / transition / partUsage 分两次输入）
-    const name1 = window.prompt(
-      `${item.label}：${item.description}\n\n请输入名字（SysML identifier）:`,
-      item.defaultName
-    );
-    if (name1 === null) return;
-    const trimmed = name1.trim();
-    if (!/^[A-Za-z_][\w]*$/.test(trimmed)) {
-      showToast({
-        title: '非法标识符',
-        description: `必须是字母/数字/下划线，且不以数字开头`,
-        variant: 'error',
-      });
-      return;
+  /** 从画布节点提取现有名字（用于去重） */
+  const existingNames = React.useMemo(
+    () => nodes.map((n) => String((n.data as { label?: string } | undefined)?.label ?? '')).filter(Boolean),
+    [nodes],
+  );
+
+  /** 找最近的 partDef 名字（用于 partUsage 类型引用默认） */
+  const latestPartDefName = React.useMemo(() => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const t = (nodes[i].data as { nodeType?: string } | undefined)?.nodeType;
+      if (t === 'sysmlPartDef') {
+        return String((nodes[i].data as { label?: string } | undefined)?.label ?? '');
+      }
     }
+    return '';
+  }, [nodes]);
+
+  const insertItem = (item: PaletteItem, opts?: { typeRef?: string }) => {
+    const name = generateUniqueName(item.defaultName, existingNames);
     let snippet: string;
-    if (item.defaultName2) {
-      const name2 = window.prompt(
-        `第二个名字（${item.description}）:`,
-        item.defaultName2
-      );
-      if (name2 === null) return;
-      const trimmed2 = name2.trim();
-      if (!/^[A-Za-z_][\w]*$/.test(trimmed2)) {
-        showToast({ title: '非法标识符', variant: 'error' });
-        return;
-      }
-      // partUsage 的默认是 typeRef = name1（单输入），transition / connect 用 name1, name2
-      if (item.kind === 'partUsage') {
-        // 用户输入是 part name；typeRef 来自已有的 part def 名
-        const typeRef = window.prompt('类型引用（part def name）:', trimmed2) ?? trimmed2;
-        snippet = `part ${trimmed} : ${typeRef};`;
-      } else {
-        snippet = item.generate(trimmed, trimmed2);
-      }
+    if (item.kind === 'partUsage') {
+      const typeRef = opts?.typeRef || latestPartDefName || 'Part';
+      snippet = `part ${name} : ${typeRef};`;
     } else {
-      snippet = item.generate(trimmed);
+      snippet = item.generate(name);
     }
     const newContent = appendSnippet(content, snippet);
     setContent(newContent);
     showToast({
       title: `已添加 ${item.label}`,
-      description: `${item.label} "${trimmed}" 已插入`,
+      description: `${item.label} "${name}" 已插入`,
       variant: 'success',
     });
+  };
+
+  const handleAdd = (item: PaletteItem) => {
+    insertItem(item);
   };
 
   return (
@@ -98,7 +91,7 @@ export const PalettePanel: React.FC = () => {
           </h3>
         </div>
         <p className="mt-0.5 text-[10px] text-gray-400">
-          点击插入到编辑器（自动追加到末尾）
+          点击插入，自动命名
         </p>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -144,10 +137,18 @@ export const PalettePanel: React.FC = () => {
             </div>
           );
         })}
+        {/* M14 提示：连线自动创建 connect / transition */}
+        <div className="px-3 py-2 text-[10px] text-gray-400 dark:text-gray-500">
+          <Sparkles className="mr-1 inline h-2.5 w-2.5" />
+          从节点拖线自动生成 connect / transition
+        </div>
       </div>
       <div className="border-t border-gray-200 px-2 py-1.5 text-[10px] text-gray-400 dark:border-gray-700">
-        💡 提示：插入后画布自动渲染
+        💡 插入后画布自动渲染
       </div>
     </aside>
   );
 };
+
+// 仅占位类型导出，避免未用警告
+type _Unused = PaletteKind;

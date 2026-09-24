@@ -15,10 +15,8 @@ export type PaletteKind =
   | 'state'
   | 'initialState'
   | 'finalState'
-  | 'transition'
   | 'requirement'
-  | 'constraint'
-  | 'connect';
+  | 'constraint';
 
 export interface PaletteItem {
   kind: PaletteKind;
@@ -100,16 +98,6 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     generate: (n) => `  final state ${n};`,
   },
   {
-    kind: 'transition',
-    label: 'Transition',
-    icon: '➡',
-    category: '行为',
-    description: '状态转换：transition A to B [event]',
-    defaultName: 'A',
-    defaultName2: 'B',
-    generate: (src, tgt) => `  transition ${src} to ${tgt};`,
-  },
-  {
     kind: 'requirement',
     label: 'Requirement',
     icon: '📋',
@@ -121,21 +109,11 @@ export const PALETTE_ITEMS: PaletteItem[] = [
   {
     kind: 'constraint',
     label: 'Constraint',
-    icon: '📐',
+    icon: '⛔',
     category: '需求',
     description: '约束块：constraint def C { ... }',
     defaultName: 'NewConstraint',
     generate: (n) => `constraint def ${n} {\n}`,
-  },
-  {
-    kind: 'connect',
-    label: 'Connect',
-    icon: '🔗',
-    category: '连接',
-    description: '连接：connect A.port1 to B.port2;',
-    defaultName: 'A',
-    defaultName2: 'B',
-    generate: (src, tgt) => `connect ${src} to ${tgt};`,
   },
 ];
 

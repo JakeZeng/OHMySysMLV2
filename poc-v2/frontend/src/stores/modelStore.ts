@@ -23,7 +23,7 @@ import {
   runPipeline as runPipelinePure,
   type PipelineResult,
 } from '../lib/pipeline';
-import { insertSnippet, findNewNodeId, shortNameFromNodeId } from '../lib/textOps';
+import { insertSnippet, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
@@ -547,7 +547,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   /**
    * 用户在 drag 模式从 sourceId 节点画线到 targetId 节点。
-   * 自动推断两端的短名，生成 `connect A to B;` 语句。
+   * M14 自动推断：
+   *   - source/target 都是 state → 生成 `transition A to B;`
+   *   - 其他 → 生成 `connect A to B;`
    */
   addConnection(sourceId, targetId) {
     const { content, pipeline } = get();
@@ -559,7 +561,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
     if (srcShort === tgtShort) {
       return { ok: false, reason: '不能连接同一节点' };
     }
-    const snippet = `connect ${srcShort} to ${tgtShort};`;
+    const srcKind = kindFromNodeId(sourceId);
+    const tgtKind = kindFromNodeId(targetId);
+    const snippet =
+      srcKind === 'stateDef' && tgtKind === 'stateDef'
+        ? `  transition ${srcShort} to ${tgtShort};\n` // 状态机内部用 2 空格缩进
+        : `connect ${srcShort} to ${tgtShort};`;
     const newContent = insertSnippet(content, pipeline.model, snippet);
     set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);

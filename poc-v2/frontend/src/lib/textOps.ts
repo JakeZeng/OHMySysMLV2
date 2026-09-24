@@ -96,6 +96,26 @@ export function shortNameFromNodeId(
   return undefined;
 }
 
+/**
+ * 从画布 nodeId 反查元素的 kind（partDef / stateDef / ...），
+ * 用于连线时判断生成 `connect` 还是 `transition`。
+ */
+export function kindFromNodeId(nodeId: string): string | undefined {
+  const map: Record<string, string> = {
+    'pd:': 'partDef',
+    'pu:': 'partUsage',
+    'portdef:': 'portDef',
+    'state:': 'stateDef',
+    'action:': 'actionDef',
+    'req:': 'requirement',
+    'cb:': 'constraintBlock',
+  };
+  for (const [prefix, kind] of Object.entries(map)) {
+    if (nodeId.startsWith(prefix)) return kind;
+  }
+  return undefined;
+}
+
 // ─── 内部遍历 ──────────────────────────────────────────────
 
 interface PkgLike {
