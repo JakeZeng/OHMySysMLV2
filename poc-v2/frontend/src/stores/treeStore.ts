@@ -47,20 +47,26 @@ export function decodeNodeId(
   return null;
 }
 
-/** 解码 element 节点的 id（`pkg:xxx:Name` → {packageId, elementName}） */
+/**
+ * 解码 element 节点的 id（`elem:<ownerId>:<Name>`）。
+ *
+ * M15：ownerId 不再只指包 —— SysML v2 §7.26 下 view / viewpoint 的 body
+ * 也能 own 元素（view-private，qualified name = `V::X`）。编码格式不变，
+ * 由调用方配合 ElementNodeInfo.ownerKind 判断归属语义。
+ */
 export function decodeElementId(
   encodedId: string,
-): { packageId: string; elementName: string } | null {
+): { ownerId: string; elementName: string } | null {
   if (!encodedId.startsWith('elem:')) return null;
   const rest = encodedId.slice('elem:'.length);
   const idx = rest.indexOf(':');
   if (idx <= 0 || idx >= rest.length - 1) return null;
-  return { packageId: rest.slice(0, idx), elementName: rest.slice(idx + 1) };
+  return { ownerId: rest.slice(0, idx), elementName: rest.slice(idx + 1) };
 }
 
-/** 编码 element 节点 id */
-export function encodeElementId(packageId: string, elementName: string): string {
-  return `elem:${packageId}:${elementName}`;
+/** 编码 element 节点 id；ownerId 可以是 packageId / viewId / viewpointId */
+export function encodeElementId(ownerId: string, elementName: string): string {
+  return `elem:${ownerId}:${elementName}`;
 }
 
 interface PersistedTree {

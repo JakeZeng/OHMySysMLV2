@@ -235,6 +235,7 @@ CREATE TABLE IF NOT EXISTS viewpoints (
     content         TEXT NOT NULL DEFAULT '',
     stakeholder     TEXT NOT NULL DEFAULT '',
     concern         TEXT NOT NULL DEFAULT '',
+    inner_elements  TEXT NOT NULL DEFAULT '[]',
     metadata_json   TEXT NOT NULL DEFAULT '{}',
     version         INTEGER NOT NULL DEFAULT 1,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -419,6 +420,10 @@ CREATE INDEX IF NOT EXISTS idx_viewpoints_updated ON viewpoints(updated_at DESC)
 		if _, err := r.db.Exec(stmt); err != nil {
 			// 兼容历史 DB：列已存在时忽略
 		}
+	}
+	// M15 增量：viewpoints 表加 inner_elements 列（viewpoint body 内 owned 元素）
+	if _, err := r.db.Exec(`ALTER TABLE viewpoints ADD COLUMN inner_elements TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		// 兼容历史 DB：列已存在时忽略
 	}
 	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_views_viewpoint ON views(viewpoint_id)`); err != nil {
 		// 忽略（索引已存在时）
@@ -911,6 +916,30 @@ func (r *SQLiteRepository) ListPackagesByProject(ctx context.Context, projectID 
 	return out, rows.Err()
 }
 
+// ListPackageContentRefsByProject 返回工程下所有包的 (id, name, parent, content)。
+//
+// M15：专供 View expose 路径的严格 resolve —— 校验目标 def 是否真存在于包 body。
+// 与 ListPackagesByProject 的区别：这个带 Content，且不返回 description/version 等
+// resolve 用不到的列（视图保存是低频操作，可接受整表 content 的传输成本）。
+func (r *SQLiteRepository) ListPackageContentRefsByProject(ctx context.Context, projectID string) ([]model.PackageContentRef, error) {
+	const q = `SELECT id, name, COALESCE(parent_package_id, ''), content
+              FROM packages WHERE project_id = ?`
+	rows, err := r.db.QueryContext(ctx, q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.PackageContentRef, 0)
+	for rows.Next() {
+		var ref model.PackageContentRef
+		if err := rows.Scan(&ref.ID, &ref.Name, &ref.ParentPackageID, &ref.Content); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
 // UpdatePackage 乐观锁：版本不匹配返回 ErrVersionConflict。
 func (r *SQLiteRepository) UpdatePackage(ctx context.Context, p *model.Package) error {
 	now := time.Now().UTC()
@@ -963,9 +992,13 @@ const viewSelectColumns = `id, project_id, package_id, name, description, conten
 		metadata_json, version, created_at, updated_at`
 
 // viewSummarySelectColumns ViewSummary 用的精简列。
+//
+// M15：追加 filter_qualified_names / exposed_elements / exposed_elements_unresolved /
+// inner_elements —— 树需要 expose 计数徽章 + view-private 元素子树，一次性带回避免 N+1。
 const viewSummarySelectColumns = `id, project_id, package_id, name, description,
 		kind, view_definition_id, viewpoint_id, viewpoint_qualified_name,
 		render_kind, color_tag, rendering_category,
+		filter_qualified_names, exposed_elements, exposed_elements_unresolved, inner_elements,
 		version, updated_at`
 
 // scanView 把 row 扫描到 View（含 M15 全字段）。
@@ -1037,21 +1070,26 @@ func scanViewSummary(row interface {
 	Scan(dest ...any) error
 }) (*model.ViewSummary, error) {
 	var (
-		vs              model.ViewSummary
-		pkgID           sql.NullString
-		viewDefID       sql.NullString
-		viewpointID     sql.NullString
-		desc            string
-		colorTag        string
-		renderCat       string
-		kind            string
-		renderKind      string
-		viewpointQName  string
+		vs             model.ViewSummary
+		pkgID          sql.NullString
+		viewDefID      sql.NullString
+		viewpointID    sql.NullString
+		desc           string
+		colorTag       string
+		renderCat      string
+		kind           string
+		renderKind     string
+		viewpointQName string
+		filterJSON     string
+		exposedJSON    string
+		exposedUnJSON  string
+		innerJSON      string
 	)
 	if err := row.Scan(
 		&vs.ID, &vs.ProjectID, &pkgID, &vs.Name, &desc,
 		&kind, &viewDefID, &viewpointID, &viewpointQName,
 		&renderKind, &colorTag, &renderCat,
+		&filterJSON, &exposedJSON, &exposedUnJSON, &innerJSON,
 		&vs.Version, &vs.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1071,6 +1109,20 @@ func scanViewSummary(row interface {
 		vs.Kind = model.ViewKindDefinition
 	}
 	vs.RenderKind = model.NormalizeRenderKind(renderKind)
+
+	// M15：树渲染增量 —— 解析失败不致命（退化为空），避免列表整体 500
+	if inner, err := model.UnmarshalInnerElements(innerJSON); err == nil {
+		vs.InnerElements = inner
+	}
+	if filter, err := model.UnmarshalStringSlice(filterJSON); err == nil {
+		vs.FilterQualifiedNames = filter
+	}
+	if exposed, err := model.UnmarshalExposedElements(exposedJSON); err == nil {
+		vs.ExposeCount = len(exposed)
+	}
+	if exposedUn, err := model.UnmarshalExposedElements(exposedUnJSON); err == nil {
+		vs.ExposeUnresolvedCount = len(exposedUn)
+	}
 	return &vs, nil
 }
 
@@ -1273,12 +1325,12 @@ func (r *SQLiteRepository) DeleteView(ctx context.Context, id string) error {
 
 // viewpointSelectColumns 共享 SELECT 列。
 const viewpointSelectColumns = `id, project_id, package_id, name, description,
-		content, stakeholder, concern,
+		content, stakeholder, concern, inner_elements,
 		metadata_json, version, created_at, updated_at`
 
 // viewpointSummarySelectColumns ViewpointSummary 用的精简列。
 const viewpointSummarySelectColumns = `id, project_id, package_id, name, description,
-		stakeholder, concern,
+		stakeholder, concern, inner_elements,
 		version, updated_at`
 
 // scanViewpoint 把 row 扫描到 Viewpoint。
@@ -1286,16 +1338,17 @@ func scanViewpoint(row interface {
 	Scan(dest ...any) error
 }) (*model.Viewpoint, error) {
 	var (
-		vp            model.Viewpoint
-		pkgID         sql.NullString
-		desc          string
-		stakeholder   string
-		concern       string
-		metadataJSON  string
+		vp           model.Viewpoint
+		pkgID        sql.NullString
+		desc         string
+		stakeholder  string
+		concern      string
+		innerJSON    string
+		metadataJSON string
 	)
 	if err := row.Scan(
 		&vp.ID, &vp.ProjectID, &pkgID, &vp.Name, &desc,
-		&vp.Content, &stakeholder, &concern,
+		&vp.Content, &stakeholder, &concern, &innerJSON,
 		&metadataJSON, &vp.Version, &vp.CreatedAt, &vp.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1307,6 +1360,9 @@ func scanViewpoint(row interface {
 	vp.Description = desc
 	vp.Stakeholder = stakeholder
 	vp.Concern = concern
+	if inner, err := model.UnmarshalInnerElements(innerJSON); err == nil {
+		vp.InnerElements = inner
+	}
 	if md, err := unmarshalMetadata(metadataJSON); err == nil {
 		vp.Metadata = md
 	}
@@ -1318,15 +1374,16 @@ func scanViewpointSummary(row interface {
 	Scan(dest ...any) error
 }) (*model.ViewpointSummary, error) {
 	var (
-		vps           model.ViewpointSummary
-		pkgID         sql.NullString
-		desc          string
-		stakeholder   string
-		concern       string
+		vps         model.ViewpointSummary
+		pkgID       sql.NullString
+		desc        string
+		stakeholder string
+		concern     string
+		innerJSON   string
 	)
 	if err := row.Scan(
 		&vps.ID, &vps.ProjectID, &pkgID, &vps.Name, &desc,
-		&stakeholder, &concern,
+		&stakeholder, &concern, &innerJSON,
 		&vps.Version, &vps.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1338,6 +1395,9 @@ func scanViewpointSummary(row interface {
 	vps.Description = desc
 	vps.Stakeholder = stakeholder
 	vps.Concern = concern
+	if inner, err := model.UnmarshalInnerElements(innerJSON); err == nil {
+		vps.InnerElements = inner
+	}
 	return &vps, nil
 }
 
@@ -1346,18 +1406,22 @@ func (r *SQLiteRepository) CreateViewpoint(ctx context.Context, vp *model.Viewpo
 	if err != nil {
 		return fmt.Errorf("序列化 metadata 失败: %w", err)
 	}
+	innerJSON, err := model.MarshalInnerElements(vp.InnerElements)
+	if err != nil {
+		return fmt.Errorf("序列化 innerElements 失败: %w", err)
+	}
 	var pkgID any
 	if vp.PackageID != "" {
 		pkgID = vp.PackageID
 	}
 	const q = `INSERT INTO viewpoints (
 		id, project_id, package_id, name, description,
-		content, stakeholder, concern,
+		content, stakeholder, concern, inner_elements,
 		metadata_json, version, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = r.db.ExecContext(ctx, q,
 		vp.ID, vp.ProjectID, pkgID, vp.Name, vp.Description,
-		vp.Content, vp.Stakeholder, vp.Concern,
+		vp.Content, vp.Stakeholder, vp.Concern, innerJSON,
 		mdJSON, vp.Version, vp.CreatedAt, vp.UpdatedAt)
 	return err
 }
@@ -1392,18 +1456,22 @@ func (r *SQLiteRepository) UpdateViewpoint(ctx context.Context, vp *model.Viewpo
 	if err != nil {
 		return fmt.Errorf("序列化 metadata 失败: %w", err)
 	}
+	innerJSON, err := model.MarshalInnerElements(vp.InnerElements)
+	if err != nil {
+		return fmt.Errorf("序列化 innerElements 失败: %w", err)
+	}
 	var pkgID any
 	if vp.PackageID != "" {
 		pkgID = vp.PackageID
 	}
 	const q = `UPDATE viewpoints SET
 		name = ?, package_id = ?, description = ?,
-		content = ?, stakeholder = ?, concern = ?,
+		content = ?, stakeholder = ?, concern = ?, inner_elements = ?,
 		metadata_json = ?, version = version + 1, updated_at = ?
               WHERE id = ? AND version = ?`
 	res, err := r.db.ExecContext(ctx, q,
 		vp.Name, pkgID, vp.Description,
-		vp.Content, vp.Stakeholder, vp.Concern,
+		vp.Content, vp.Stakeholder, vp.Concern, innerJSON,
 		mdJSON, now, vp.ID, vp.Version)
 	if err != nil {
 		return err

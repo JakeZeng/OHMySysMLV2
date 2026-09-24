@@ -11,7 +11,7 @@ import * as React from 'react';
 import type { Node } from '@xyflow/react';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { PackageModelingPane } from '../modeling/PackageModelingPane';
-import { ViewModelingPane } from '../modeling/ViewModelingPane';
+import { ViewRenderer } from '../views/ViewRenderer';
 import { ViewpointModelingPane } from '../modeling/ViewpointModelingPane';
 import { MiddlePaneEmpty } from './MiddlePaneEmpty';
 
@@ -26,6 +26,8 @@ export interface MiddlePaneProps {
   onCreateView: () => void;
   /** M14：暴露 diagramRef 给宿主（用于树点击元素后聚焦画布节点） */
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
+  /** M15：点击 satisfies 视角跳转 */
+  onOpenViewpoint?: (viewpointId: string) => void;
 }
 
 export const MiddlePane: React.FC<MiddlePaneProps> = ({
@@ -37,6 +39,7 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
   onCreatePackage,
   onCreateView,
   onDiagramReady,
+  onOpenViewpoint,
 }) => {
   if (selectedPackageId) {
     return (
@@ -50,11 +53,12 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
   }
   if (selectedViewId) {
     return (
-      <ViewModelingPane
+      <ViewRenderer
         viewId={selectedViewId}
         selectedNode={selectedNode}
         onSelectNode={onSelectNode}
         onDiagramReady={onDiagramReady}
+        onOpenViewpoint={onOpenViewpoint}
       />
     );
   }

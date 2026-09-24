@@ -32,9 +32,28 @@ interface ElementTreeCacheState {
   getCached: (packageId: string) => ElementNodeInfo[] | undefined;
 }
 
+/** 把单个 namespace member 转成元素节点（递归提取 part body 内的嵌套成员） */
+function toElementInfo(m: { name?: string; kind?: string; body?: { name?: string; kind?: string }[] }): ElementNodeInfo | null {
+  const name = m.name;
+  if (!name) return null;
+  const info: ElementNodeInfo = { name, kind: m.kind ?? '' };
+  const body = m.body;
+  if (body && body.length > 0) {
+    const children: ElementNodeInfo[] = [];
+    for (const b of body) {
+      if (!b.name) continue;
+      children.push({ name: b.name, kind: b.kind ?? '' });
+    }
+    if (children.length > 0) info.children = children;
+  }
+  return info;
+}
+
 /**
- * 从解析后的 pipeline 提取顶层 namespace members。
- * 只取顶层（package.members），不进一层（M16 再说）。
+ * 从解析后的 pipeline 提取 namespace members（M14 顶层 + M15 递归嵌套）。
+ *
+ * M15：part def / part 的 body 内 port / attribute 作为子元素递归上树，
+ * 表达 SysML v2 ownership 链（`Pkg::Vehicle::powerPort`）。
  */
 function extractElements(content: string): ElementNodeInfo[] {
   if (!content?.trim()) return [];
@@ -45,10 +64,10 @@ function extractElements(content: string): ElementNodeInfo[] {
     const seen = new Set<string>();
     for (const pkg of model.packages ?? []) {
       for (const m of pkg.members ?? []) {
-        const name = (m as { name?: string }).name;
-        if (!name || seen.has(name)) continue;
-        seen.add(name);
-        out.push({ name, kind: (m as { kind?: string }).kind ?? '' });
+        const info = toElementInfo(m as { name?: string; kind?: string; body?: { name?: string; kind?: string }[] });
+        if (!info || seen.has(info.name)) continue;
+        seen.add(info.name);
+        out.push(info);
       }
     }
     // 顶层 stateMachines / activities 的子成员也提一下（M10 的扁平渲染）

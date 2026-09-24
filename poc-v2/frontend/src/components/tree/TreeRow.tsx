@@ -178,6 +178,68 @@ export const TreeRow: React.FC<TreeRowProps> = ({
         </span>
       )}
 
+      {/* M15：视图节点的 renderKind 徽章（默认 interconnection 不显示，避免噪音） */}
+      {node.kind === 'view' &&
+        node.renderKind &&
+        node.renderKind !== 'interconnection' && (
+          <span
+            data-testid={`tree-renderkind-${node.encodedId}`}
+            title={`render as ${node.renderKind}`}
+            className="shrink-0 rounded bg-blue-50 px-1 text-[10px] text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
+          >
+            {node.renderKind}
+          </span>
+        )}
+
+      {/* M15：视图节点的 satisfies 徽章（SysML v2 §7.26 `view V satisfies VP;`） */}
+      {node.kind === 'view' && node.satisfiesQualifiedName && (
+        <span
+          data-testid={`tree-satisfies-${node.encodedId}`}
+          title={`satisfies ${node.satisfiesQualifiedName}`}
+          className="shrink-0 rounded bg-indigo-100 px-1 text-[10px] text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200"
+        >
+          ✓ {node.satisfiesQualifiedName}
+        </span>
+      )}
+
+      {/* M15：视图节点的 expose 引用徽章（resolved + unresolved；引用不复制、不进子树） */}
+      {node.kind === 'view' && (node.exposeCount ?? 0) > 0 && (
+        <span
+          data-testid={`tree-exposes-${node.encodedId}`}
+          title={
+            node.exposeUnresolvedCount
+              ? `引用 ${node.exposeCount} 个元素，其中 ${node.exposeUnresolvedCount} 个未解析`
+              : `引用 ${node.exposeCount} 个元素`
+          }
+          className={cn(
+            'shrink-0 rounded px-1 text-[10px] tabular-nums',
+            node.exposeUnresolvedCount
+              ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+          )}
+        >
+          ↳{node.exposeCount}
+          {node.exposeUnresolvedCount ? ` ⚠${node.exposeUnresolvedCount}` : ''}
+        </span>
+      )}
+
+      {/* M15：view/viewpoint-private 元素标记（owned by view/viewpoint body） */}
+      {node.kind === 'element' &&
+        node.elementOwnerKind &&
+        node.elementOwnerKind !== 'package' && (
+          <span
+            data-testid={`tree-local-${node.encodedId}`}
+            title={
+              node.elementOwnerKind === 'view'
+                ? 'view-private 元素（V::X，仅本视图内可见）'
+                : 'viewpoint-private 元素（VP::X）'
+            }
+            className="shrink-0 rounded bg-gray-100 px-1 text-[9px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+          >
+            local
+          </span>
+        )}
+
       {typeof badge === 'number' && badge > 0 && (
         <span
           data-testid={`tree-badge-${node.encodedId}`}

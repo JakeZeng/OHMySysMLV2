@@ -147,14 +147,14 @@ describe('actionFor', () => {
   });
 
   it('element-goto-canvas requires an ElementRef', () => {
-    const ref = { packageId: 'p1', elementName: 'Part_1' };
+    const ref = { ownerId: 'p1', ownerKind: 'package' as const, elementName: 'Part_1' };
     expect(
       actionFor('element-goto-canvas', { kind: 'element', id: 'elem:Part_1', name: 'Part_1' }, ref),
     ).toEqual({ type: 'element-action', action: 'goto-canvas', ref });
   });
 
   it('element-rename and element-delete route to element-action', () => {
-    const ref = { packageId: 'p1', elementName: 'Part_1' };
+    const ref = { ownerId: 'p1', ownerKind: 'package' as const, elementName: 'Part_1' };
     expect(
       actionFor('element-rename', { kind: 'element', id: 'elem:Part_1', name: 'Part_1' }, ref),
     ).toEqual({ type: 'element-action', action: 'rename', ref });

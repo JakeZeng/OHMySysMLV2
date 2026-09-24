@@ -129,9 +129,9 @@ view V {
 
 func TestParseViewBodyWithPackages_Resolve(t *testing.T) {
 	pkgs := FromPackages([]model.Package{
-		{ID: "p1", Name: "PkgA", ParentPackageID: ""},
-		{ID: "p2", Name: "PkgB", ParentPackageID: ""},
-		{ID: "p3", Name: "Sub", ParentPackageID: "p1"},
+		{ID: "p1", Name: "PkgA", ParentPackageID: "", Content: "package PkgA { part def Vehicle; }"},
+		{ID: "p2", Name: "PkgB", ParentPackageID: "", Content: "package PkgB { part def Engine; }"},
+		{ID: "p3", Name: "Sub", ParentPackageID: "p1", Content: "package Sub { part engine; }"},
 	})
 	content := `
 view V {
@@ -155,6 +155,80 @@ view V {
 		}
 		if u.Reason == "" {
 			t.Errorf("unresolved element should have a reason")
+		}
+	}
+}
+
+// M15 严格 resolve：末段 def 必须真实存在于目标包 body，
+// 且 resolved 元素的 Kind 取自包 body 的实际定义（而非视图文本的启发式推断）。
+func TestParseViewBodyWithPackages_StrictResolve(t *testing.T) {
+	pkgs := FromPackageContentRefs([]model.PackageContentRef{
+		{
+			ID: "p1", Name: "VehicleModel",
+			Content: "package VehicleModel {\n  part def Vehicle;\n  part def Engine;\n}",
+		},
+		{
+			ID: "p2", Name: "Reqs", ParentPackageID: "",
+			Content: "package Reqs {\n  requirement def SafetyReq;\n}",
+		},
+		{ID: "p3", Name: "Empty", ParentPackageID: ""},
+	})
+	content := `
+view V {
+    expose VehicleModel::Vehicle;
+    expose VehicleModel::Engine;
+    expose VehicleModel::Ghost;
+    expose Reqs::SafetyReq;
+    expose Empty::Anything;
+}
+`
+	r := ParseViewBodyWithPackages(content, pkgs)
+
+	resolved := map[string]string{}
+	for _, e := range r.ExposedElements {
+		resolved[e.QualifiedName] = e.Kind
+	}
+	if len(r.ExposedElements) != 3 {
+		t.Fatalf("resolved = %d, want 3 (%v)", len(r.ExposedElements), r.ExposedElements)
+	}
+	if resolved["VehicleModel::Vehicle"] != "PartDef" {
+		t.Errorf("Vehicle kind = %q, want PartDef", resolved["VehicleModel::Vehicle"])
+	}
+	if resolved["Reqs::SafetyReq"] != "RequirementDef" {
+		t.Errorf("SafetyReq kind = %q, want RequirementDef", resolved["Reqs::SafetyReq"])
+	}
+
+	unresolved := map[string]string{}
+	for _, e := range r.ExposedElementsUnresolved {
+		unresolved[e.QualifiedName] = e.Reason
+	}
+	if len(unresolved) != 2 {
+		t.Fatalf("unresolved = %d, want 2 (%v)", len(r.ExposedElementsUnresolved), r.ExposedElementsUnresolved)
+	}
+	// 包存在但 def 不存在 → 必须 unresolved（这是严格版与旧「只校验包链」的关键差别）
+	if _, ok := unresolved["VehicleModel::Ghost"]; !ok {
+		t.Errorf("VehicleModel::Ghost 应 unresolved，实际 %v", unresolved)
+	}
+	// 空 body 的包无法证明 def 存在 → 也 unresolved
+	if _, ok := unresolved["Empty::Anything"]; !ok {
+		t.Errorf("Empty::Anything 应 unresolved，实际 %v", unresolved)
+	}
+}
+
+func TestFindDefKind(t *testing.T) {
+	content := "package P {\n  part def Vehicle;\n  part engine;\n  requirement def R1 { }\n  port def P1;\n  stateIdle;\n}"
+	cases := []struct{ name, want string }{
+		{"Vehicle", "PartDef"},
+		{"engine", "PartUsage"},
+		{"R1", "RequirementDef"},
+		{"P1", "PortDef"},
+		{"Missing", ""},
+		// 前缀不得误匹配：`stateIdle` 不是名为 Idle 的 state
+		{"Idle", ""},
+	}
+	for _, c := range cases {
+		if got := findDefKind(content, c.name); got != c.want {
+			t.Errorf("findDefKind(%q) = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

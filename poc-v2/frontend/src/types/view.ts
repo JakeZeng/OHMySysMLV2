@@ -38,6 +38,18 @@ export interface View {
   version: number;
   createdAt: string;
   updatedAt: string;
+
+  // ── M15 增量（SysML v2 §7.26） ──────────────────────────────
+  kind?: 'definition' | 'usage';
+  renderKind?: RenderKind;
+  viewDefinitionId?: string;
+  viewpointId?: string;
+  viewpointQualifiedName?: string;
+  /** expose 未 resolve 的元素（带 reason） */
+  exposedElementsUnresolved?: ExposedElement[];
+  /** view body 内 owned 元素（view-private） */
+  innerElements?: InnerElement[];
+  filterQualifiedNames?: string[];
 }
 
 export interface ViewSummary {
@@ -50,7 +62,54 @@ export interface ViewSummary {
   renderingCategory?: string;
   version: number;
   updatedAt: string;
+
+  // ── M15 增量（SysML v2 §7.26） ──────────────────────────────
+  /** definition（模板） vs usage（实例） */
+  kind?: 'definition' | 'usage';
+  /** 解析自 `render as <kind>;`，决定用哪个 renderer */
+  renderKind?: RenderKind;
+  /** ViewUsage 实例化的 ViewDefinition */
+  viewDefinitionId?: string;
+  /** 满足的 Viewpoint（解析自 `view V satisfies VP;`） */
+  viewpointId?: string;
+  viewpointQualifiedName?: string;
+  /**
+   * view body 内 owned 的元素（view-private，qualified name = `V::X`）。
+   * 这些进 view 节点子树 —— 与 exposes 的引用语义完全不同。
+   */
+  innerElements?: InnerElement[];
+  /** expose 引用计数（引用不复制，只在节点上显示徽章，不进子树） */
+  exposeCount?: number;
+  /** 未 resolve 的 expose 计数（路径在工程包树中不存在） */
+  exposeUnresolvedCount?: number;
+  /** 解析自 `filter @X;` */
+  filterQualifiedNames?: string[];
 }
+
+/** SysML v2 §7.26：view body 内 owned 的元素（view-private） */
+export interface InnerElement {
+  name: string;
+  kind: string;
+  line?: number;
+}
+
+/** 视图渲染方式（解析自 `render as <kind>;`） */
+export type RenderKind =
+  | 'interconnection'
+  | 'tree'
+  | 'state'
+  | 'action'
+  | 'requirement'
+  | 'snapshot';
+
+export const RENDER_KIND_LABEL: Record<RenderKind, string> = {
+  interconnection: '互连图',
+  tree: '结构树',
+  state: '状态机',
+  action: '活动图',
+  requirement: '需求表',
+  snapshot: '快照',
+};
 
 export interface CreateViewRequest {
   packageId?: string;

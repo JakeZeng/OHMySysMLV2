@@ -14,9 +14,16 @@ import type { PaletteKind } from '../../lib/insertSnippet';
 
 export type TreeEntityKind = 'package' | 'view' | 'viewpoint' | 'element';
 
-/** 元素节点的引用：在某包内按 name 唯一标识 */
+/** 元素节点的引用：在某 namespace 内按 name 唯一标识 */
 export interface ElementRef {
-  packageId: string;
+  /**
+   * M15：owner 是元素的归属 namespace（SysML v2 §7.26）。
+   *   - package   → 公共元素，qualified name = `Pkg::X`
+   *   - view      → view-private，`V::X`
+   *   - viewpoint → viewpoint-private，`VP::X`
+   */
+  ownerId: string;
+  ownerKind: 'package' | 'view' | 'viewpoint';
   elementName: string;
   /** 用于回显/类型感知（不一定准确，parser 失败时为空） */
   elementKind?: string;
@@ -37,6 +44,8 @@ export type TreeAction =
       action: 'rename' | 'delete' | 'goto-canvas';
       ref: ElementRef;
     }
+  /** M15：把 view-private 元素提升到所属包（§7.26 owned → public） */
+  | { type: 'promote-element'; ref: ElementRef }
   /** 重命名实体（宿主弹输入框，用 currentName 预填）—— package / view / viewpoint */
   | {
       type: 'rename';

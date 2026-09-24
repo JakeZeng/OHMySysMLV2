@@ -72,11 +72,20 @@ describe('encodeElementId / decodeElementId (M14)', () => {
     });
   });
 
-  it('decodeElementId splits packageId and elementName', () => {
+  it('decodeElementId splits ownerId and elementName', () => {
     expect(decodeElementId('elem:p1:Part_1')).toEqual({
-      packageId: 'p1',
+      ownerId: 'p1',
       elementName: 'Part_1',
     });
+  });
+
+  // M15：owner 不再只指包 —— view / viewpoint body 也能 own 元素
+  it('decodeElementId accepts view / viewpoint owner', () => {
+    expect(decodeElementId('elem:v1:HelperPort')).toEqual({
+      ownerId: 'v1',
+      elementName: 'HelperPort',
+    });
+    expect(encodeElementId('vp1', 'LocalPart')).toBe('elem:vp1:LocalPart');
   });
 
   it('decodeElementId returns null for non-elem ids', () => {

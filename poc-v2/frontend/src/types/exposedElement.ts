@@ -10,4 +10,6 @@ export interface ExposedElement {
   qualifiedName: string;
   /** 推断的 SysML 元素类型 — "PartDef" / "PortDef" / ... 可能为空（未知） */
   kind: string;
+  /** M15：unresolved 时说明为什么（路径/def 在工程包树中不存在） */
+  reason?: string;
 }

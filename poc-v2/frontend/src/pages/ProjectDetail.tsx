@@ -47,8 +47,8 @@ import { useElementTreeCacheStore } from '../stores/elementTreeCacheStore';
 import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { generateUniqueName } from '../lib/naming';
-import { insertSnippetIntoPackage } from '../lib/textOps';
-import type { TreeAction, TreeEntityKind } from '../components/tree/types';
+import { insertSnippetIntoPackage, extractDefinition } from '../lib/textOps';
+import type { TreeAction, TreeEntityKind, ElementRef } from '../components/tree/types';
 
 const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
   // 在此编写 SysML v2 内容
@@ -138,7 +138,27 @@ export const ProjectDetail: React.FC = () => {
   const queryView = searchParams.get('view');
   const queryViewpoint = searchParams.get('viewpoint');
 
+  // 工程是否已加载完（ProjectTree 只在此后挂载）
+  const projectReady = current !== null;
+
+  // views/viewpoints 的最新值（放 ref 里，避免把数组身份纳入下方 effect 依赖 ——
+  // 列表刷新会让 effect 重跑并把选中态重置回 URL 值）
+  const listsRef = React.useRef({ views, viewpoints });
+  listsRef.current = { views, viewpoints };
+
   React.useEffect(() => {
+    // 必须等工程加载完成再同步 URL → 选中态。
+    //
+    // ProjectTree 的挂载 effect 会调用 treeStore.setProject()，而 setProject
+    // 会把 selectedId 清空（切工程时丢弃旧选中是正确行为）。React 的子 effect
+    // 先于父 effect 执行，所以若本 effect 在 ProjectTree 挂载前就跑（首次渲染
+    // current 仍为 null，ProjectTree 走 loading 分支未挂载），选中态会被随后的
+    // setProject 覆盖，`?view=` 深链就永远打不开中栏。
+    //
+    // 把 projectReady 纳入依赖：ProjectTree 挂载那一提交里本 effect 才生效，
+    // 因而排在 setProject 之后，选中态得以保留。
+    if (!projectReady) return;
+
     // 优先 package，再 view，再 viewpoint；都不存在选工程根
     let encoded: string | null;
     if (queryPackage) encoded = encodeNodeId('package', queryPackage);
@@ -146,12 +166,51 @@ export const ProjectDetail: React.FC = () => {
     else if (queryViewpoint) encoded = encodeNodeId('viewpoint', queryViewpoint);
     else encoded = encodeNodeId('project', projectId);
     treeSelect(encoded);
-    if (encoded) {
-      // 展开工程根
-      treeExpandAll([encoded]);
+
+    // 展开到目标节点，让行真正可见：
+    //   工程根（否则什么都看不到）+ 目标所在的包（视图/视角挂在包里）
+    const toExpand: string[] = [encodeNodeId('project', projectId)];
+    if (queryView || queryViewpoint) {
+      const { views: vs, viewpoints: vps } = listsRef.current;
+      const ownerPackageId = queryView
+        ? vs.find((v) => v.id === queryView)?.packageId
+        : vps.find((vp) => vp.id === queryViewpoint)?.packageId;
+      if (ownerPackageId) toExpand.push(encodeNodeId('package', ownerPackageId));
     }
-    // treeSelect 是稳定的，但只读 queryPackage/queryView/queryViewpoint/projectId
-  }, [queryPackage, queryView, queryViewpoint, projectId, treeSelect, treeExpandAll]);
+    treeExpandAll(toExpand);
+  }, [
+    projectReady,
+    queryPackage,
+    queryView,
+    queryViewpoint,
+    projectId,
+    treeSelect,
+    treeExpandAll,
+  ]);
+
+  // 深链补展开：上面那次同步跑在 views/viewpoints 到达之前（列表是异步拉取的），
+  // 拿不到 owner packageId。等列表到齐后再补一次展开 —— 只展开、不改选中，
+  // 因此不会覆盖用户之后的手动选择。
+  React.useEffect(() => {
+    if (!projectReady) return;
+    if (!queryView && !queryViewpoint) return;
+    const ownerPackageId = queryView
+      ? views.find((v) => v.id === queryView)?.packageId
+      : viewpoints.find((vp) => vp.id === queryViewpoint)?.packageId;
+    if (!ownerPackageId) return;
+    treeExpandAll([
+      encodeNodeId('project', projectId),
+      encodeNodeId('package', ownerPackageId),
+    ]);
+  }, [
+    projectReady,
+    queryView,
+    queryViewpoint,
+    views,
+    viewpoints,
+    projectId,
+    treeExpandAll,
+  ]);
 
   // ── treeStore 选中 → MiddlePane 输入 ──────────────────────
   const treeSelectedId = useTreeStore((s) => s.selectedId);
@@ -483,6 +542,106 @@ export const ProjectDetail: React.FC = () => {
     [refreshPackages, showToast, setSearchParams],
   );
 
+  // M15：把 view-private 元素提升到所属包（SysML v2 §7.26 owned → public）
+  const handlePromoteElement = React.useCallback(
+    async (ref: ElementRef) => {
+      if (ref.ownerKind === 'package') return; // 只有 view/viewpoint-private 可提升
+      try {
+        // 1. 取 owner（view 或 viewpoint）的 content + packageId
+        let ownerContent: string;
+        let ownerPackageId: string | undefined;
+        let updateOwner: (content: string) => Promise<unknown>;
+
+        if (ref.ownerKind === 'view') {
+          const v = await viewApi.get(ref.ownerId);
+          ownerContent = v.content;
+          ownerPackageId = v.packageId;
+          updateOwner = (content) =>
+            viewApi.update(ref.ownerId, {
+              name: v.name,
+              packageId: v.packageId,
+              description: v.description,
+              content,
+              colorTag: v.colorTag,
+              renderingCategory: v.renderingCategory,
+              metadata: v.metadata,
+              version: v.version,
+            });
+        } else {
+          const vp = await viewpointApi.get(ref.ownerId);
+          ownerContent = vp.content;
+          ownerPackageId = vp.packageId;
+          updateOwner = (content) =>
+            viewpointApi.update(ref.ownerId, {
+              name: vp.name,
+              packageId: vp.packageId,
+              description: vp.description,
+              content,
+              stakeholder: vp.stakeholder,
+              concern: vp.concern,
+              metadata: vp.metadata,
+              version: vp.version,
+            });
+        }
+
+        if (!ownerPackageId) {
+          showToast({
+            title: '无法提升',
+            description: '该视图/视角不属于任何包，无法提升到包。',
+            variant: 'error',
+          });
+          return;
+        }
+
+        const extracted = extractDefinition(ownerContent, ref.elementName);
+        if (!extracted) {
+          showToast({
+            title: '未找到元素定义',
+            description: `在内容中找不到「${ref.elementName}」的定义。`,
+            variant: 'error',
+          });
+          return;
+        }
+
+        // 2. 从 owner content 中移除 def
+        await updateOwner(extracted.remaining);
+
+        // 3. 追加到所属包 body
+        const pkg = await packageApi.get(ownerPackageId);
+        const newPkgContent = insertSnippetIntoPackage(
+          pkg.content ?? '',
+          extracted.text + '\n',
+          pkg.name,
+        );
+        await packageApi.update(ownerPackageId, {
+          name: pkg.name,
+          parentPackageId: pkg.parentPackageId,
+          description: pkg.description,
+          content: newPkgContent,
+          metadata: pkg.metadata,
+          version: pkg.version,
+        });
+
+        // 4. 刷新缓存与列表
+        useElementTreeCacheStore.getState().invalidate(ownerPackageId);
+        await refreshPackages();
+        await refreshViews();
+        await refreshViewpoints();
+        showToast({
+          title: `已提升「${ref.elementName}」到包`,
+          variant: 'success',
+        });
+      } catch (e) {
+        showToast({
+          title: '提升失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [refreshPackages, refreshViews, refreshViewpoints, showToast],
+  );
+
   const handleTreeAction = React.useCallback(
     (action: TreeAction) => {
       switch (action.type) {
@@ -501,7 +660,7 @@ export const ProjectDetail: React.FC = () => {
         case 'element-action':
           // M14：goto-canvas / rename / delete on element node
           if (action.action === 'goto-canvas') {
-            setSearchParams({ package: action.ref.packageId });
+            setSearchParams({ package: action.ref.ownerId });
             // 设置待聚焦名：effect 监听 modelStore.content 加载完后再调 focus
             setPendingFocusName(action.ref.elementName);
             showToast({
@@ -521,6 +680,9 @@ export const ProjectDetail: React.FC = () => {
               variant: 'default',
             });
           }
+          break;
+        case 'promote-element':
+          void handlePromoteElement(action.ref);
           break;
         case 'rename':
           void handleRename(action.kind, action.id, action.currentName);
@@ -543,6 +705,7 @@ export const ProjectDetail: React.FC = () => {
       handleCreatePackage,
       handleCreateView,
       handleCreateViewpoint,
+      handlePromoteElement,
       handleRename,
       handleDelete,
       handleDuplicateView,
@@ -683,6 +846,7 @@ export const ProjectDetail: React.FC = () => {
               onCreatePackage={() => void handleCreatePackage(null)}
               onCreateView={() => void handleCreateView(null)}
               onDiagramReady={handleDiagramReady}
+              onOpenViewpoint={(id) => setSearchParams({ viewpoint: id })}
             />
           }
           right={

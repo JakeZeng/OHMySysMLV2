@@ -171,42 +171,39 @@ func ParseViewBody(content string) ParsedViewBody {
 
 // ParseViewBodyWithPackages 解析 + 跨包路径 resolve 校验。
 //
-// packages：工程下所有包的（ID, Name, ParentPackageID）信息。
+// packages：工程下所有包的（ID, Name, ParentPackageID, Content）信息。
 // 返回：resolved 元素、未 resolved 元素（带 Reason）。
 //
-// resolve 策略（M15 MVP）：
+// resolve 策略（M15 严格版）：
 //   - 把 `A::B::C` 拆成 [A, B, C]
 //   - 在 packages 中找到 name == A 的顶级包（parent_package_id 为空）
-//   - 递归下钻：找 name == B 且 parent == A 的子包
-//   - 最后一段（C）作为 def 名；只要路径前缀合法就算 resolved（def 是否真存在不严格校验）
+//   - 中间段递归下钻子包：找 name == B 且 parent == A 的子包
+//   - 最后一段 C 必须是**目标包 body 内真实定义的 def/usage**（否则 unresolved）
+//   - resolved 时 Kind 取自包 body 中的实际定义（part def → PartDef）
 //
-// 严格校验需解析各 package content；M15 简化：只校验路径前缀是否存在。
+// 中间段仍只按包链匹配（不把嵌套 usage 当 namespace）——这是 MVP 边界，
+// 见 plan 风险表；最后一段的严格校验已足以让树上的 resolve 徽章有意义。
 func ParseViewBodyWithPackages(content string, packages []PackageRef) ParsedViewBody {
 	parsed := ParseViewBody(content)
 
 	// 子节点索引：parentID → children
 	childrenOf := make(map[string][]PackageRef, len(packages))
 	for _, p := range packages {
-		pp := p.ParentPackageID
-		if pp == "" {
-			pp = ""
-		}
-		childrenOf[pp] = append(childrenOf[pp], p)
+		childrenOf[p.ParentPackageID] = append(childrenOf[p.ParentPackageID], p)
 	}
 
 	resolved := make([]model.ExposedElement, 0, len(parsed.ExposedElements))
 	unresolved := make([]model.ExposedElement, 0)
 
 	for _, el := range parsed.ExposedElements {
-		if pathExists(el.QualifiedName, childrenOf) {
+		kind, reason, ok := resolvePath(el.QualifiedName, childrenOf)
+		if ok {
+			el.Kind = kind // 用包 body 里的真实定义覆盖启发式推断
 			resolved = append(resolved, el)
-		} else {
-			unresolved = append(unresolved, model.ExposedElement{
-				QualifiedName: el.QualifiedName,
-				Kind:          el.Kind,
-				Reason:        "path not found in project package tree",
-			})
+			continue
 		}
+		el.Reason = reason
+		unresolved = append(unresolved, el)
 	}
 
 	parsed.ExposedElements = resolved
@@ -214,23 +211,40 @@ func ParseViewBodyWithPackages(content string, packages []PackageRef) ParsedView
 	return parsed
 }
 
-// PackageRef 是解析器所需的最小包信息（model.Package 与 model.PackageSummary 都满足）。
+// PackageRef 是解析器所需的最小包信息。
 type PackageRef struct {
 	ID              string
 	Name            string
 	ParentPackageID string
+	// Content 是包的 SysML v2 文本；resolve 最后一段 def 时必须。
+	Content string
+	// HasContent 区分「body 已知且为空」与「body 未知（调用方只传了摘要）」。
+	//
+	// 二者语义完全不同：
+	//   - HasContent=true 且 Content="" → 包确实是空的，任何 def 都解析不到 → unresolved
+	//   - HasContent=false               → 无法判定，退化为只校验包链
+	// 若不区分，空包会错误地把任意路径判成 resolved。
+	HasContent bool
 }
 
 // FromPackages 把 []model.Package 转换为 []PackageRef。
+// 非空 Content 视为「body 已知」。
 func FromPackages(pkgs []model.Package) []PackageRef {
 	out := make([]PackageRef, len(pkgs))
 	for i, p := range pkgs {
-		out[i] = PackageRef{ID: p.ID, Name: p.Name, ParentPackageID: p.ParentPackageID}
+		out[i] = PackageRef{
+			ID:              p.ID,
+			Name:            p.Name,
+			ParentPackageID: p.ParentPackageID,
+			Content:         p.Content,
+			HasContent:      p.Content != "",
+		}
 	}
 	return out
 }
 
 // FromPackageSummaries 把 []model.PackageSummary 转换为 []PackageRef。
+// 摘要不带 Content → HasContent=false，resolve 退化为只校验包链。
 func FromPackageSummaries(pkgs []model.PackageSummary) []PackageRef {
 	out := make([]PackageRef, len(pkgs))
 	for i, p := range pkgs {
@@ -239,47 +253,91 @@ func FromPackageSummaries(pkgs []model.PackageSummary) []PackageRef {
 	return out
 }
 
-// pathExists 检查 qualified name 路径是否能从顶级包下钻到 def。
-// 简化：只校验路径前缀（包链）；最后一段（def name）不强制存在。
-func pathExists(qualifiedName string, childrenOf map[string][]PackageRef) bool {
+// FromPackageContentRefs 把 []model.PackageContentRef 转换为 []PackageRef。
+// 该路径是「body 已知」的正规入口（handler 用它做严格 resolve）。
+func FromPackageContentRefs(refs []model.PackageContentRef) []PackageRef {
+	out := make([]PackageRef, len(refs))
+	for i, r := range refs {
+		out[i] = PackageRef{
+			ID:              r.ID,
+			Name:            r.Name,
+			ParentPackageID: r.ParentPackageID,
+			Content:         r.Content,
+			HasContent:      true,
+		}
+	}
+	return out
+}
+
+// resolvePath 沿包链下钻并校验最后一段 def 是否真实存在。
+//
+// 返回 (kind, reason, ok)：
+//   - ok=true  → kind 为目标 def 的实际种类（可能为空串，表示无法判定但路径存在）
+//   - ok=false → reason 说明失败在哪一段
+func resolvePath(qualifiedName string, childrenOf map[string][]PackageRef) (string, string, bool) {
 	segments := strings.Split(qualifiedName, "::")
-	if len(segments) == 0 {
-		return false
+	if len(segments) < 2 {
+		return "", "qualified name must be at least Pkg::Element", false
 	}
 
 	// 第一段：顶级包
-	topLevel := childrenOf[""]
-	var current PackageRef
-	found := false
-	for _, p := range topLevel {
-		if p.Name == segments[0] {
-			current = p
-			found = true
-			break
-		}
-	}
+	current, found := findChildByName(childrenOf[""], segments[0])
 	if !found {
-		return false
+		return "", "top-level package not found: " + segments[0], false
 	}
 
 	// 中间段：嵌套包（除最后一段）
 	for i := 1; i < len(segments)-1; i++ {
-		segment := segments[i]
-		kids := childrenOf[current.ID]
-		found = false
-		for _, p := range kids {
-			if p.Name == segment {
-				current = p
-				found = true
-				break
-			}
-		}
+		current, found = findChildByName(childrenOf[current.ID], segments[i])
 		if !found {
-			return false
+			return "", "nested package not found: " + segments[i], false
 		}
 	}
-	// 最后一段是 def 名（M15 不严格校验 def 是否真存在）
-	return true
+
+	defName := segments[len(segments)-1]
+	// body 未知的调用方（仅传摘要）：退化为只校验包链
+	if !current.HasContent {
+		return "", "", true
+	}
+	kind := findDefKind(current.Content, defName)
+	if kind == "" {
+		return "", "definition not found in package " + current.Name + ": " + defName, false
+	}
+	return kind, "", true
+}
+
+// findChildByName 在候选包中按名查找。
+func findChildByName(candidates []PackageRef, name string) (PackageRef, bool) {
+	for _, p := range candidates {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return PackageRef{}, false
+}
+
+// defKindRe 匹配包 body 内的元素定义，捕获 (关键字, 是否 def, 名字)。
+// 例：`part def Vehicle` → ("part", "def ", "Vehicle")；`port p1` → ("port", "", "p1")
+var defKindRe = regexp.MustCompile(`(?m)\b(part|port|action|state|requirement|constraint|item|attribute|connection|interface|occurrence)\s+(def\s+)?([A-Za-z_][A-Za-z0-9_]*)\b`)
+
+// findDefKind 在包 content 中查找名为 name 的定义，返回其种类（PartDef / PortUsage / ...）。
+// 未找到返回空串。
+func findDefKind(content, name string) string {
+	if content == "" || name == "" {
+		return ""
+	}
+	for _, m := range defKindRe.FindAllStringSubmatch(content, -1) {
+		if m[3] != name {
+			continue
+		}
+		kw := strings.ToLower(m[1])
+		suffix := "Usage"
+		if strings.TrimSpace(m[2]) != "" {
+			suffix = "Def"
+		}
+		return strings.ToUpper(kw[:1]) + kw[1:] + suffix
+	}
+	return ""
 }
 
 // ─── 工具函数 ────────────────────────────────────────────────────────

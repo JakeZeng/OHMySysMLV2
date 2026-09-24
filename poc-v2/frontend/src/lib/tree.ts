@@ -23,14 +23,24 @@ import {
 
 /** 元素节点元信息（M14 — 树中展示元素用） */
 export interface ElementNodeInfo {
-  /** 元素名（同一包内 name 唯一） */
+  /** 元素名（同一 namespace 内 name 唯一） */
   name: string;
   /** AST kind（partDef / portDef / state / ...） */
   kind: string;
+  /**
+   * M15：嵌套子元素（`part def X { part sub; }` 的 body）。
+   * 递归上树，缩进展示 SysML v2 ownership 链。
+   */
+  children?: ElementNodeInfo[];
+  /**
+   * M15：元素的归属 namespace 种类。package = 公共元素（可被 expose）；
+   * view / viewpoint = view-private（qualified name = `V::X`），进对应节点子树。
+   */
+  ownerKind?: 'package' | 'view' | 'viewpoint';
 }
 
 export interface TreeNode {
-  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` / `viewpoint:<id>` / `elem:<pkgId>:<name>` */
+  /** 编码 ID：`project:<id>` / `pkg:<id>` / `view:<id>` / `viewpoint:<id>` / `elem:<ownerId>:<name>` */
   encodedId: string;
   kind: TreeNodeKind;
   /** 原始实体 ID */
@@ -42,8 +52,22 @@ export interface TreeNode {
   parentId?: string;
   /** M14：元素节点的 AST kind */
   elementKind?: string;
+  /** M15：元素节点的归属 namespace（package / view / viewpoint） */
+  elementOwnerKind?: 'package' | 'view' | 'viewpoint';
   /** M15：视角的利益相关方（UI hint；显示在徽章上） */
   viewpointStakeholder?: string;
+  /** M15：视图渲染方式（`render as <kind>`，决定打开时走哪个 renderer） */
+  renderKind?: string;
+  /** M15：视图种类（definition = 模板 / usage = 实例） */
+  viewKind?: 'definition' | 'usage';
+  /** M15：满足的 Viewpoint qualified name（解析自 `view V satisfies VP;`） */
+  satisfiesQualifiedName?: string;
+  /** M15：满足的 Viewpoint ID（可点击跳转） */
+  satisfiesViewpointId?: string;
+  /** M15：expose 引用计数（视图节点徽章；引用不复制、不进子树） */
+  exposeCount?: number;
+  /** M15：未 resolve 的 expose 计数（标红） */
+  exposeUnresolvedCount?: number;
   children: TreeNode[];
 }
 
@@ -65,6 +89,33 @@ export interface BuildTreeInput {
 /** 空 parentPackageId / packageId 归一为 ''（顶层） */
 function parentOf(parentId: string | undefined): string {
   return parentId ?? '';
+}
+
+/**
+ * M15：把一个元素（及其递归 body 子元素）构造成树节点。
+ *
+ * ownerKind 区分归属语义（SysML v2 §7.26）：
+ *   - package    → 公共元素，qualified name = `Pkg::X`，可被任意 view expose
+ *   - view       → view-private，qualified name = `V::X`
+ *   - viewpoint  → viewpoint-private，qualified name = `VP::X`
+ *
+ * 嵌套子元素仍属同一 namespace（`Pkg::Outer::Inner`），故 ownerId/ownerKind 透传。
+ */
+function buildElementNode(
+  ownerId: string,
+  ownerKind: 'package' | 'view' | 'viewpoint',
+  info: ElementNodeInfo,
+): TreeNode {
+  return {
+    encodedId: encodeElementId(ownerId, info.name),
+    kind: 'element',
+    id: `${ownerId}:${info.name}`,
+    name: info.name,
+    parentId: ownerId,
+    elementKind: info.kind,
+    elementOwnerKind: ownerKind,
+    children: (info.children ?? []).map((c) => buildElementNode(ownerId, ownerKind, c)),
+  };
 }
 
 /**
@@ -114,48 +165,53 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   }
 
   // 视图节点：按 packageId 分组
+  // M15：子树 = view body 内 owned 元素（view-private）；expose 引用不进子树（徽章展示）。
   for (const v of views) {
     const parent = parentOf(v.packageId);
+    const children = (v.innerElements ?? [])
+      .filter((e) => e?.name)
+      .map((e) => buildElementNode(v.id, 'view', e));
     push(packageIds.has(parent) ? parent : '', {
       encodedId: encodeNodeId('view', v.id),
       kind: 'view',
       id: v.id,
       name: v.name,
       colorTag: v.colorTag,
-      children: [],
+      renderKind: v.renderKind,
+      viewKind: v.kind,
+      satisfiesQualifiedName: v.viewpointQualifiedName,
+      satisfiesViewpointId: v.viewpointId,
+      exposeCount: v.exposeCount,
+      exposeUnresolvedCount: v.exposeUnresolvedCount,
+      children,
     });
   }
 
-  // M15：视角节点：按 packageId 分组
+  // M15：视角节点：按 packageId 分组；子树 = viewpoint body 内 owned 元素
   if (viewpoints && viewpoints.length > 0) {
     for (const vp of viewpoints) {
       const parent = parentOf(vp.packageId);
+      const children = (vp.innerElements ?? [])
+        .filter((e) => e?.name)
+        .map((e) => buildElementNode(vp.id, 'viewpoint', e));
       push(packageIds.has(parent) ? parent : '', {
         encodedId: encodeNodeId('viewpoint', vp.id),
         kind: 'viewpoint',
         id: vp.id,
         name: vp.name,
         viewpointStakeholder: vp.stakeholder,
-        children: [],
+        children,
       });
     }
   }
 
-  // M14：元素节点：按 packageId 分组（挂在对应包下）
+  // M14/M15：元素节点：按 packageId 分组（挂在对应包下，递归嵌套）
   if (packageElements) {
     for (const [pkgId, elements] of Object.entries(packageElements)) {
       if (!packageIds.has(pkgId)) continue; // 跳过无效 package
       for (const el of elements) {
         if (!el?.name) continue;
-        push(pkgId, {
-          encodedId: encodeElementId(pkgId, el.name),
-          kind: 'element',
-          id: `${pkgId}:${el.name}`,
-          name: el.name,
-          parentId: pkgId,
-          elementKind: el.kind,
-          children: [],
-        });
+        push(pkgId, buildElementNode(pkgId, 'package', el));
       }
     }
   }

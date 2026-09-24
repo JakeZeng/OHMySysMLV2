@@ -133,11 +133,12 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
         handleSelect(node.encodedId);
         return;
       }
-      // M14：element 节点需要 ElementRef 才能路由到 element-action
+      // M14/M15：element 节点需要 ElementRef 才能路由到 element-action / promote
       const elementRef =
         node.kind === 'element'
           ? {
-              packageId: node.parentId ?? '',
+              ownerId: node.parentId ?? node.id,
+              ownerKind: node.elementOwnerKind ?? 'package',
               elementName: node.name,
               elementKind: node.elementKind,
             }
@@ -232,7 +233,8 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
           if (current.kind === 'element') {
             // 元素节点：跳到画布节点用 F2 重命名
             const ref = {
-              packageId: current.parentId ?? '',
+              ownerId: current.parentId ?? current.id,
+              ownerKind: current.elementOwnerKind ?? 'package',
               elementName: current.name,
               elementKind: current.elementKind,
             };
@@ -251,7 +253,8 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
           e.preventDefault();
           if (current.kind === 'element') {
             const ref = {
-              packageId: current.parentId ?? '',
+              ownerId: current.parentId ?? current.id,
+              ownerKind: current.elementOwnerKind ?? 'package',
               elementName: current.name,
               elementKind: current.elementKind,
             };
@@ -329,7 +332,11 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
 
       <ContextMenu
         position={menu?.position ?? null}
-        items={menu ? menuItemsFor(menu.node.kind) : []}
+        items={
+          menu
+            ? menuItemsFor(menu.node.kind, menu.node.elementOwnerKind ?? 'package')
+            : []
+        }
         onSelect={handleMenuSelect}
         onClose={() => setMenu(null)}
       />

@@ -19,6 +19,7 @@ import {
   Square,
   Crosshair,
   Compass,
+  ArrowUpToLine,
 } from 'lucide-react';
 import type { ContextMenuItem } from './ContextMenu';
 import type { TreeNodeKind } from '../../stores/treeStore';
@@ -27,8 +28,11 @@ import type { TreeAction, ElementRef } from './types';
 const icon = (C: React.ComponentType<{ className?: string }>) =>
   React.createElement(C, { className: 'h-3.5 w-3.5' });
 
-/** 节点类型 → 菜单项 */
-export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
+/** 节点类型 → 菜单项（element 节点按 ownerKind 区分 owned vs view-private） */
+export function menuItemsFor(
+  kind: TreeNodeKind,
+  elementOwnerKind: 'package' | 'view' | 'viewpoint' = 'package',
+): ContextMenuItem[] {
   switch (kind) {
     case 'project':
       return [
@@ -73,6 +77,31 @@ export function menuItemsFor(kind: TreeNodeKind): ContextMenuItem[] {
       ];
 
     case 'element':
+      // M15：view-private 元素（owned by view/viewpoint body）没有独立画布，
+      // 提供「提升到包」把 def 移回所属包；公共元素维持 M14 的「跳到画布」。
+      if (elementOwnerKind !== 'package') {
+        return [
+          {
+            id: 'element-promote',
+            label: '提升到包',
+            icon: icon(ArrowUpToLine),
+          },
+          {
+            id: 'element-rename',
+            label: '重命名',
+            icon: icon(Pencil),
+            separatorBefore: true,
+            hint: 'F2',
+          },
+          {
+            id: 'element-delete',
+            label: '删除',
+            icon: icon(Trash2),
+            danger: true,
+            hint: 'Del',
+          },
+        ];
+      }
       return [
         {
           id: 'element-goto-canvas',
@@ -149,6 +178,12 @@ export function actionFor(
     case 'element-goto-canvas':
       if (target.kind === 'element' && elementRef) {
         return { type: 'element-action', action: 'goto-canvas', ref: elementRef };
+      }
+      return null;
+
+    case 'element-promote':
+      if (target.kind === 'element' && elementRef) {
+        return { type: 'promote-element', ref: elementRef };
       }
       return null;
 

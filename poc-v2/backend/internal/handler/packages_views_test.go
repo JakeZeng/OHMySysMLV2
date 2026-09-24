@@ -266,10 +266,13 @@ func TestViewsCRUD(t *testing.T) {
 		}
 	})
 
+	// M15：严格 resolve —— 末段 def 必须真实存在于目标包 body。
+	// `Pkg1::Vehicle` 在 Setup_Pkg1 中定义为 part def → resolved；
+	// `Pkg1::Ghost` 不存在 → unresolved（带 reason）。
 	t.Run("Update_RecomputesExposed", func(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":    "V2",
-			"content": "view V2 { expose Pkg1::A; expose Pkg1::B; }",
+			"content": "view V2 { expose Pkg1::Vehicle; expose Pkg1::Ghost; }",
 			"version": int(viewV1),
 		})
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/views/"+viewID, body)
@@ -282,8 +285,22 @@ func TestViewsCRUD(t *testing.T) {
 		}
 		data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
 		exposed, _ := data["exposedElements"].([]any)
-		if len(exposed) != 2 {
-			t.Errorf("after update exposedElements len = %d, want 2", len(exposed))
+		if len(exposed) != 1 {
+			t.Errorf("after update exposedElements len = %d, want 1 (%v)", len(exposed), exposed)
+		} else {
+			first := exposed[0].(map[string]any)
+			if first["qualifiedName"] != "Pkg1::Vehicle" {
+				t.Errorf("qualifiedName = %v, want Pkg1::Vehicle", first["qualifiedName"])
+			}
+			if first["kind"] != "PartDef" {
+				t.Errorf("kind = %v, want PartDef (从包 body 推断)", first["kind"])
+			}
+		}
+		unresolved, _ := data["exposedElementsUnresolved"].([]any)
+		if len(unresolved) != 1 {
+			t.Errorf("after update unresolved len = %d, want 1 (%v)", len(unresolved), unresolved)
+		} else if u := unresolved[0].(map[string]any); u["reason"] == "" {
+			t.Errorf("unresolved 缺少 reason: %v", u)
 		}
 		if data["version"].(float64) != 2 {
 			t.Errorf("version = %v, want 2", data["version"])

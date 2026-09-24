@@ -136,6 +136,59 @@ export function insertSnippetIntoPackage(
   return result;
 }
 
+/**
+ * M15：从 content 中提取名为 name 的 def 定义块（`part def X { ... }` / `requirement def X;`）。
+ *
+ * 返回 `{ text, remaining }`；找不到返回 null。
+ * 用于「提升到包」（Promote to Package）：把 view-private 元素从 view body
+ * 移到所属包 body（SysML v2 §7.26 owned → public）。
+ */
+export function extractDefinition(
+  content: string,
+  name: string,
+): { text: string; remaining: string } | null {
+  if (!content || !name) return null;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headerRe = new RegExp(
+    `\\b((?:part|port|action|state|requirement|constraint|item|attribute|connection|interface|occurrence)\\s+def)\\s+${escaped}\\b`,
+  );
+  const m = headerRe.exec(content);
+  if (!m) return null;
+
+  const start = m.index;
+  // 从名字之后扫描 terminator：`{`（块）或 `;`
+  let i = m.index + m[0].length;
+  while (i < content.length && content[i] !== '{' && content[i] !== ';') i++;
+  if (i >= content.length) return null;
+
+  let end: number;
+  if (content[i] === '{') {
+    end = findBraceClose(content, i);
+    // 块后可能跟 `;`，一并吃掉
+    let k = end + 1;
+    while (k < content.length && /\s/.test(content[k])) k++;
+    if (content[k] === ';') end = k;
+  } else {
+    end = i; // 单行 `... def X;`
+  }
+
+  const text = content.slice(start, end + 1);
+  const remaining = content.slice(0, start) + content.slice(end + 1);
+  return { text, remaining };
+}
+
+/** 从 openIdx 处的 `{` 找到匹配的 `}` 下标（未闭合时返回 text.length-1）。 */
+function findBraceClose(text: string, openIdx: number): number {
+  let depth = 1;
+  let i = openIdx + 1;
+  while (i < text.length && depth > 0) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') depth--;
+    i++;
+  }
+  return i - 1;
+}
+
 /** 从 body 文本中推断缩进（取第一个非空行的 leading whitespace）。 */
 function detectIndent(body: string): string {
   const lines = body.split('\n');

@@ -53,6 +53,51 @@ func derefPackages(pkgs []*model.PackageSummary) []model.PackageSummary {
 	return out
 }
 
+// packageRefsForResolve 取工程下所有包的 (id, name, parent, content)，
+// 供 view body 的 expose 路径做严格 resolve（末段 def 必须真实存在）。
+//
+// 出错时返回 nil —— resolve 退化为「全部 unresolved」而非让保存失败；
+// 视图内容本身仍然落库，避免因解析辅助数据不可用而丢用户输入。
+func (h *Handler) packageRefsForResolve(c *gin.Context, projectID string) []parser.PackageRef {
+	refs, err := h.repo.ListPackageContentRefsByProject(c.Request.Context(), projectID)
+	if err != nil {
+		return nil
+	}
+	return parser.FromPackageContentRefs(refs)
+}
+
+// resolveSatisfiedViewpointID 把 `view V satisfies VP;` 里解析出的 qualified name
+// 映射到工程内真实存在的 Viewpoint ID。
+//
+// SysML v2 §7.26 的 satisfies 是语义关系而非纯字符串：只有解析到实体，
+// UI 才能给出可点击的跳转（否则退化为只显示名字的弱引用）。
+//
+// 匹配策略（宽松，按优先级）：
+//  1. qualified name 末段与 viewpoint 名完全相等
+//  2. qualified name 与 viewpoint 名完全相等
+//
+// 找不到返回空串（不报错 —— 允许"先写 satisfies 再建 viewpoint"的建模顺序）。
+func (h *Handler) resolveSatisfiedViewpointID(c *gin.Context, projectID, qualifiedName string) string {
+	if qualifiedName == "" {
+		return ""
+	}
+	vps, err := h.repo.ListViewpointsByProject(c.Request.Context(), projectID)
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(qualifiedName, "::")
+	last := segments[len(segments)-1]
+	for _, vp := range vps {
+		if vp == nil {
+			continue
+		}
+		if vp.Name == last || vp.Name == qualifiedName {
+			return vp.ID
+		}
+	}
+	return ""
+}
+
 func (h *Handler) Health(c *gin.Context) {
 	// M4.5 增量：附带 DB ping + 资源计数，便于运维探活与监控。
 	// 失败时仍返回 200（健康探针不应被资源统计拖死），但 status 字段标 degraded。
@@ -961,9 +1006,9 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 		CreatedAt:         time.Now().UTC(),
 		UpdatedAt:         time.Now().UTC(),
 	}
-	// M15：用 ParseViewBodyWithPackages 做完整解析（含 resolve 校验）
-	pkgsSummary, _ := h.repo.ListPackagesByProject(c, projectID)
-	pkgRefs := parser.FromPackageSummaries(derefPackages(pkgsSummary))
+	// M15：用 ParseViewBodyWithPackages 做完整解析（含 resolve 校验）。
+	// 必须带 Content —— 否则无法校验 expose 末段 def 是否真实存在。
+	pkgRefs := h.packageRefsForResolve(c, projectID)
 	parsed := parser.ParseViewBodyWithPackages(req.Content, pkgRefs)
 	v.ExposedElements = parsed.ExposedElements
 	v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
@@ -971,6 +1016,7 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	v.FilterQualifiedNames = parsed.FilterQualifiedNames
 	v.InnerElements = parsed.InnerElements
 	v.ViewpointQualifiedName = parsed.SatisfiesQualifiedName
+	v.ViewpointID = h.resolveSatisfiedViewpointID(c, projectID, v.ViewpointQualifiedName)
 	if err := h.repo.CreateView(c, v); err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
@@ -1034,8 +1080,10 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	v.Version = req.Version
 	v.UpdatedAt = time.Now().UTC()
 	// M15：使用 ParseViewBodyWithPackages 做完整解析（含 resolve 校验）
-	pkgsSummary, _ := h.repo.ListPackagesByProject(c, v.ProjectID)
-	pkgRefs := parser.FromPackageSummaries(derefPackages(pkgsSummary))
+	pkgRefs := h.packageRefsForResolve(c, v.ProjectID)
+	satisfiesQName := parser.ParseViewBody(req.Content).SatisfiesQualifiedName
+	v.ViewpointQualifiedName = satisfiesQName
+	v.ViewpointID = h.resolveSatisfiedViewpointID(c, v.ProjectID, satisfiesQName)
 	parseFn := func(content string) ([]model.ExposedElement, []model.ExposedElement, model.RenderKind, []string, []model.InnerElement) {
 		parsed := parser.ParseViewBodyWithPackages(content, pkgRefs)
 		return parsed.ExposedElements, parsed.ExposedElementsUnresolved, parsed.RenderKind, parsed.FilterQualifiedNames, parsed.InnerElements
@@ -1153,6 +1201,8 @@ func (h *Handler) CreateViewpointInProject(c *gin.Context) {
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
+	// M15：解析 viewpoint body 内 owned 元素（`part def X` 等）
+	vp.InnerElements = parser.ParseViewBody(req.Content).InnerElements
 	if err := h.repo.CreateViewpoint(c, vp); err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
@@ -1206,6 +1256,7 @@ func (h *Handler) UpdateViewpoint(c *gin.Context) {
 	vp.Content = req.Content
 	vp.Stakeholder = req.Stakeholder
 	vp.Concern = req.Concern
+	vp.InnerElements = parser.ParseViewBody(req.Content).InnerElements
 	if req.Metadata != nil {
 		vp.Metadata = req.Metadata
 	}

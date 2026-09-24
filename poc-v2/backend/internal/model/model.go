@@ -97,9 +97,21 @@ type PackageSummary struct {
 //
 // M15：增加 Reason 字段，记录 unresolved 时的原因（路径不存在等）。
 type ExposedElement struct {
-	QualifiedName string `json:"qualifiedName"` // e.g. "Pkg1.SubPkg.PartDef1"
-	Kind          string `json:"kind"`          // "PartDef" | "PortDef" | ...
+	QualifiedName string `json:"qualifiedName"`    // e.g. "Pkg1.SubPkg.PartDef1"
+	Kind          string `json:"kind"`             // "PartDef" | "PortDef" | ...
 	Reason        string `json:"reason,omitempty"` // 仅 Unresolved 时使用
+}
+
+// PackageContentRef 是「包 + 内容」的最小投影，专供视图 expose 路径 resolve 使用。
+//
+// 为什么不复用 PackageSummary：摘要刻意不带 Content（列表接口不应传输全部 SysML 文本）；
+// 而 expose 路径的严格校验必须能看到目标包 body 里到底定义了哪些 def。
+// 也不复用 Package：那个结构含 metadata / version / 时间戳等 resolve 用不到的字段。
+type PackageContentRef struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ParentPackageID string `json:"parentPackageId,omitempty"`
+	Content         string `json:"content"`
 }
 
 // View 表示一个 SysML v2 视图（M12 引入为一等公民，M15 升级）。
@@ -158,7 +170,14 @@ type View struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// ViewSummary 列表返回的摘要（不含 Content / ExposedElements / InnerElements）。
+// ViewSummary 列表返回的摘要（不含 Content）。
+//
+// M15 增量：为了支撑「元素上树」，摘要额外携带树渲染所需的解析结果：
+//   - InnerElements：view body 内 owned 元素（view-private，进 view 节点子树）
+//   - ExposeCount / ExposeUnresolvedCount：expose 引用计数（树节点徽章，不进子树）
+//   - FilterQualifiedNames：filter @ 子句（ViewpointSummary 顶部条展示）
+//
+// 这些字段都很小（每视图最多几十项），随列表一次性返回可避免树展开时的 N+1 请求。
 type ViewSummary struct {
 	ID                string     `json:"id"`
 	ProjectID         string     `json:"projectId"`
@@ -174,6 +193,12 @@ type ViewSummary struct {
 	RenderingCategory string     `json:"renderingCategory,omitempty"` // deprecated
 	Version           int        `json:"version"`
 	UpdatedAt         time.Time  `json:"updatedAt"`
+
+	// M15 树渲染增量
+	InnerElements            []InnerElement `json:"innerElements,omitempty"`
+	ExposeCount              int            `json:"exposeCount"`
+	ExposeUnresolvedCount    int            `json:"exposeUnresolvedCount"`
+	FilterQualifiedNames     []string       `json:"filterQualifiedNames,omitempty"`
 }
 
 // MarshalExposedElements 把 exposedElements 列表序列化为 JSON 字符串。

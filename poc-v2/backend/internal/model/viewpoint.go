@@ -25,6 +25,10 @@ type Viewpoint struct {
 	Version     int               `json:"version"`
 	CreatedAt   time.Time         `json:"createdAt"`
 	UpdatedAt   time.Time         `json:"updatedAt"`
+
+	// M15：viewpoint body 内 owned 元素（qualified name = `VP::X`）。
+	// 与 view 的 InnerElements 同语义：owned by 该 namespace，进树时作为其子树。
+	InnerElements []InnerElement `json:"innerElements,omitempty"`
 }
 
 // ViewpointSummary 列表返回的摘要（不含 Content）。
@@ -38,6 +42,9 @@ type ViewpointSummary struct {
 	Concern     string    `json:"concern,omitempty"`
 	Version     int       `json:"version"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+
+	// M15：树渲染用 —— viewpoint body 内 owned 元素进其子树
+	InnerElements []InnerElement `json:"innerElements,omitempty"`
 }
 
 // ViewpointKind 在 viewUsage.go 中定义（M15 简化版本用；MVP 都用 'definition'）。

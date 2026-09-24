@@ -14,6 +14,8 @@
  * - 一个 Viewpoint 可被多个 View 引用；View 是 Viewpoint 的实现。
  */
 
+import type { InnerElement } from './view';
+
 export interface Viewpoint {
   id: string;
   projectId: string;
@@ -39,6 +41,8 @@ export interface ViewpointSummary {
   concern?: string;
   version: number;
   updatedAt: string;
+  /** M15：viewpoint body 内 owned 元素（进其树节点子树） */
+  innerElements?: InnerElement[];
 }
 
 export interface CreateViewpointRequest {
