@@ -671,6 +671,35 @@ func loadAccessibleView(c *gin.Context, repo *repository.SQLiteRepository, id st
 	return v, prj, held, nil
 }
 
+// viewpointID 从嵌套路由 param "viewpointId" 或平坦路由 param "id" 中提取 Viewpoint ID。
+func viewpointID(c *gin.Context) string {
+	if id := c.Param("viewpointId"); id != "" {
+		return id
+	}
+	return c.Param("id")
+}
+
+// loadAccessibleViewpoint 通过 viewpointID 加载 viewpoint，再加载其 project 并验证权限。
+func loadAccessibleViewpoint(c *gin.Context, repo *repository.SQLiteRepository, id string, required Permission) (*model.Viewpoint, *model.Project, Permission, error) {
+	vp, err := repo.GetViewpoint(c.Request.Context(), id)
+	if errors.Is(err, repository.ErrNotFound) {
+		notFound(c, "视角不存在")
+		return nil, nil, 0, nil
+	}
+	if err != nil {
+		serverError(c, "加载视角失败", err)
+		return nil, nil, 0, nil
+	}
+	prj, held, lerr := loadAccessibleProject(c, repo, vp.ProjectID, required)
+	if lerr != nil {
+		return nil, nil, 0, lerr
+	}
+	if prj == nil {
+		return nil, nil, 0, nil
+	}
+	return vp, prj, held, nil
+}
+
 // ListPackagesByProject GET /projects/:id/packages
 func (h *Handler) ListPackagesByProject(c *gin.Context) {
 	projectID := c.Param("id")
@@ -1062,6 +1091,164 @@ func (h *Handler) DeleteView(c *gin.Context) {
 	}
 	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetView, id,
 		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": nil})
+}
+
+// ─── Viewpoints（M15：SysML v2 §7.26）──────────────────────────
+
+// ListViewpointsByProject GET /projects/:id/viewpoints
+func (h *Handler) ListViewpointsByProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermRead); err != nil || !ok {
+		return
+	}
+	vps, err := h.repo.ListViewpointsByProject(c, projectID)
+	if err != nil {
+		serverError(c, "列出视角失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": vps})
+}
+
+// CreateViewpointInProject POST /projects/:id/viewpoints
+func (h *Handler) CreateViewpointInProject(c *gin.Context) {
+	projectID := c.Param("id")
+	if projectID == "" {
+		badRequest(c, "projectId 必填", nil)
+		return
+	}
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
+		return
+	}
+	var req model.CreateViewpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	if req.PackageID != "" {
+		if _, err := h.repo.GetPackage(c, req.PackageID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				badRequest(c, "所属包不存在", nil)
+				return
+			}
+			serverError(c, "校验所属包失败", err)
+			return
+		}
+	}
+	vp := &model.Viewpoint{
+		ID:          uuid.NewString(),
+		ProjectID:   projectID,
+		PackageID:   req.PackageID,
+		Name:        req.Name,
+		Description: req.Description,
+		Content:     req.Content,
+		Stakeholder: req.Stakeholder,
+		Concern:     req.Concern,
+		Metadata:    req.Metadata,
+		Version:     1,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := h.repo.CreateViewpoint(c, vp); err != nil {
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VIEWPOINT_NAME_CONFLICT",
+				"message": "同一包下已存在同名视角",
+			}})
+			return
+		}
+		serverError(c, "创建视角失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetViewpoint, vp.ID,
+		`{"name":"`+escapeJSON(vp.Name)+`","project":"`+vp.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": vp})
+}
+
+// GetViewpoint GET /viewpoints/:id
+func (h *Handler) GetViewpoint(c *gin.Context) {
+	id := viewpointID(c)
+	vp, _, _, err := loadAccessibleViewpoint(c, h.repo, id, PermRead)
+	if err != nil || vp == nil {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": vp})
+}
+
+// UpdateViewpoint PUT /viewpoints/:id
+func (h *Handler) UpdateViewpoint(c *gin.Context) {
+	id := viewpointID(c)
+	vp, _, _, err := loadAccessibleViewpoint(c, h.repo, id, PermWrite)
+	if err != nil || vp == nil {
+		return
+	}
+	var req model.UpdateViewpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	if req.Version != vp.Version {
+		details := h.buildConflictDetails(c, "viewpoint", vp.ID, vp.Version, vp.Content, vp.UpdatedAt, vp.ProjectID, 0, req.Content)
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+			"code":    "E_VERSION_CONFLICT",
+			"message": "版本冲突：服务器已有更新版本",
+			"details": details,
+		}})
+		return
+	}
+	vp.Name = req.Name
+	vp.PackageID = req.PackageID
+	vp.Description = req.Description
+	vp.Content = req.Content
+	vp.Stakeholder = req.Stakeholder
+	vp.Concern = req.Concern
+	if req.Metadata != nil {
+		vp.Metadata = req.Metadata
+	}
+	vp.Version = req.Version
+	vp.UpdatedAt = time.Now().UTC()
+	if err := h.repo.UpdateViewpoint(c, vp); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			details := h.buildConflictDetails(c, "viewpoint", vp.ID, vp.Version, vp.Content, vp.UpdatedAt, vp.ProjectID, 0, req.Content)
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VERSION_CONFLICT",
+				"message": "版本冲突：服务器已有更新版本",
+				"details": details,
+			}})
+			return
+		}
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+				"code":    "E_VIEWPOINT_NAME_CONFLICT",
+				"message": "同一包下已存在同名视角",
+			}})
+			return
+		}
+		serverError(c, "更新视角失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetViewpoint, vp.ID,
+		`{"name":"`+escapeJSON(vp.Name)+`","project":"`+vp.ProjectID+`"}`)
+	c.JSON(http.StatusOK, gin.H{"data": vp})
+}
+
+// DeleteViewpoint DELETE /viewpoints/:id
+func (h *Handler) DeleteViewpoint(c *gin.Context) {
+	id := viewpointID(c)
+	vp, _, _, err := loadAccessibleViewpoint(c, h.repo, id, PermWrite)
+	if err != nil || vp == nil {
+		return
+	}
+	if err := h.repo.DeleteViewpoint(c, id); err != nil {
+		serverError(c, "删除视角失败", err)
+		return
+	}
+	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetViewpoint, id,
+		`{"name":"`+escapeJSON(vp.Name)+`","project":"`+vp.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": nil})
 }
 

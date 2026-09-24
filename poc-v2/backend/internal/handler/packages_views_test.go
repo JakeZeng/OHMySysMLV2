@@ -324,3 +324,156 @@ func TestViewsAuth(t *testing.T) {
 		t.Errorf("anonymous list: status = %d, want 401", w.Code)
 	}
 }
+
+// ─── Viewpoints（M15）───────────────────────────────────
+
+func TestViewpointsCRUD(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	resp := registerUser(t, r, "vp-user", "vp@example.com", "pass123456")
+	token := authToken(t, resp)
+	authHeader := "Bearer " + token
+
+	// Project
+	body := jsonBody(gin.H{"name": "ViewpointProject"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	projectID := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+
+	var vpID string
+	var vpV1 float64
+
+	t.Run("Create", func(t *testing.T) {
+		body := jsonBody(gin.H{
+			"name":        "StakeholderView",
+			"description": "利益相关方关注点",
+			"content":     "viewpoint StakeholderView { concern: 整车结构; }",
+			"stakeholder": "SafetyEngineer",
+			"concern":     "整车结构 + 失效模式",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/viewpoints", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+		vpID, _ = data["id"].(string)
+		vpV1 = data["version"].(float64)
+		if vpID == "" {
+			t.Fatal("empty viewpoint id")
+		}
+		if vpV1 != 1 {
+			t.Errorf("version = %v, want 1", vpV1)
+		}
+		if data["stakeholder"] != "SafetyEngineer" {
+			t.Errorf("stakeholder = %v, want SafetyEngineer", data["stakeholder"])
+		}
+		if data["concern"] != "整车结构 + 失效模式" {
+			t.Errorf("concern = %v", data["concern"])
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/viewpoints/"+vpID, nil)
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+		if data["name"] != "StakeholderView" {
+			t.Errorf("name = %v", data["name"])
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID+"/viewpoints", nil)
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		list := parseJSON(t, w.Body.Bytes())["data"].([]any)
+		if len(list) != 1 {
+			t.Errorf("len = %d, want 1", len(list))
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		body := jsonBody(gin.H{
+			"name":        "SafetyView",
+			"description": "更新后的视角",
+			"content":     "viewpoint SafetyView { concern: 安全; }",
+			"stakeholder": "SafetyOfficer",
+			"concern":     "功能安全",
+			"version":     int(vpV1),
+		})
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/viewpoints/"+vpID, body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+		if data["version"].(float64) != 2 {
+			t.Errorf("version = %v, want 2", data["version"])
+		}
+		if data["stakeholder"] != "SafetyOfficer" {
+			t.Errorf("stakeholder = %v, want SafetyOfficer", data["stakeholder"])
+		}
+	})
+
+	t.Run("Update_VersionConflict", func(t *testing.T) {
+		body := jsonBody(gin.H{"name": "stale", "content": "x", "version": 1})
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/viewpoints/"+vpID, body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusConflict {
+			t.Errorf("status = %d, want 409", w.Code)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/viewpoints/"+vpID, nil)
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+func TestViewpointsAuth(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	resp := registerUser(t, r, "vp-owner", "vp-owner@example.com", "pass123456")
+	token := authToken(t, resp)
+	authHeader := "Bearer " + token
+
+	body := jsonBody(gin.H{"name": "ViewpointAuthProj"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	projectID := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+
+	// Anonymous denied
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID+"/viewpoints", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous list: status = %d, want 401", w.Code)
+	}
+}

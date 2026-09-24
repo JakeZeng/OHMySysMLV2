@@ -141,6 +141,9 @@ func main() {
 			// M12 增量：Views（project-scoped）
 			projects.GET("/:id/views", h.ListViewsByProject)
 			projects.POST("/:id/views", h.CreateViewInProject)
+			// M15：Viewpoints（project-scoped）
+			projects.GET("/:id/viewpoints", h.ListViewpointsByProject)
+			projects.POST("/:id/viewpoints", h.CreateViewpointInProject)
 
 			// M4 W3：项目级分享（owner 才能管）
 			projects.POST("/:id/shares", shareH.AddShare)
@@ -184,6 +187,15 @@ func main() {
 			views.GET("/:id", h.GetView)
 			views.PUT("/:id", h.UpdateView)
 			views.DELETE("/:id", h.DeleteView)
+		}
+
+		// M15：Viewpoints — SysML v2 §7.26 一等实体（嵌套 + 顶层）
+		viewpoints := v1.Group("/viewpoints")
+		viewpoints.Use(middleware.AuthRequired())
+		{
+			viewpoints.GET("/:id", h.GetViewpoint)
+			viewpoints.PUT("/:id", h.UpdateViewpoint)
+			viewpoints.DELETE("/:id", h.DeleteViewpoint)
 		}
 
 		// AI endpoints（受保护）

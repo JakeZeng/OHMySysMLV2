@@ -34,8 +34,9 @@ const (
 const (
 	AuditTargetProject       = "project"
 	AuditTargetModel         = "model"
-	AuditTargetPackage       = "package" // M12 增量：Package 一等实体
-	AuditTargetView          = "view"    // M12 增量：View 一等实体
+	AuditTargetPackage       = "package"    // M12 增量：Package 一等实体
+	AuditTargetView          = "view"       // M12 增量：View 一等实体
+	AuditTargetViewpoint     = "viewpoint"  // M15 增量：SysML v2 Viewpoint 一等实体
 	AuditTargetShare         = "share"
 	AuditTargetLink          = "link"
 	AuditTargetTeam          = "team"

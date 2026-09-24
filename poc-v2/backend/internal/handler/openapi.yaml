@@ -721,6 +721,83 @@ paths:
       responses:
         '200': { description: Deleted. }
 
+  # ─── M15 ─── SysML v2 §7.26 Viewpoints（利益相关方关注点）
+  /api/v1/projects/{id}/viewpoints:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Viewpoints]
+      summary: List viewpoints in a project.
+      responses:
+        '200':
+          description: Viewpoint list (summaries).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ViewpointSummary' }
+    post:
+      tags: [Viewpoints]
+      summary: Create a viewpoint in a project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateViewpointRequest' }
+      responses:
+        '200':
+          description: Viewpoint created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Viewpoint' }
+
+  /api/v1/viewpoints/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Viewpoints]
+      summary: Get a viewpoint.
+      responses:
+        '200':
+          description: Viewpoint.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Viewpoint' }
+    put:
+      tags: [Viewpoints]
+      summary: Update a viewpoint (optimistic lock).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateViewpointRequest' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Viewpoint' }
+    delete:
+      tags: [Viewpoints]
+      summary: Delete a viewpoint.
+      responses:
+        '200': { description: Deleted. }
+
   /api/v1/models/{id}/comments:
     parameters:
       - $ref: '#/components/parameters/ModelID'
@@ -1992,6 +2069,67 @@ components:
         content: { type: string }
         colorTag: { type: string }
         renderingCategory: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        version: { type: integer, minimum: 1 }
+
+    # ─── M15 ─── Viewpoints
+    Viewpoint:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        packageId: { type: string, format: uuid, description: 顶级视角省略. }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string, description: SysML v2 viewpoint 文本. }
+        stakeholder: { type: string, description: 利益相关方（UI hint） }
+        concern: { type: string, description: 关注点（UI hint） }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ViewpointSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        packageId: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        stakeholder: { type: string }
+        concern: { type: string }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+
+    CreateViewpointRequest:
+      type: object
+      required: [name, content]
+      properties:
+        packageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        stakeholder: { type: string }
+        concern: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    UpdateViewpointRequest:
+      type: object
+      required: [name, content, version]
+      properties:
+        packageId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        content: { type: string }
+        stakeholder: { type: string }
+        concern: { type: string }
         metadata:
           type: object
           additionalProperties: { type: string }
