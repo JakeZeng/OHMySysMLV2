@@ -171,8 +171,8 @@ export interface GenerateStreamCallbacks {
 /** 非流式 AI 模型生成。 */
 export async function generateModel(req: GenerateRequest): Promise<GenerateResult> {
   const api = getApi();
-  const { data } = await api.post<{ data: GenerateResult }>('/ai/generate', req);
-  return data.data;
+  const { data } = await api.post<GenerateResult>('/ai/generate', req);
+  return data;
 }
 
 /** 流式 AI 模型生成（SSE）。 */

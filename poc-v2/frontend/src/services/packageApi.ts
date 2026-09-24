@@ -18,17 +18,17 @@ export const packageApi = {
   /** 列出某项目下的所有包（summary，不含 content） */
   async listByProject(projectId: string): Promise<PackageSummary[]> {
     const api = getApi();
-    const { data } = await api.get<{ data: PackageSummary[] }>(
+    const { data } = await api.get<PackageSummary[]>(
       `/projects/${projectId}/packages`,
     );
-    return data?.data ?? [];
+    return data ?? [];
   },
 
   /** 获取包详情（含 content） */
   async get(packageId: string): Promise<Package> {
     const api = getApi();
-    const { data } = await api.get<{ data: Package }>(`/packages/${packageId}`);
-    return data.data;
+    const { data } = await api.get<Package>(`/packages/${packageId}`);
+    return data;
   },
 
   /** 在某项目下创建包（顶级或嵌套） */
@@ -37,11 +37,11 @@ export const packageApi = {
     req: CreatePackageRequest,
   ): Promise<Package> {
     const api = getApi();
-    const { data } = await api.post<{ data: Package }>(
+    const { data } = await api.post<Package>(
       `/projects/${projectId}/packages`,
       req,
     );
-    return data.data;
+    return data;
   },
 
   /** 更新包（带版本号乐观锁） */
@@ -50,11 +50,11 @@ export const packageApi = {
     req: UpdatePackageRequest,
   ): Promise<Package> {
     const api = getApi();
-    const { data } = await api.put<{ data: Package }>(
+    const { data } = await api.put<Package>(
       `/packages/${packageId}`,
       req,
     );
-    return data.data;
+    return data;
   },
 
   /** 删除包 */
@@ -71,9 +71,9 @@ export const packageApi = {
    */
   async search(q: string, limit = 20): Promise<Array<PackageSummary & { projectId: string }>> {
     const api = getApi();
-    const { data } = await api.get<{
-      data: Array<PackageSummary & { projectId: string }>;
-    }>(`/packages/search?q=${encodeURIComponent(q)}&limit=${limit}`);
-    return data?.data ?? [];
+    const { data } = await api.get<Array<PackageSummary & { projectId: string }>>(
+      `/packages/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    );
+    return data ?? [];
   },
 };

@@ -44,19 +44,20 @@ beforeEach(() => {
 
 describe('viewApi', () => {
   it('listByProject unwraps the { data } envelope', async () => {
-    mockApi.get.mockResolvedValue({ data: { data: [summary] } });
+    // axios response interceptor 已经解包 { data }，所以 axios.get 返回的就是数组
+    mockApi.get.mockResolvedValue({ data: [summary] });
     const list = await viewApi.listByProject('proj1');
     expect(mockApi.get).toHaveBeenCalledWith('/projects/proj1/views');
     expect(list).toEqual([summary]);
   });
 
   it('listByProject tolerates a missing envelope', async () => {
-    mockApi.get.mockResolvedValue({ data: {} });
+    mockApi.get.mockResolvedValue({ data: undefined });
     await expect(viewApi.listByProject('proj1')).resolves.toEqual([]);
   });
 
   it('get returns exposedElements alongside content', async () => {
-    mockApi.get.mockResolvedValue({ data: { data: full } });
+    mockApi.get.mockResolvedValue({ data: full });
     const view = await viewApi.get('v1');
     expect(mockApi.get).toHaveBeenCalledWith('/views/v1');
     expect(view.exposedElements).toEqual([
@@ -65,7 +66,7 @@ describe('viewApi', () => {
   });
 
   it('create posts to the project-scoped collection', async () => {
-    mockApi.post.mockResolvedValue({ data: { data: full } });
+    mockApi.post.mockResolvedValue({ data: full });
     const req = { name: 'Vehicle 结构视图', packageId: 'p1', content: '' };
     await viewApi.create('proj1', req);
     expect(mockApi.post).toHaveBeenCalledWith('/projects/proj1/views', req);
@@ -80,7 +81,7 @@ describe('viewApi', () => {
         { qualifiedName: 'Pkg1::Wheel', kind: 'PartDef' },
       ],
     };
-    mockApi.put.mockResolvedValue({ data: { data: recomputed } });
+    mockApi.put.mockResolvedValue({ data: recomputed });
     const updated = await viewApi.update('v1', {
       name: 'Vehicle 结构视图',
       packageId: 'p1',

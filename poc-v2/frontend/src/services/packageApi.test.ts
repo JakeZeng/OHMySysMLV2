@@ -41,19 +41,20 @@ beforeEach(() => {
 
 describe('packageApi', () => {
   it('listByProject unwraps the { data } envelope', async () => {
-    mockApi.get.mockResolvedValue({ data: { data: [summary] } });
+    // axios response interceptor 已经解包 { data }，所以 axios.get 返回的就是数组
+    mockApi.get.mockResolvedValue({ data: [summary] });
     const list = await packageApi.listByProject('proj1');
     expect(mockApi.get).toHaveBeenCalledWith('/projects/proj1/packages');
     expect(list).toEqual([summary]);
   });
 
   it('listByProject tolerates a missing envelope', async () => {
-    mockApi.get.mockResolvedValue({ data: {} });
+    mockApi.get.mockResolvedValue({ data: undefined });
     await expect(packageApi.listByProject('proj1')).resolves.toEqual([]);
   });
 
   it('get returns the package detail with content', async () => {
-    mockApi.get.mockResolvedValue({ data: { data: full } });
+    mockApi.get.mockResolvedValue({ data: full });
     const pkg = await packageApi.get('p1');
     expect(mockApi.get).toHaveBeenCalledWith('/packages/p1');
     expect(pkg.content).toContain('part def Vehicle');
@@ -61,7 +62,7 @@ describe('packageApi', () => {
   });
 
   it('create posts the request body to the project-scoped collection', async () => {
-    mockApi.post.mockResolvedValue({ data: { data: full } });
+    mockApi.post.mockResolvedValue({ data: full });
     const req = {
       name: '结构包',
       parentPackageId: '',
@@ -73,7 +74,7 @@ describe('packageApi', () => {
   });
 
   it('update puts to the top-level resource (carries version for optimistic lock)', async () => {
-    mockApi.put.mockResolvedValue({ data: { data: { ...full, version: 2 } } });
+    mockApi.put.mockResolvedValue({ data: { ...full, version: 2 } });
     const updated = await packageApi.update('p1', {
       name: '结构包',
       parentPackageId: '',

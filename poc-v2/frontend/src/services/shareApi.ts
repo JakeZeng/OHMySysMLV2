@@ -133,8 +133,8 @@ export const shareApi = {
       timeout: 15_000,
       headers: { 'Content-Type': 'application/json' },
     });
-    const { data } = await anon.get<{ data: SharedProjectView }>(`/shared/${token}`);
-    return data.data;
+    const { data } = await anon.get<SharedProjectView>(`/shared/${token}`);
+    return data;
   },
 };
 

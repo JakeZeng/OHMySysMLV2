@@ -67,10 +67,10 @@ export const auditApi = {
   }> {
     const api = getApi();
     const { data } = await api.delete<{
-      data: { olderThanDays: number; wouldDelete?: number; deleted?: number; dryRun: boolean };
+      olderThanDays: number; wouldDelete?: number; deleted?: number; dryRun: boolean;
     }>('/audit-logs/archive', {
       params: { olderThanDays, dryRun: dryRun ? 'true' : 'false' },
     });
-    return data.data;
+    return data;
   },
 };

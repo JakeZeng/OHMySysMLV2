@@ -18,17 +18,17 @@ export const viewApi = {
   /** 列出某项目下的所有视图（summary，不含 content） */
   async listByProject(projectId: string): Promise<ViewSummary[]> {
     const api = getApi();
-    const { data } = await api.get<{ data: ViewSummary[] }>(
+    const { data } = await api.get<ViewSummary[]>(
       `/projects/${projectId}/views`,
     );
-    return data?.data ?? [];
+    return data ?? [];
   },
 
   /** 获取视图详情（含 content + exposedElements） */
   async get(viewId: string): Promise<View> {
     const api = getApi();
-    const { data } = await api.get<{ data: View }>(`/views/${viewId}`);
-    return data.data;
+    const { data } = await api.get<View>(`/views/${viewId}`);
+    return data;
   },
 
   /** 在某项目下创建视图 */
@@ -37,11 +37,11 @@ export const viewApi = {
     req: CreateViewRequest,
   ): Promise<View> {
     const api = getApi();
-    const { data } = await api.post<{ data: View }>(
+    const { data } = await api.post<View>(
       `/projects/${projectId}/views`,
       req,
     );
-    return data.data;
+    return data;
   },
 
   /** 更新视图（带版本号乐观锁；后端重算 exposedElements） */
@@ -50,11 +50,11 @@ export const viewApi = {
     req: UpdateViewRequest,
   ): Promise<View> {
     const api = getApi();
-    const { data } = await api.put<{ data: View }>(
+    const { data } = await api.put<View>(
       `/views/${viewId}`,
       req,
     );
-    return data.data;
+    return data;
   },
 
   /** 删除视图 */
@@ -70,9 +70,9 @@ export const viewApi = {
    */
   async search(q: string, limit = 20): Promise<Array<ViewSummary & { projectId: string }>> {
     const api = getApi();
-    const { data } = await api.get<{
-      data: Array<ViewSummary & { projectId: string }>;
-    }>(`/views/search?q=${encodeURIComponent(q)}&limit=${limit}`);
-    return data?.data ?? [];
+    const { data } = await api.get<Array<ViewSummary & { projectId: string }>>(
+      `/views/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    );
+    return data ?? [];
   },
 };
