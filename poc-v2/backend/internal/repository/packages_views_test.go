@@ -337,12 +337,12 @@ func TestViewCRUD(t *testing.T) {
 			t.Fatalf("GetView: %v", err)
 		}
 		v.Content = `view V { expose Pkg1::Vehicle; expose Pkg1::Wheel; }`
-		// 模拟 parser：只把含 Vehicle 和 Wheel 的暴露元素写入
-		parse := func(content string) []model.ExposedElement {
+		// M15：parseFn 返回完整五元组（resolved/unresolved/renderKind/filter/inner）
+		parse := func(content string) ([]model.ExposedElement, []model.ExposedElement, model.RenderKind, []string, []model.InnerElement) {
 			return []model.ExposedElement{
 				{QualifiedName: "Pkg1::Vehicle", Kind: "PartDef"},
 				{QualifiedName: "Pkg1::Wheel", Kind: "PartDef"},
-			}
+			}, nil, model.RenderKindInterconnection, nil, nil
 		}
 		if err := repo.UpdateView(ctx, v, parse); err != nil {
 			t.Fatalf("UpdateView: %v", err)

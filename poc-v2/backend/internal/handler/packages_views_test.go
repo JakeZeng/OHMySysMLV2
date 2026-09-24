@@ -204,6 +204,22 @@ func TestViewsCRUD(t *testing.T) {
 	var viewID string
 	var viewV1 float64
 
+	// M15：测试 view expose resolve 校验 — 需要先创建包 Pkg1 让路径合法
+	t.Run("Setup_Pkg1", func(t *testing.T) {
+		body := jsonBody(gin.H{
+			"name":    "Pkg1",
+			"content": "package Pkg1 { part def Vehicle; }",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/packages", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", authHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("setup Pkg1 failed: status = %d, body = %s", w.Code, w.Body.String())
+		}
+	})
+
 	t.Run("Create", func(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":              "StructuralView",
@@ -253,7 +269,7 @@ func TestViewsCRUD(t *testing.T) {
 	t.Run("Update_RecomputesExposed", func(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":    "V2",
-			"content": "view V2 { expose A::B; expose C::D; }",
+			"content": "view V2 { expose Pkg1::A; expose Pkg1::B; }",
 			"version": int(viewV1),
 		})
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/views/"+viewID, body)

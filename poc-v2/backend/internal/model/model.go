@@ -94,46 +94,86 @@ type PackageSummary struct {
 }
 
 // ExposedElement 是 View 解析 content 后缓存的引用元素。
+//
+// M15：增加 Reason 字段，记录 unresolved 时的原因（路径不存在等）。
 type ExposedElement struct {
 	QualifiedName string `json:"qualifiedName"` // e.g. "Pkg1.SubPkg.PartDef1"
 	Kind          string `json:"kind"`          // "PartDef" | "PortDef" | ...
+	Reason        string `json:"reason,omitempty"` // 仅 Unresolved 时使用
 }
 
-// View 表示一个 SysML v2 ViewDefinition（M12 引入为一等公民）。
+// View 表示一个 SysML v2 视图（M12 引入为一等公民，M15 升级）。
 //
-// 语义对齐 SysML v2 spec §7.26：View 是 SysML v2 一等元素，
-// 可在 Package / Project 下独立存在；可在 content 内跨包引用元素
-// （ExposedElements 是解析缓存）。
+// M15 升级要点：
+//   - kind 字段区分 Definition（template） vs Usage（实例）
+//   - 解析 expose / render as / filter @ / satisfies X 子句
+//   - 跨包路径 resolve：ExposedElements = resolved；ExposedElementsUnresolved = unresolved
+//   - InnerElements = view body 内 owned 元素（view-private）
+//   - ViewpointID 关联外部 Viewpoint 实体（M15 新增）
 //
-// 注意：MVP 简化为单一 View 实体 ≈ ViewDefinition。ViewpointDefinition /
-// ViewUsage vs ViewDefinition 区分留待 M12.x。
+// 关于 Definition vs Usage：
+//   - kind='definition' 时，content 描述 filter/render 规则
+//   - kind='usage' 时，content 含具体 expose 路径，关联 ViewDefinitionID（可选）
+//   - MVP：单表 + kind 字段；Definition 与 Usage 在 API 层完全独立
 type View struct {
-	ID                string            `json:"id"`
-	ProjectID         string            `json:"projectId"`
-	PackageID         string            `json:"packageId,omitempty"`         // 顶层 = ""
-	Name              string            `json:"name"`
-	Description       string            `json:"description,omitempty"`
-	Content           string            `json:"content"`                    // SysML v2 view definition 文本
-	ColorTag          string            `json:"colorTag,omitempty"`         // UI metadata；非 SysML 语义
-	RenderingCategory string            `json:"renderingCategory,omitempty"` // UI hint；不强制画布过滤
-	ExposedElements   []ExposedElement  `json:"exposedElements,omitempty"`   // 解析 content 缓存
+	ID          string `json:"id"`
+	ProjectID   string `json:"projectId"`
+	PackageID   string `json:"packageId,omitempty"` // 顶层 = ""
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Content     string `json:"content"` // SysML v2 视图文本
+
+	// M15：kind 区分 Definition vs Usage
+	Kind ViewKind `json:"kind"`
+
+	// M15：关联的 ViewDefinition（仅 kind='usage' 时设置）
+	ViewDefinitionID string `json:"viewDefinitionId,omitempty"`
+
+	// M15：满足的 Viewpoint（外键；解析自 `view ... satisfies X;`）
+	ViewpointID            string `json:"viewpointId,omitempty"`
+	ViewpointQualifiedName string `json:"viewpointQualifiedName,omitempty"`
+
+	// M15：渲染方式（解析自 `render as <kind>;`）
+	RenderKind RenderKind `json:"renderKind"`
+
+	// M15：过滤规则列表（解析自 `filter @X;`）
+	FilterQualifiedNames []string `json:"filterQualifiedNames"`
+
+	// 已解析的 expose 元素（resolve 成功）
+	ExposedElements []ExposedElement `json:"exposedElements,omitempty"`
+
+	// 未解析的 expose（路径不存在于项目包树）
+	ExposedElementsUnresolved []ExposedElement `json:"exposedElementsUnresolved,omitempty"`
+
+	// M15：view body 内 owned 元素（view-private）
+	InnerElements []InnerElement `json:"innerElements,omitempty"`
+
+	// 兼容 M12 字段
+	ColorTag          string            `json:"colorTag,omitempty"`
+	RenderingCategory string            `json:"renderingCategory,omitempty"` // deprecated
 	Metadata          map[string]string `json:"metadata,omitempty"`
-	Version           int               `json:"version"`
-	CreatedAt         time.Time         `json:"createdAt"`
-	UpdatedAt         time.Time         `json:"updatedAt"`
+
+	Version   int       `json:"version"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// ViewSummary 列表返回的摘要（不含 Content / ExposedElements）。
+// ViewSummary 列表返回的摘要（不含 Content / ExposedElements / InnerElements）。
 type ViewSummary struct {
-	ID                string    `json:"id"`
-	ProjectID         string    `json:"projectId"`
-	PackageID         string    `json:"packageId,omitempty"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description,omitempty"`
-	ColorTag          string    `json:"colorTag,omitempty"`
-	RenderingCategory string    `json:"renderingCategory,omitempty"`
-	Version           int       `json:"version"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                string     `json:"id"`
+	ProjectID         string     `json:"projectId"`
+	PackageID         string     `json:"packageId,omitempty"`
+	Name              string     `json:"name"`
+	Description       string     `json:"description,omitempty"`
+	Kind              ViewKind   `json:"kind"`
+	RenderKind        RenderKind `json:"renderKind"`
+	ViewDefinitionID  string     `json:"viewDefinitionId,omitempty"`
+	ViewpointID       string     `json:"viewpointId,omitempty"`
+	ViewpointQName    string     `json:"viewpointQualifiedName,omitempty"`
+	ColorTag          string     `json:"colorTag,omitempty"`
+	RenderingCategory string     `json:"renderingCategory,omitempty"` // deprecated
+	Version           int        `json:"version"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 // MarshalExposedElements 把 exposedElements 列表序列化为 JSON 字符串。
@@ -160,4 +200,107 @@ func UnmarshalExposedElements(s string) ([]ExposedElement, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// MarshalInnerElements 把 innerElements 序列化为 JSON 字符串。
+func MarshalInnerElements(items []InnerElement) (string, error) {
+	if len(items) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// UnmarshalInnerElements 从 JSON 字符串反序列化 innerElements。
+func UnmarshalInnerElements(s string) ([]InnerElement, error) {
+	if s == "" || s == "[]" {
+		return nil, nil
+	}
+	out := make([]InnerElement, 0)
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MarshalStringSlice 把 []string 序列化为 JSON 字符串。
+func MarshalStringSlice(items []string) (string, error) {
+	if len(items) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// UnmarshalStringSlice 从 JSON 字符串反序列化 []string。
+func UnmarshalStringSlice(s string) ([]string, error) {
+	if s == "" || s == "[]" {
+		return nil, nil
+	}
+	out := make([]string, 0)
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ViewKind 表示视图是定义（template）还是实例（concrete usage）。
+type ViewKind string
+
+const (
+	ViewKindDefinition ViewKind = "definition"
+	ViewKindUsage      ViewKind = "usage"
+)
+
+// RenderKind 视图渲染方式（解析自 `render as <kind>;`）。
+type RenderKind string
+
+const (
+	RenderKindInterconnection RenderKind = "interconnection"
+	RenderKindTree            RenderKind = "tree"
+	RenderKindState           RenderKind = "state"
+	RenderKindAction          RenderKind = "action"
+	RenderKindRequirement     RenderKind = "requirement"
+	RenderKindSnapshot        RenderKind = "snapshot"
+)
+
+// ValidRenderKinds 用于校验 renderKind 是否在合法集合内。
+func ValidRenderKinds() map[RenderKind]bool {
+	return map[RenderKind]bool{
+		RenderKindInterconnection: true,
+		RenderKindTree:            true,
+		RenderKindState:           true,
+		RenderKindAction:          true,
+		RenderKindRequirement:     true,
+		RenderKindSnapshot:        true,
+	}
+}
+
+// NormalizeRenderKind 把未知 renderKind 归一为 interconnection（M15 默认）。
+func NormalizeRenderKind(s string) RenderKind {
+	if s == "" {
+		return RenderKindInterconnection
+	}
+	k := RenderKind(s)
+	if ValidRenderKinds()[k] {
+		return k
+	}
+	return RenderKindInterconnection
+}
+
+// InnerElement 表示 view body 内 owned 的元素（part def X / requirement def Y 等）。
+//
+// 与 ExposedElement 区别：InnerElement 是 owned by view body（view-private），
+// ExposedElement 是从包内 expose 的引用。
+type InnerElement struct {
+	Name string `json:"name"`   // 元素名（view 内唯一）
+	Kind string `json:"kind"`   // "PartDef" / "RequirementDef" / ...
+	Line int    `json:"line"`   // 源位置（编辑器跳转用）
+	Col  int    `json:"column"` // 源列
 }

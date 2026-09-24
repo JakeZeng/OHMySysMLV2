@@ -40,13 +40,14 @@ func (r *SQLiteRepository) Counts(ctx context.Context) map[string]int64 {
 		"models":     0,
 		"packages":   0,
 		"views":      0,
+		"viewpoints": 0,
 		"teams":      0,
 		"shares":     0,
 		"share_links": 0,
 		"audit_logs": 0,
 	}
 	for _, table := range []string{
-		"users", "projects", "models", "packages", "views", "teams",
+		"users", "projects", "models", "packages", "views", "viewpoints", "teams",
 		"project_shares", "share_links", "audit_logs",
 	} {
 		var n int64
@@ -193,6 +194,8 @@ CREATE INDEX IF NOT EXISTS idx_packages_updated ON packages(updated_at DESC);
 
 -- M12 增量：views 表（一等 SysML v2 ViewDefinition 实体）
 -- 注意：package_id 允许 NULL（顶层视图）；应用层把空字符串映射为 NULL。
+-- M15 增量：kind / viewpoint_id / render_kind / filter_qualified_names / inner_elements /
+--          exposed_elements_unresolved；见 migration 006_view_extensions.up.sql
 CREATE TABLE IF NOT EXISTS views (
     id                  TEXT PRIMARY KEY,
     project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -200,9 +203,17 @@ CREATE TABLE IF NOT EXISTS views (
     name                TEXT NOT NULL,
     description         TEXT NOT NULL DEFAULT '',
     content             TEXT NOT NULL DEFAULT '',
+    kind                TEXT NOT NULL DEFAULT 'definition',
+    view_definition_id  TEXT REFERENCES views(id) ON DELETE SET NULL,
+    viewpoint_id        TEXT,
+    viewpoint_qualified_name TEXT NOT NULL DEFAULT '',
+    render_kind         TEXT NOT NULL DEFAULT 'interconnection',
+    filter_qualified_names TEXT NOT NULL DEFAULT '[]',
     color_tag           TEXT NOT NULL DEFAULT '',
     rendering_category  TEXT NOT NULL DEFAULT '',
     exposed_elements    TEXT NOT NULL DEFAULT '[]',
+    exposed_elements_unresolved TEXT NOT NULL DEFAULT '[]',
+    inner_elements      TEXT NOT NULL DEFAULT '[]',
     metadata_json       TEXT NOT NULL DEFAULT '{}',
     version             INTEGER NOT NULL DEFAULT 1,
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -213,6 +224,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_views_scope_name
 CREATE INDEX IF NOT EXISTS idx_views_project ON views(project_id);
 CREATE INDEX IF NOT EXISTS idx_views_package ON views(package_id);
 CREATE INDEX IF NOT EXISTS idx_views_updated ON views(updated_at DESC);
+
+-- M15 增量：viewpoints 表（一等 SysML v2 Viewpoint 实体）
+CREATE TABLE IF NOT EXISTS viewpoints (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    package_id      TEXT REFERENCES packages(id) ON DELETE SET NULL,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    content         TEXT NOT NULL DEFAULT '',
+    stakeholder     TEXT NOT NULL DEFAULT '',
+    concern         TEXT NOT NULL DEFAULT '',
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    version         INTEGER NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_viewpoints_scope_name
+    ON viewpoints(project_id, COALESCE(package_id, ''), name);
+CREATE INDEX IF NOT EXISTS idx_viewpoints_project ON viewpoints(project_id);
+CREATE INDEX IF NOT EXISTS idx_viewpoints_package ON viewpoints(package_id);
+CREATE INDEX IF NOT EXISTS idx_viewpoints_updated ON viewpoints(updated_at DESC);
 `
 	if _, err := r.db.Exec(ddl); err != nil {
 		return fmt.Errorf("初始化 schema 失败: %w", err)
@@ -369,6 +401,30 @@ CREATE INDEX IF NOT EXISTS idx_views_updated ON views(updated_at DESC);
 		`CREATE INDEX IF NOT EXISTS idx_comments_scope ON comments(scope, created_at DESC)`,
 	); err != nil {
 		return fmt.Errorf("创建 comments 索引失败: %w", err)
+	}
+
+	// M15 增量：views 表加 kind / view_definition_id / viewpoint_id / viewpoint_qualified_name /
+	//           render_kind / filter_qualified_names / inner_elements / exposed_elements_unresolved
+	// SQLite ALTER TABLE ADD COLUMN 不可逆；列已存在时忽略错误。
+	for _, stmt := range []string{
+		`ALTER TABLE views ADD COLUMN kind TEXT NOT NULL DEFAULT 'definition'`,
+		`ALTER TABLE views ADD COLUMN view_definition_id TEXT REFERENCES views(id) ON DELETE SET NULL`,
+		`ALTER TABLE views ADD COLUMN viewpoint_id TEXT`,
+		`ALTER TABLE views ADD COLUMN viewpoint_qualified_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE views ADD COLUMN render_kind TEXT NOT NULL DEFAULT 'interconnection'`,
+		`ALTER TABLE views ADD COLUMN filter_qualified_names TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE views ADD COLUMN inner_elements TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE views ADD COLUMN exposed_elements_unresolved TEXT NOT NULL DEFAULT '[]'`,
+	} {
+		if _, err := r.db.Exec(stmt); err != nil {
+			// 兼容历史 DB：列已存在时忽略
+		}
+	}
+	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_views_viewpoint ON views(viewpoint_id)`); err != nil {
+		// 忽略（索引已存在时）
+	}
+	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_views_render_kind ON views(render_kind)`); err != nil {
+		// 忽略
 	}
 
 	return nil
@@ -896,33 +952,79 @@ func (r *SQLiteRepository) DeletePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// ─── Views (M12 一等 SysML v2 ViewDefinition) ──────────────────────────
+// ─── Views (M12 一等 SysML v2 ViewDefinition，M15 升级含 kind / renderKind / viewpoint 等) ───
 
-// scanView 把 row 扫描到 View（含 content + exposedElements）。
+// viewSelectColumns 共享的 SELECT 列（避免 CreateView / scanView / GetView 重复硬编码）。
+const viewSelectColumns = `id, project_id, package_id, name, description, content,
+		kind, view_definition_id, viewpoint_id, viewpoint_qualified_name,
+		render_kind, filter_qualified_names,
+		color_tag, rendering_category,
+		exposed_elements, exposed_elements_unresolved, inner_elements,
+		metadata_json, version, created_at, updated_at`
+
+// viewSummarySelectColumns ViewSummary 用的精简列。
+const viewSummarySelectColumns = `id, project_id, package_id, name, description,
+		kind, view_definition_id, viewpoint_id, viewpoint_qualified_name,
+		render_kind, color_tag, rendering_category,
+		version, updated_at`
+
+// scanView 把 row 扫描到 View（含 M15 全字段）。
 func scanView(row interface {
 	Scan(dest ...any) error
 }) (*model.View, error) {
 	var (
-		v             model.View
-		pkgID         sql.NullString
-		desc          string
-		colorTag      string
-		renderCat     string
-		exposedJSON   string
-		metadataJSON  string
+		v                       model.View
+		pkgID                   sql.NullString
+		viewDefID               sql.NullString
+		viewpointID             sql.NullString
+		desc                    string
+		colorTag                string
+		renderCat               string
+		exposedJSON             string
+		exposedUnresolvedJSON   string
+		innerJSON               string
+		filterJSON              string
+		metadataJSON            string
+		kind                    string
+		renderKind              string
+		viewpointQName          string
 	)
-	if err := row.Scan(&v.ID, &v.ProjectID, &pkgID, &v.Name, &desc, &v.Content, &colorTag, &renderCat, &exposedJSON, &metadataJSON, &v.Version, &v.CreatedAt, &v.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&v.ID, &v.ProjectID, &pkgID, &v.Name, &desc, &v.Content,
+		&kind, &viewDefID, &viewpointID, &viewpointQName,
+		&renderKind, &filterJSON,
+		&colorTag, &renderCat,
+		&exposedJSON, &exposedUnresolvedJSON, &innerJSON,
+		&metadataJSON, &v.Version, &v.CreatedAt, &v.UpdatedAt,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	v.PackageID = pkgID.String
+	v.ViewDefinitionID = viewDefID.String
+	v.ViewpointID = viewpointID.String
+	v.ViewpointQualifiedName = viewpointQName
 	v.Description = desc
 	v.ColorTag = colorTag
 	v.RenderingCategory = renderCat
+	v.Kind = model.ViewKind(kind)
+	if v.Kind == "" {
+		v.Kind = model.ViewKindDefinition
+	}
+	v.RenderKind = model.NormalizeRenderKind(renderKind)
 	if exposed, err := model.UnmarshalExposedElements(exposedJSON); err == nil {
 		v.ExposedElements = exposed
+	}
+	if exposedUn, err := model.UnmarshalExposedElements(exposedUnresolvedJSON); err == nil {
+		v.ExposedElementsUnresolved = exposedUn
+	}
+	if inner, err := model.UnmarshalInnerElements(innerJSON); err == nil {
+		v.InnerElements = inner
+	}
+	if filter, err := model.UnmarshalStringSlice(filterJSON); err == nil {
+		v.FilterQualifiedNames = filter
 	}
 	if md, err := unmarshalMetadata(metadataJSON); err == nil {
 		v.Metadata = md
@@ -930,27 +1032,45 @@ func scanView(row interface {
 	return &v, nil
 }
 
-// scanViewSummary 把 row 扫描到 ViewSummary。
+// scanViewSummary 把 row 扫描到 ViewSummary（含 M15 kind/renderKind/viewpointId）。
 func scanViewSummary(row interface {
 	Scan(dest ...any) error
 }) (*model.ViewSummary, error) {
 	var (
-		vs        model.ViewSummary
-		pkgID     sql.NullString
-		desc      string
-		colorTag  string
-		renderCat string
+		vs              model.ViewSummary
+		pkgID           sql.NullString
+		viewDefID       sql.NullString
+		viewpointID     sql.NullString
+		desc            string
+		colorTag        string
+		renderCat       string
+		kind            string
+		renderKind      string
+		viewpointQName  string
 	)
-	if err := row.Scan(&vs.ID, &vs.ProjectID, &pkgID, &vs.Name, &desc, &colorTag, &renderCat, &vs.Version, &vs.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&vs.ID, &vs.ProjectID, &pkgID, &vs.Name, &desc,
+		&kind, &viewDefID, &viewpointID, &viewpointQName,
+		&renderKind, &colorTag, &renderCat,
+		&vs.Version, &vs.UpdatedAt,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	vs.PackageID = pkgID.String
+	vs.ViewDefinitionID = viewDefID.String
+	vs.ViewpointID = viewpointID.String
+	vs.ViewpointQName = viewpointQName
 	vs.Description = desc
 	vs.ColorTag = colorTag
 	vs.RenderingCategory = renderCat
+	vs.Kind = model.ViewKind(kind)
+	if vs.Kind == "" {
+		vs.Kind = model.ViewKindDefinition
+	}
+	vs.RenderKind = model.NormalizeRenderKind(renderKind)
 	return &vs, nil
 }
 
@@ -963,28 +1083,63 @@ func (r *SQLiteRepository) CreateView(ctx context.Context, v *model.View) error 
 	if err != nil {
 		return fmt.Errorf("序列化 exposedElements 失败: %w", err)
 	}
-	// 顶层视图规范化：package_id 空字符串存为 NULL，
-	// 避免空字符串触发 FK (views.package_id -> packages.id) 失败。
-	var pkgID any
+	exposedUnresolvedJSON, err := model.MarshalExposedElements(v.ExposedElementsUnresolved)
+	if err != nil {
+		return fmt.Errorf("序列化 exposedElementsUnresolved 失败: %w", err)
+	}
+	innerJSON, err := model.MarshalInnerElements(v.InnerElements)
+	if err != nil {
+		return fmt.Errorf("序列化 innerElements 失败: %w", err)
+	}
+	filterJSON, err := model.MarshalStringSlice(v.FilterQualifiedNames)
+	if err != nil {
+		return fmt.Errorf("序列化 filterQualifiedNames 失败: %w", err)
+	}
+	// 顶层视图规范化：package_id 空字符串存为 NULL
+	var pkgID, viewDefID, viewpointID any
 	if v.PackageID != "" {
 		pkgID = v.PackageID
 	}
-	const q = `INSERT INTO views (id, project_id, package_id, name, description, content, color_tag, rendering_category, exposed_elements, metadata_json, version, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = r.db.ExecContext(ctx, q, v.ID, v.ProjectID, pkgID, v.Name, v.Description, v.Content, v.ColorTag, v.RenderingCategory, exposedJSON, mdJSON, v.Version, v.CreatedAt, v.UpdatedAt)
+	if v.ViewDefinitionID != "" {
+		viewDefID = v.ViewDefinitionID
+	}
+	if v.ViewpointID != "" {
+		viewpointID = v.ViewpointID
+	}
+	kind := string(v.Kind)
+	if kind == "" {
+		kind = string(model.ViewKindDefinition)
+	}
+	renderKind := string(v.RenderKind)
+	if renderKind == "" {
+		renderKind = string(model.RenderKindInterconnection)
+	}
+	const q = `INSERT INTO views (
+		id, project_id, package_id, name, description, content,
+		kind, view_definition_id, viewpoint_id, viewpoint_qualified_name,
+		render_kind, filter_qualified_names,
+		color_tag, rendering_category,
+		exposed_elements, exposed_elements_unresolved, inner_elements,
+		metadata_json, version, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = r.db.ExecContext(ctx, q,
+		v.ID, v.ProjectID, pkgID, v.Name, v.Description, v.Content,
+		kind, viewDefID, viewpointID, v.ViewpointQualifiedName,
+		renderKind, filterJSON,
+		v.ColorTag, v.RenderingCategory,
+		exposedJSON, exposedUnresolvedJSON, innerJSON,
+		mdJSON, v.Version, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 
 func (r *SQLiteRepository) GetView(ctx context.Context, id string) (*model.View, error) {
-	const q = `SELECT id, project_id, package_id, name, description, content, color_tag, rendering_category, exposed_elements, metadata_json, version, created_at, updated_at
-              FROM views WHERE id = ?`
+	q := `SELECT ` + viewSelectColumns + ` FROM views WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, q, id)
 	return scanView(row)
 }
 
 func (r *SQLiteRepository) ListViewsByProject(ctx context.Context, projectID string) ([]*model.ViewSummary, error) {
-	const q = `SELECT id, project_id, package_id, name, description, color_tag, rendering_category, version, updated_at
-              FROM views WHERE project_id = ? ORDER BY updated_at DESC`
+	q := `SELECT ` + viewSummarySelectColumns + ` FROM views WHERE project_id = ? ORDER BY updated_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, projectID)
 	if err != nil {
 		return nil, err
@@ -1001,29 +1156,92 @@ func (r *SQLiteRepository) ListViewsByProject(ctx context.Context, projectID str
 	return out, rows.Err()
 }
 
+// ListViewsByKind 列出工程下指定 kind 的视图（M15）。
+func (r *SQLiteRepository) ListViewsByKind(ctx context.Context, projectID string, kind model.ViewKind) ([]*model.ViewSummary, error) {
+	q := `SELECT ` + viewSummarySelectColumns + ` FROM views WHERE project_id = ? AND kind = ? ORDER BY updated_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, projectID, string(kind))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.ViewSummary, 0)
+	for rows.Next() {
+		vs, err := scanViewSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vs)
+	}
+	return out, rows.Err()
+}
+
 // UpdateView 乐观锁：版本不匹配返回 ErrVersionConflict。
-// 每次更新重算 exposedElements（解析 content）。
-func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseExposed func(content string) []model.ExposedElement) error {
+// 每次更新重算 exposedElements / exposedElementsUnresolved / innerElements（解析 content）。
+// parseFn：传入 content 返回完整解析结果（含 resolved/unresolved split）。
+func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseFn func(content string) (resolved, unresolved []model.ExposedElement, renderKind model.RenderKind, filterNames []string, inner []model.InnerElement)) error {
 	now := time.Now().UTC()
 	mdJSON, err := marshalMetadata(v.Metadata)
 	if err != nil {
 		return fmt.Errorf("序列化 metadata 失败: %w", err)
 	}
-	// 重算 exposedElements（如调用方传了 parser）
-	if parseExposed != nil {
-		v.ExposedElements = parseExposed(v.Content)
+	// 重算暴露 / 过滤 / 渲染 / 内嵌元素（如调用方传了 parser）
+	if parseFn != nil {
+		resolved, unresolved, renderKind, filterNames, inner := parseFn(v.Content)
+		v.ExposedElements = resolved
+		v.ExposedElementsUnresolved = unresolved
+		v.RenderKind = renderKind
+		v.FilterQualifiedNames = filterNames
+		v.InnerElements = inner
 	}
 	exposedJSON, err := model.MarshalExposedElements(v.ExposedElements)
 	if err != nil {
 		return fmt.Errorf("序列化 exposedElements 失败: %w", err)
 	}
-	var pkgID any
+	exposedUnresolvedJSON, err := model.MarshalExposedElements(v.ExposedElementsUnresolved)
+	if err != nil {
+		return fmt.Errorf("序列化 exposedElementsUnresolved 失败: %w", err)
+	}
+	innerJSON, err := model.MarshalInnerElements(v.InnerElements)
+	if err != nil {
+		return fmt.Errorf("序列化 innerElements 失败: %w", err)
+	}
+	filterJSON, err := model.MarshalStringSlice(v.FilterQualifiedNames)
+	if err != nil {
+		return fmt.Errorf("序列化 filterQualifiedNames 失败: %w", err)
+	}
+	var pkgID, viewDefID, viewpointID any
 	if v.PackageID != "" {
 		pkgID = v.PackageID
 	}
-	const q = `UPDATE views SET name = ?, package_id = ?, description = ?, content = ?, color_tag = ?, rendering_category = ?, exposed_elements = ?, metadata_json = ?, version = version + 1, updated_at = ?
+	if v.ViewDefinitionID != "" {
+		viewDefID = v.ViewDefinitionID
+	}
+	if v.ViewpointID != "" {
+		viewpointID = v.ViewpointID
+	}
+	kind := string(v.Kind)
+	if kind == "" {
+		kind = string(model.ViewKindDefinition)
+	}
+	renderKind := string(v.RenderKind)
+	if renderKind == "" {
+		renderKind = string(model.RenderKindInterconnection)
+	}
+	const q = `UPDATE views SET
+		name = ?, package_id = ?, description = ?, content = ?,
+		kind = ?, view_definition_id = ?, viewpoint_id = ?, viewpoint_qualified_name = ?,
+		render_kind = ?, filter_qualified_names = ?,
+		color_tag = ?, rendering_category = ?,
+		exposed_elements = ?, exposed_elements_unresolved = ?, inner_elements = ?,
+		metadata_json = ?, version = version + 1, updated_at = ?
               WHERE id = ? AND version = ?`
-	res, err := r.db.ExecContext(ctx, q, v.Name, pkgID, v.Description, v.Content, v.ColorTag, v.RenderingCategory, exposedJSON, mdJSON, now, v.ID, v.Version)
+	res, err := r.db.ExecContext(ctx, q,
+		v.Name, pkgID, v.Description, v.Content,
+		kind, viewDefID, viewpointID, v.ViewpointQualifiedName,
+		renderKind, filterJSON,
+		v.ColorTag, v.RenderingCategory,
+		exposedJSON, exposedUnresolvedJSON, innerJSON,
+		mdJSON, now, v.ID, v.Version)
 	if err != nil {
 		return err
 	}
@@ -1041,6 +1259,169 @@ func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseE
 
 func (r *SQLiteRepository) DeleteView(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM views WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ─── Viewpoints (M15 一等 SysML v2 Viewpoint 实体) ──────────────────────────
+
+// viewpointSelectColumns 共享 SELECT 列。
+const viewpointSelectColumns = `id, project_id, package_id, name, description,
+		content, stakeholder, concern,
+		metadata_json, version, created_at, updated_at`
+
+// viewpointSummarySelectColumns ViewpointSummary 用的精简列。
+const viewpointSummarySelectColumns = `id, project_id, package_id, name, description,
+		stakeholder, concern,
+		version, updated_at`
+
+// scanViewpoint 把 row 扫描到 Viewpoint。
+func scanViewpoint(row interface {
+	Scan(dest ...any) error
+}) (*model.Viewpoint, error) {
+	var (
+		vp            model.Viewpoint
+		pkgID         sql.NullString
+		desc          string
+		stakeholder   string
+		concern       string
+		metadataJSON  string
+	)
+	if err := row.Scan(
+		&vp.ID, &vp.ProjectID, &pkgID, &vp.Name, &desc,
+		&vp.Content, &stakeholder, &concern,
+		&metadataJSON, &vp.Version, &vp.CreatedAt, &vp.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	vp.PackageID = pkgID.String
+	vp.Description = desc
+	vp.Stakeholder = stakeholder
+	vp.Concern = concern
+	if md, err := unmarshalMetadata(metadataJSON); err == nil {
+		vp.Metadata = md
+	}
+	return &vp, nil
+}
+
+// scanViewpointSummary 把 row 扫描到 ViewpointSummary。
+func scanViewpointSummary(row interface {
+	Scan(dest ...any) error
+}) (*model.ViewpointSummary, error) {
+	var (
+		vps           model.ViewpointSummary
+		pkgID         sql.NullString
+		desc          string
+		stakeholder   string
+		concern       string
+	)
+	if err := row.Scan(
+		&vps.ID, &vps.ProjectID, &pkgID, &vps.Name, &desc,
+		&stakeholder, &concern,
+		&vps.Version, &vps.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	vps.PackageID = pkgID.String
+	vps.Description = desc
+	vps.Stakeholder = stakeholder
+	vps.Concern = concern
+	return &vps, nil
+}
+
+func (r *SQLiteRepository) CreateViewpoint(ctx context.Context, vp *model.Viewpoint) error {
+	mdJSON, err := marshalMetadata(vp.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	var pkgID any
+	if vp.PackageID != "" {
+		pkgID = vp.PackageID
+	}
+	const q = `INSERT INTO viewpoints (
+		id, project_id, package_id, name, description,
+		content, stakeholder, concern,
+		metadata_json, version, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = r.db.ExecContext(ctx, q,
+		vp.ID, vp.ProjectID, pkgID, vp.Name, vp.Description,
+		vp.Content, vp.Stakeholder, vp.Concern,
+		mdJSON, vp.Version, vp.CreatedAt, vp.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) GetViewpoint(ctx context.Context, id string) (*model.Viewpoint, error) {
+	q := `SELECT ` + viewpointSelectColumns + ` FROM viewpoints WHERE id = ?`
+	row := r.db.QueryRowContext(ctx, q, id)
+	return scanViewpoint(row)
+}
+
+func (r *SQLiteRepository) ListViewpointsByProject(ctx context.Context, projectID string) ([]*model.ViewpointSummary, error) {
+	q := `SELECT ` + viewpointSummarySelectColumns + ` FROM viewpoints WHERE project_id = ? ORDER BY updated_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*model.ViewpointSummary, 0)
+	for rows.Next() {
+		vps, err := scanViewpointSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vps)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) UpdateViewpoint(ctx context.Context, vp *model.Viewpoint) error {
+	now := time.Now().UTC()
+	mdJSON, err := marshalMetadata(vp.Metadata)
+	if err != nil {
+		return fmt.Errorf("序列化 metadata 失败: %w", err)
+	}
+	var pkgID any
+	if vp.PackageID != "" {
+		pkgID = vp.PackageID
+	}
+	const q = `UPDATE viewpoints SET
+		name = ?, package_id = ?, description = ?,
+		content = ?, stakeholder = ?, concern = ?,
+		metadata_json = ?, version = version + 1, updated_at = ?
+              WHERE id = ? AND version = ?`
+	res, err := r.db.ExecContext(ctx, q,
+		vp.Name, pkgID, vp.Description,
+		vp.Content, vp.Stakeholder, vp.Concern,
+		mdJSON, now, vp.ID, vp.Version)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrVersionConflict
+	}
+	updated, err := r.GetViewpoint(ctx, vp.ID)
+	if err != nil {
+		return err
+	}
+	*vp = *updated
+	return nil
+}
+
+func (r *SQLiteRepository) DeleteViewpoint(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM viewpoints WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

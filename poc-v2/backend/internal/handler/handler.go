@@ -41,6 +41,18 @@ func New(repo *repository.SQLiteRepository, h ...*hub.Hub) *Handler {
 
 var startTime = time.Now()
 
+// derefPackages 把 []*model.PackageSummary 解引用为 []model.PackageSummary。
+// （handler 层常把 repo 返回的指针切片转值切片给 parser/工具函数。）
+func derefPackages(pkgs []*model.PackageSummary) []model.PackageSummary {
+	out := make([]model.PackageSummary, len(pkgs))
+	for i, p := range pkgs {
+		if p != nil {
+			out[i] = *p
+		}
+	}
+	return out
+}
+
 func (h *Handler) Health(c *gin.Context) {
 	// M4.5 增量：附带 DB ping + 资源计数，便于运维探活与监控。
 	// 失败时仍返回 200（健康探针不应被资源统计拖死），但 status 字段标 degraded。
@@ -914,11 +926,22 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 		ColorTag:          req.ColorTag,
 		RenderingCategory: req.RenderingCategory,
 		Metadata:          req.Metadata,
-		ExposedElements:   parser.ParseExposedElements(req.Content),
+		Kind:              model.ViewKindDefinition,
+		RenderKind:        model.RenderKindInterconnection,
 		Version:           1,
 		CreatedAt:         time.Now().UTC(),
 		UpdatedAt:         time.Now().UTC(),
 	}
+	// M15：用 ParseViewBodyWithPackages 做完整解析（含 resolve 校验）
+	pkgsSummary, _ := h.repo.ListPackagesByProject(c, projectID)
+	pkgRefs := parser.FromPackageSummaries(derefPackages(pkgsSummary))
+	parsed := parser.ParseViewBodyWithPackages(req.Content, pkgRefs)
+	v.ExposedElements = parsed.ExposedElements
+	v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
+	v.RenderKind = parsed.RenderKind
+	v.FilterQualifiedNames = parsed.FilterQualifiedNames
+	v.InnerElements = parsed.InnerElements
+	v.ViewpointQualifiedName = parsed.SatisfiesQualifiedName
 	if err := h.repo.CreateView(c, v); err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
@@ -981,7 +1004,14 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
 	v.Version = req.Version
 	v.UpdatedAt = time.Now().UTC()
-	if err := h.repo.UpdateView(c, v, parser.ParseExposedElements); err != nil {
+	// M15：使用 ParseViewBodyWithPackages 做完整解析（含 resolve 校验）
+	pkgsSummary, _ := h.repo.ListPackagesByProject(c, v.ProjectID)
+	pkgRefs := parser.FromPackageSummaries(derefPackages(pkgsSummary))
+	parseFn := func(content string) ([]model.ExposedElement, []model.ExposedElement, model.RenderKind, []string, []model.InnerElement) {
+		parsed := parser.ParseViewBodyWithPackages(content, pkgRefs)
+		return parsed.ExposedElements, parsed.ExposedElementsUnresolved, parsed.RenderKind, parsed.FilterQualifiedNames, parsed.InnerElements
+	}
+	if err := h.repo.UpdateView(c, v, parseFn); err != nil {
 		if errors.Is(err, repository.ErrVersionConflict) {
 			details := h.buildConflictDetails(c, "view", v.ID, v.Version, v.Content, v.UpdatedAt, v.ProjectID, req.BaseVersion, req.Content)
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
