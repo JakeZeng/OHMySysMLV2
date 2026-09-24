@@ -14,10 +14,10 @@ import * as React from 'react';
 import { Plus, Package2, Zap, FileText, GripVertical, Sparkles } from 'lucide-react';
 import {
   PALETTE_ITEMS,
-  appendSnippet,
   type PaletteItem,
   type PaletteKind,
 } from '../../lib/insertSnippet';
+import { insertSnippetIntoPackage } from '../../lib/textOps';
 import { useModelStore } from '../../stores/modelStore';
 import { useToast } from '../ui/Toast';
 import { generateUniqueName } from '../../lib/naming';
@@ -65,7 +65,7 @@ export const PalettePanel: React.FC = () => {
     } else {
       snippet = item.generate(name);
     }
-    const newContent = appendSnippet(content, snippet);
+    const newContent = insertSnippetIntoPackage(content, snippet);
     setContent(newContent);
     showToast({
       title: `已添加 ${item.label}`,

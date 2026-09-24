@@ -117,13 +117,4 @@ export const PALETTE_ITEMS: PaletteItem[] = [
   },
 ];
 
-/** 简化版：把片段追加到 content 末尾（必要时包裹 package） */
-export function appendSnippet(content: string, snippet: string): string {
-  // 已有任意内容：直接追加 + 双换行
-  if (content.trim().length > 0) {
-    return content.trimEnd() + '\n\n' + snippet.trim() + '\n';
-  }
-  // 空内容：包装一个默认 package
-  const defaultPkg = `package DemoModel {\n${snippet.trim()}\n}\n`;
-  return defaultPkg;
-}
+/** M14.1 deprecated: 旧的 naive append 已删除，调用方请改用 textOps.insertSnippetIntoPackage */

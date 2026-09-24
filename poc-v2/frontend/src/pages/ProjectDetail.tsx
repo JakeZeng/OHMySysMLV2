@@ -45,6 +45,7 @@ import { useElementTreeCacheStore } from '../stores/elementTreeCacheStore';
 import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { generateUniqueName } from '../lib/naming';
+import { insertSnippetIntoPackage } from '../lib/textOps';
 import type { TreeAction, TreeEntityKind } from '../components/tree/types';
 
 const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
@@ -384,11 +385,13 @@ export const ProjectDetail: React.FC = () => {
           item.kind === 'partUsage'
             ? `part ${name} : Part;`
             : item.generate(name);
-        // 追加到 content 末尾
+        // M14.1：把 snippet 插入到 pkg 最后一个 package 的 body 内
         const baseContent = pkg.content ?? '';
-        const newContent = baseContent.trim().length > 0
-          ? baseContent.trimEnd() + '\n\n' + snippet.trim() + '\n'
-          : `package ${pkg.name} {\n${snippet.trim()}\n}\n`;
+        const newContent = insertSnippetIntoPackage(
+          baseContent,
+          snippet.trim() + '\n',
+          pkg.name,
+        );
         await packageApi.update(parentPackageId, {
           name: pkg.name,
           parentPackageId: pkg.parentPackageId,
