@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/sysmlv2/mbse-backend/internal/handler"
+	"github.com/sysmlv2/mbse-backend/internal/hub"
 	"github.com/sysmlv2/mbse-backend/internal/metamodel"
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
@@ -38,7 +39,10 @@ func main() {
 	}
 	defer repo.Close()
 
-	h := handler.New(repo)
+	// M13：进程内 pub/sub Hub（SSE 广播）
+	collabHub := hub.New()
+
+	h := handler.New(repo, collabHub)
 	teamH := handler.NewTeamHandler(repo)
 	shareH := handler.NewShareHandler(repo)
 	userH := handler.NewUserHandler(repo)
@@ -316,7 +320,7 @@ func main() {
 			subGroup.POST("/upgrade", h.UpgradeSubscription)
 		}
 
-		// 模型评论（受保护）
+		// 模型评论（M13 增量：scope 通用化 + DB 持久化；保留旧 /models/:id/comments 兼容）
 		modelsGroup := v1.Group("/models")
 		modelsGroup.Use(middleware.AuthRequired())
 		{
@@ -324,6 +328,15 @@ func main() {
 			modelsGroup.GET("/:id/comments", h.ListComments)
 			modelsGroup.DELETE("/:id/comments/:commentId", h.DeleteComment)
 			modelsGroup.PUT("/:id/comments/:commentId/resolve", h.ResolveComment)
+		}
+		// M13：新评论 API（scope 通用化）
+		commentsGroup := v1.Group("/comments")
+		commentsGroup.Use(middleware.AuthRequired())
+		{
+			commentsGroup.POST("", h.AddComment)
+			commentsGroup.GET("", h.ListComments)
+			commentsGroup.DELETE("/:id", h.DeleteComment)
+			commentsGroup.PUT("/:id/resolve", h.ResolveComment)
 		}
 
 		// 通知中心（受保护）
@@ -343,13 +356,32 @@ func main() {
 			codegenGroup.POST("/generate", h.GenerateCode)
 		}
 
-		// 实时协同 — 在线状态（受保护）
+		// 实时协同 — 在线状态（M13：DB 持久化 + scope 通用化）
 		presenceGroup := v1.Group("/presence")
 		presenceGroup.Use(middleware.AuthRequired())
 		{
 			presenceGroup.POST("/heartbeat", h.Heartbeat)
+			presenceGroup.GET("", h.GetPresence)
+			presenceGroup.DELETE("", h.LeavePresence)
+			// 兼容旧路由 /presence/:modelId（保留至 M14）
 			presenceGroup.GET("/:modelId", h.GetPresence)
 			presenceGroup.DELETE("/:modelId", h.LeavePresence)
+		}
+
+		// M13：编辑锁（advisory）
+		locksGroup := v1.Group("/locks")
+		locksGroup.Use(middleware.AuthRequired())
+		{
+			locksGroup.POST("/:kind/:id", h.AcquireOrHeartbeatLock)
+			locksGroup.GET("/:kind/:id", h.GetLock)
+			locksGroup.DELETE("/:kind/:id", h.ReleaseLock)
+		}
+
+		// M13：SSE 事件流（受保护）
+		eventsGroup := v1.Group("/events")
+		eventsGroup.Use(middleware.AuthRequired())
+		{
+			eventsGroup.GET("/stream", h.StreamEvents)
 		}
 	}
 

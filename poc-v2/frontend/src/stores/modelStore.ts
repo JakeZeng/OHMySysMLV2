@@ -17,6 +17,7 @@ import { modelToFlowLayouted } from '@transform/modelToFlow';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
 import { useLayoutStore } from './layoutStore';
+import { useCollabStore } from './collabStore';
 import {
   EMPTY_PIPELINE,
   runPipeline as runPipelinePure,
@@ -25,6 +26,8 @@ import {
 import { insertSnippet, findNewNodeId, shortNameFromNodeId } from '../lib/textOps';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
+import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
+import { ApiError } from '../services/api';
 
 /** 当前内容会话对应的实体类型 */
 export type ContentEntityKind = 'package' | 'view';
@@ -56,6 +59,12 @@ interface ModelState {
   /** 上一次布局耗时（ms） */
   perfMs: number;
 
+  // ── M13：协同状态 ──
+  /** 当前内容会话的"原始版本号"——保存时作为 baseVersion */
+  baseVersion: number;
+  /** 当前内容会话的"原始内容"——保存时作为 baseContent（供 409 retry） */
+  baseContent: string;
+
   // M2 AI 语法检查
   aiChecking: boolean;
   aiStreamContent: string;
@@ -71,6 +80,8 @@ interface ModelState {
   setProject: (id: string | null) => void;
   /** 属性面板保存后同步版本号（避免内容保存 409） */
   setVersion: (v: number) => void;
+  /** M13：同步版本号 + 原始内容（属性面板保存后调用） */
+  syncBase: (version: number, content: string) => void;
   runPipeline: (text: string) => void;
   reset: () => void;
 
@@ -81,6 +92,14 @@ interface ModelState {
   loadView: (viewId: string) => Promise<void>;
   /** 保存当前会话的 content（按 entityKind 分派） */
   saveContent: () => Promise<unknown>;
+  /**
+   * M13：解决版本冲突。
+   * @param strategy  mine / theirs / manual
+   * @param content   用户编辑后的最终内容（manual 时必填；mine 时为本地内容；theirs 时为 server 内容）
+   */
+  resolveConflict: (strategy: MergeStrategy, content: string) => Promise<unknown>;
+  /** 清除当前冲突（用户取消） */
+  clearConflict: () => void;
 
   // ── M12.4 删除：loadModel/saveModel（Model 实体已不存在） ──
 
@@ -129,6 +148,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   loading: false,
   error: null,
   perfMs: 0,
+  baseVersion: 1,
+  baseContent: '',
   aiChecking: false,
   aiStreamContent: '',
   aiIssues: [],
@@ -153,7 +174,13 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   setVersion(v) {
-    set({ version: v });
+    set({ version: v, baseVersion: v });
+    useCollabStore.getState().setBaseContent(v, get().baseContent);
+  },
+
+  syncBase(version, content) {
+    set({ version, baseVersion: version, baseContent: content });
+    useCollabStore.getState().setBaseContent(version, content);
   },
 
   runPipeline(text) {
@@ -197,6 +224,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await packageApi.get(packageId);
       useLayoutStore.getState().setProject(rec.projectId);
+      const initialContent = rec.content ?? '';
       set({
         entityKind: 'package',
         entityId: rec.id,
@@ -205,13 +233,16 @@ export const useModelStore = create<ModelState>((set, get) => ({
         projectId: rec.projectId,
         name: rec.name,
         description: rec.description ?? '',
-        content: rec.content ?? '',
+        content: initialContent,
         version: rec.version,
+        baseVersion: rec.version,
+        baseContent: initialContent,
         loading: false,
         saved: false,
         dirty: false,
       });
-      get().runPipeline(rec.content ?? '');
+      useCollabStore.getState().setBaseContent(rec.version, initialContent);
+      get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
       throw e;
@@ -223,6 +254,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await viewApi.get(viewId);
       useLayoutStore.getState().setProject(rec.projectId);
+      const initialContent = rec.content ?? '';
       set({
         entityKind: 'view',
         entityId: rec.id,
@@ -231,14 +263,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
         projectId: rec.projectId,
         name: rec.name,
         description: rec.description ?? '',
-        content: rec.content ?? '',
+        content: initialContent,
         version: rec.version,
+        baseVersion: rec.version,
+        baseContent: initialContent,
         exposedElements: rec.exposedElements ?? [],
         loading: false,
         saved: false,
         dirty: false,
       });
-      get().runPipeline(rec.content ?? '');
+      useCollabStore.getState().setBaseContent(rec.version, initialContent);
+      get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
       throw e;
@@ -248,13 +283,19 @@ export const useModelStore = create<ModelState>((set, get) => ({
   /**
    * 保存当前会话内容。
    *
-   * 只发送内容相关字段（name/description/content/version）；
-   * metadata / colorTag / parentPackageId 等属性由属性面板各自保存。
+   * M13：与后端约定——客户端随 PUT 携带 baseVersion (= store.version) 和 baseContent (= store.baseContent)。
+   * 后端若发现不匹配 → 返回 409 E_VERSION_CONFLICT + 完整冲突详情；前端弹出 ConflictModal 让用户决定。
+   *
+   * 直接走"成功保存"流程：
+   *   1. PUT /packages/:id 或 /views/:id
+   *   2. baseVersion = state.version；baseContent = state.baseContent
+   *   3. force = 仅在 resolveConflict(strategy='mine') 时为 true
+   *
    * 返回值交给调用方读取后端重算的字段（如 view.exposedElements）。
    */
   async saveContent() {
     if (get().saving) return null;
-    const { entityKind, entityId, name, description, content, version } = get();
+    const { entityKind, entityId, name, description, content, version, baseContent } = get();
     if (!entityKind || !entityId) {
       set({ error: '没有打开的内容会话' });
       return null;
@@ -271,6 +312,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
           content,
           metadata: full.metadata,
           version,
+          baseContent,
         });
       } else if (entityKind === 'view') {
         const full = await viewApi.get(entityId);
@@ -283,14 +325,16 @@ export const useModelStore = create<ModelState>((set, get) => ({
           renderingCategory: full.renderingCategory,
           metadata: full.metadata,
           version,
+          baseContent,
         });
       } else {
-        // M12.4：entityKind 已是 'package' | 'view'，不应进入此分支。
         throw new Error('未知实体类型');
       }
+      // 成功：版本推进 + baseContent 同步到最新
       set({
         version: rec.version,
-        // 视图保存后后端会重算暴露元素缓存，取返回值刷新
+        baseVersion: rec.version,
+        baseContent: content,
         ...(entityKind === 'view'
           ? { exposedElements: rec.exposedElements ?? [] }
           : {}),
@@ -298,19 +342,30 @@ export const useModelStore = create<ModelState>((set, get) => ({
         saved: true,
         dirty: false,
       });
+      useCollabStore.getState().setBaseContent(rec.version, content);
       setTimeout(() => {
         set((s) => (s.saved ? { saved: false } : s));
       }, 2000);
       return rec;
     } catch (e) {
-      const err = e as { code?: string; message?: string } & Error;
-      if (err.code === 'E_VERSION_CONFLICT' && entityKind && entityId) {
-        // 冲突：重载最新版本，让用户可重试
+      const err = e as ApiError | (Error & { code?: string; status?: number; details?: unknown });
+      // 409 E_VERSION_CONFLICT → 弹 ConflictModal
+      if (
+        (err as ApiError).code === 'E_VERSION_CONFLICT' ||
+        (err as ApiError).status === 409
+      ) {
+        const details = (err as ApiError).details as ConflictDetails | undefined;
+        if (details && details.serverContent !== undefined) {
+          useCollabStore.getState().setConflict(details);
+          set({ saving: false, error: '版本冲突，请选择如何处理' });
+          return null; // 不抛：调用方不必感知
+        }
+        // 无 details（兼容老后端）→ 回退到自动重载
         try {
           if (entityKind === 'package') await get().loadPackage(entityId);
           else if (entityKind === 'view') await get().loadView(entityId);
         } catch {
-          /* ignore reload error */
+          /* ignore */
         }
         set({ saving: false, error: '版本冲突，已刷新至最新版本，请重新保存' });
       } else {
@@ -318,6 +373,86 @@ export const useModelStore = create<ModelState>((set, get) => ({
       }
       throw e;
     }
+  },
+
+  /**
+   * M13：解决冲突。
+   *   - 'theirs' → 把 serverContent 写回 store，重新保存（baseVersion 用 serverVersion）
+   *   - 'mine'   → 保留用户内容，force=true 强制覆盖（不再带 baseContent）
+   *   - 'manual' → 用用户合并后的内容，version=serverVersion（不强制），带 baseContent=serverContent
+   */
+  async resolveConflict(strategy, content) {
+    const conflict = useCollabStore.getState().conflict;
+    if (!conflict) {
+      useCollabStore.getState().setConflict(null);
+      return null;
+    }
+    const { entityKind, entityId, name, description } = get();
+    if (!entityKind || !entityId) {
+      useCollabStore.getState().setConflict(null);
+      return null;
+    }
+
+    // 把"最终内容"写回 store，再以新版本号重试保存
+    set({ content, saving: true, error: null });
+
+    try {
+      let rec: { id: string; version: number; exposedElements?: ExposedElement[] };
+      if (entityKind === 'package') {
+        const full = await packageApi.get(entityId);
+        rec = await packageApi.update(entityId, {
+          name,
+          parentPackageId: full.parentPackageId,
+          description,
+          content,
+          metadata: full.metadata,
+          version: conflict.serverVersion,
+          force: strategy === 'mine',
+          baseContent: strategy === 'theirs' ? '' : conflict.serverContent,
+        });
+      } else if (entityKind === 'view') {
+        const full = await viewApi.get(entityId);
+        rec = await viewApi.update(entityId, {
+          name,
+          packageId: full.packageId,
+          description,
+          content,
+          colorTag: full.colorTag,
+          renderingCategory: full.renderingCategory,
+          metadata: full.metadata,
+          version: conflict.serverVersion,
+          force: strategy === 'mine',
+          baseContent: strategy === 'theirs' ? '' : conflict.serverContent,
+        });
+      } else {
+        throw new Error('未知实体类型');
+      }
+      set({
+        version: rec.version,
+        baseVersion: rec.version,
+        baseContent: content,
+        ...(entityKind === 'view'
+          ? { exposedElements: rec.exposedElements ?? [] }
+          : {}),
+        saving: false,
+        saved: true,
+        dirty: false,
+      });
+      useCollabStore.getState().setBaseContent(rec.version, content);
+      useCollabStore.getState().setConflict(null);
+      setTimeout(() => {
+        set((s) => (s.saved ? { saved: false } : s));
+      }, 2000);
+      return rec;
+    } catch (e) {
+      const err = e as Error;
+      set({ saving: false, error: err.message ?? '解决冲突失败' });
+      throw e;
+    }
+  },
+
+  clearConflict() {
+    useCollabStore.getState().setConflict(null);
   },
 
   // ─── M12.4 删除：loadModel/saveModel（Model 实体不存在） ────────────────
@@ -341,7 +476,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
       loading: false,
       error: null,
       perfMs: 0,
+      baseVersion: 1,
+      baseContent: '',
     });
+    useCollabStore.getState().setConflict(null);
   },
 
   // ─── M2 双向同步 ──────────────────────────────────────────────────

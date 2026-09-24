@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/sysmlv2/mbse-backend/internal/hub"
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/model"
 	"github.com/sysmlv2/mbse-backend/internal/parser"
@@ -22,11 +23,18 @@ import (
 // Handler 持有 repository 引用，提供所有 HTTP 处理函数。
 type Handler struct {
 	repo *repository.SQLiteRepository
+	hub  *hub.Hub
 }
 
 // New 构造 Handler。
-func New(repo *repository.SQLiteRepository) *Handler {
-	return &Handler{repo: repo}
+//
+// 接受可选 hub；nil 表示关闭 SSE 广播（向后兼容旧测试）。
+func New(repo *repository.SQLiteRepository, h ...*hub.Hub) *Handler {
+	out := &Handler{repo: repo}
+	if len(h) > 0 && h[0] != nil {
+		out.hub = h[0]
+	}
+	return out
 }
 
 // ─── Health ──────────────────────────────────────────────────────────
@@ -586,6 +594,10 @@ type updatePackageReq struct {
 	Content         string            `json:"content"`
 	Metadata        map[string]string `json:"metadata"`
 	Version         int               `json:"version" binding:"required,min=1"`
+	// M13：可选 force=true 强制覆盖（绕过乐观锁），审计会记录 force_overwrite。
+	// BaseVersion 用于 diff（前端编辑时基于的版本）；不传则取 req.Version。
+	Force       bool `json:"force"`
+	BaseVersion int  `json:"baseVersion"`
 }
 
 // packageID 从嵌套路由 param "packageId" 或平坦路由 param "id" 中提取 Package ID。
@@ -741,6 +753,19 @@ func (h *Handler) UpdatePackage(c *gin.Context) {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
+
+	// M13：版本冲突检测 — 在写之前先比对 req.Version 与 DB 当前版本，
+	// 不匹配则返回 409 + diff details（base/server + hunks），让前端做三方合并。
+	if !req.Force && req.Version != p.Version {
+		details := h.buildConflictDetails(c, "package", p.ID, p.Version, p.Content, p.UpdatedAt, p.ProjectID, req.BaseVersion, req.Content)
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+			"code":    "E_VERSION_CONFLICT",
+			"message": "版本冲突：服务器已有更新版本",
+			"details": details,
+		}})
+		return
+	}
+
 	p.Name = req.Name
 	p.ParentPackageID = req.ParentPackageID
 	p.Description = req.Description
@@ -749,13 +774,18 @@ func (h *Handler) UpdatePackage(c *gin.Context) {
 		p.Metadata = req.Metadata
 	}
 	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
+	// M13：force=true 时跳过 WHERE version=? 校验（直接覆盖）
 	p.Version = req.Version
 	p.UpdatedAt = time.Now().UTC()
 	if err := h.repo.UpdatePackage(c, p); err != nil {
 		if errors.Is(err, repository.ErrVersionConflict) {
+			// 即便我们前面 pre-check 过仍可能 race（两个请求同时进来）；
+			// 这里也返回完整 diff details。
+			details := h.buildConflictDetails(c, "package", p.ID, p.Version, p.Content, p.UpdatedAt, p.ProjectID, req.BaseVersion, req.Content)
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
 				"code":    "E_VERSION_CONFLICT",
-				"message": "版本冲突，请刷新后重试",
+				"message": "版本冲突：服务器已有更新版本",
+				"details": details,
 			}})
 			return
 		}
@@ -769,8 +799,22 @@ func (h *Handler) UpdatePackage(c *gin.Context) {
 		serverError(c, "更新包失败", err)
 		return
 	}
-	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetPackage, p.ID,
-		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`"}`)
+	// 审计：force 覆盖要特殊标记
+	auditAction := model.AuditActionUpdate
+	if req.Force {
+		auditAction = model.AuditActionForceUpdate
+	}
+	writeAudit(c, h.repo, auditAction, model.AuditTargetPackage, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`","forced":`+strconv.FormatBool(req.Force)+`}`)
+
+	// M13：广播 content_updated
+	userID := c.GetString("user_id")
+	uname := userID
+	if u, _ := h.repo.GetUserByID(c, userID); u != nil {
+		uname = u.Username
+	}
+	h.PublishContentUpdated("package:"+p.ID, userID, uname, p.Version)
+
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
@@ -812,6 +856,9 @@ type updateViewReq struct {
 	RenderingCategory string            `json:"renderingCategory"`
 	Metadata          map[string]string `json:"metadata"`
 	Version           int               `json:"version" binding:"required,min=1"`
+	// M13：force 强制覆盖；BaseVersion 用于 diff
+	Force       bool `json:"force"`
+	BaseVersion int  `json:"baseVersion"`
 }
 
 // ListViewsByProject GET /projects/:id/views
@@ -910,6 +957,18 @@ func (h *Handler) UpdateView(c *gin.Context) {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
+
+	// M13：版本冲突预检（与 UpdatePackage 同样逻辑）
+	if !req.Force && req.Version != v.Version {
+		details := h.buildConflictDetails(c, "view", v.ID, v.Version, v.Content, v.UpdatedAt, v.ProjectID, req.BaseVersion, req.Content)
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{
+			"code":    "E_VERSION_CONFLICT",
+			"message": "版本冲突：服务器已有更新版本",
+			"details": details,
+		}})
+		return
+	}
+
 	v.Name = req.Name
 	v.PackageID = req.PackageID
 	v.Description = req.Description
@@ -924,9 +983,11 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	v.UpdatedAt = time.Now().UTC()
 	if err := h.repo.UpdateView(c, v, parser.ParseExposedElements); err != nil {
 		if errors.Is(err, repository.ErrVersionConflict) {
+			details := h.buildConflictDetails(c, "view", v.ID, v.Version, v.Content, v.UpdatedAt, v.ProjectID, req.BaseVersion, req.Content)
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
 				"code":    "E_VERSION_CONFLICT",
-				"message": "版本冲突，请刷新后重试",
+				"message": "版本冲突：服务器已有更新版本",
+				"details": details,
 			}})
 			return
 		}
@@ -940,8 +1001,21 @@ func (h *Handler) UpdateView(c *gin.Context) {
 		serverError(c, "更新视图失败", err)
 		return
 	}
-	writeAudit(c, h.repo, model.AuditActionUpdate, model.AuditTargetView, v.ID,
-		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`"}`)
+	auditAction := model.AuditActionUpdate
+	if req.Force {
+		auditAction = model.AuditActionForceUpdate
+	}
+	writeAudit(c, h.repo, auditAction, model.AuditTargetView, v.ID,
+		`{"name":"`+escapeJSON(v.Name)+`","project":"`+v.ProjectID+`","forced":`+strconv.FormatBool(req.Force)+`}`)
+
+	// M13：广播 content_updated
+	userID := c.GetString("user_id")
+	uname := userID
+	if u, _ := h.repo.GetUserByID(c, userID); u != nil {
+		uname = u.Username
+	}
+	h.PublishContentUpdated("view:"+v.ID, userID, uname, v.Version)
+
 	c.JSON(http.StatusOK, gin.H{"data": v})
 }
 

@@ -71,6 +71,10 @@ export interface UpdateViewRequest {
   renderingCategory?: string;
   metadata?: Record<string, string>;
   version: number;
+  /** M13：冲突解决时使用；true = 忽略冲突强制覆盖 */
+  force?: boolean;
+  /** M13：客户端编辑时基于的原始内容（用于后端 diff / merge base） */
+  baseContent?: string;
 }
 
 /** 兼容历史：UI 仍可能用到 ModelingMode（来自 useUIStore） */

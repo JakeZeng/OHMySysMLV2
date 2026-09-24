@@ -12,19 +12,22 @@ import "time"
 
 // AuditAction 常见动作。
 const (
-	AuditActionCreate     = "create"
-	AuditActionUpdate     = "update"
-	AuditActionDelete     = "delete"
-	AuditActionShare      = "share"       // 直分享 project_shares
-	AuditActionUnshare    = "unshare"     // 撤销直分享
-	AuditActionLinkCreate = "link_create" // 创建分享链接
-	AuditActionLinkRevoke = "link_revoke" // 撤销分享链接
-	AuditActionTeamCreate = "team_create"
-	AuditActionMemberAdd  = "member_add"
-	AuditActionMemberRole = "member_role"
-	AuditActionMemberDel  = "member_del"
-	AuditActionGrant      = "grant" // 团队 project-access
-	AuditActionRevoke     = "revoke"
+	AuditActionCreate        = "create"
+	AuditActionUpdate        = "update"
+	AuditActionDelete        = "delete"
+	AuditActionForceUpdate   = "force_update" // M13：版本冲突时强制覆盖
+	AuditActionShare         = "share"        // 直分享 project_shares
+	AuditActionUnshare       = "unshare"      // 撤销直分享
+	AuditActionLinkCreate    = "link_create"  // 创建分享链接
+	AuditActionLinkRevoke    = "link_revoke"  // 撤销分享链接
+	AuditActionTeamCreate    = "team_create"
+	AuditActionMemberAdd     = "member_add"
+	AuditActionMemberRole    = "member_role"
+	AuditActionMemberDel     = "member_del"
+	AuditActionGrant         = "grant" // 团队 project-access
+	AuditActionRevoke        = "revoke"
+	AuditActionLockAcquire   = "lock_acquire"   // M13：获取编辑锁
+	AuditActionLockRelease   = "lock_release"   // M13：释放编辑锁
 )
 
 // AuditTargetType 目标类型。

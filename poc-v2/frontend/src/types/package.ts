@@ -43,5 +43,10 @@ export interface UpdatePackageRequest {
   description?: string;
   content?: string;
   metadata?: Record<string, string>;
+  /** 乐观锁：客户端编辑时基于的版本号（= baseVersion） */
   version: number;
+  /** M13：冲突解决时使用；true = 忽略冲突强制覆盖 */
+  force?: boolean;
+  /** M13：客户端编辑时基于的原始内容（用于后端 diff / merge base） */
+  baseContent?: string;
 }

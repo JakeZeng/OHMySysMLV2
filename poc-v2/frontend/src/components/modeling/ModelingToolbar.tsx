@@ -37,6 +37,8 @@ export interface ModelingToolbarProps {
   onExportSysML: () => void;
   onOpenTemplate: () => void;
   onOpenAIGenerate: () => void;
+  /** M13：协同条插槽（Presences + LockBadge） */
+  collabStrip?: React.ReactNode;
 }
 
 export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
@@ -54,6 +56,7 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
   onExportSysML,
   onOpenTemplate,
   onOpenAIGenerate,
+  collabStrip,
 }) => {
   const modelingMode = useUIStore((s) => s.modelingMode);
   const setModelingMode = useUIStore((s) => s.setModelingMode);
@@ -178,6 +181,9 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
       </Button>
 
       <div className="flex-1" />
+
+      {/* M13：协同条（在线用户 + 锁状态） */}
+      {collabStrip}
 
       {/* 错误计数徽章 */}
       {loading ? (

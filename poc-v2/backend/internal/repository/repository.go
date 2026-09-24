@@ -304,6 +304,73 @@ CREATE INDEX IF NOT EXISTS idx_views_updated ON views(updated_at DESC);
 		return fmt.Errorf("创建 model_versions 索引失败: %w", err)
 	}
 
+	// M13 增量：协作三件套 — presence / edit_locks / comments（从内存迁到 SQLite）
+	// Schema source of truth: migrations/004_collaboration.up.sql。
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS presence (
+			scope          TEXT NOT NULL,
+			user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			username       TEXT NOT NULL,
+			color          TEXT NOT NULL DEFAULT '',
+			cursor_line    INTEGER,
+			cursor_col     INTEGER,
+			sel_start_line INTEGER,
+			sel_start_col  INTEGER,
+			sel_end_line   INTEGER,
+			sel_end_col    INTEGER,
+			content_hash   TEXT NOT NULL DEFAULT '',
+			last_seen      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (scope, user_id)
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 presence 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_presence_scope_seen ON presence(scope, last_seen)`,
+	); err != nil {
+		return fmt.Errorf("创建 presence 索引失败: %w", err)
+	}
+
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS edit_locks (
+			scope         TEXT PRIMARY KEY,
+			owner_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			username      TEXT NOT NULL,
+			acquired_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at    TIMESTAMP NOT NULL,
+			base_version  INTEGER NOT NULL DEFAULT 1
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 edit_locks 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_edit_locks_expires ON edit_locks(expires_at)`,
+	); err != nil {
+		return fmt.Errorf("创建 edit_locks 索引失败: %w", err)
+	}
+
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS comments (
+			id          TEXT PRIMARY KEY,
+			scope       TEXT NOT NULL,
+			user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			username    TEXT NOT NULL,
+			element_id  TEXT NOT NULL DEFAULT '',
+			line        INTEGER NOT NULL DEFAULT 0,
+			content     TEXT NOT NULL,
+			resolved    INTEGER NOT NULL DEFAULT 0,
+			created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 comments 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_comments_scope ON comments(scope, created_at DESC)`,
+	); err != nil {
+		return fmt.Errorf("创建 comments 索引失败: %w", err)
+	}
+
 	return nil
 }
 

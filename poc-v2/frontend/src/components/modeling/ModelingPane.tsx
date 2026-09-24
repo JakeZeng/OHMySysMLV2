@@ -19,12 +19,15 @@ import { ErrorPanel } from '../../editor/ErrorPanel';
 import { ModelingToolbar } from './ModelingToolbar';
 import { useUIStore } from '../../stores/uiStore';
 import { useModelStore } from '../../stores/modelStore';
+import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
 import type { PipelineResult } from '../../lib/pipeline';
 import { PalettePanel } from '../diagram/PalettePanel';
+import { CollabStrip } from '../collab/CollabStrip';
+import { ConflictModal } from '../modals/ConflictModal';
 
 /**
  * ModelingPane 与具体实体解耦的接口。
@@ -84,6 +87,29 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter }) => {
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const modelingMode = useUIStore((s) => s.modelingMode);
   const interactive = modelingMode !== 'text';
+
+  // ── M13：从 modelStore 取 entityKind/Id 派生 scope ──
+  const entityKind = useModelStore((s) => s.entityKind);
+  const entityId = useModelStore((s) => s.entityId);
+  const mineContent = useModelStore((s) => s.content);
+  const conflict = useCollabStore((s) => s.conflict);
+  const resolveConflict = useModelStore((s) => s.resolveConflict);
+  const clearConflict = useModelStore((s) => s.clearConflict);
+  const [conflictOpen, setConflictOpen] = React.useState(false);
+  React.useEffect(() => {
+    setConflictOpen(!!conflict);
+  }, [conflict]);
+
+  const handleResolve = React.useCallback(
+    async (strategy: 'mine' | 'theirs' | 'manual', content: string) => {
+      try {
+        await resolveConflict(strategy, content);
+      } catch {
+        /* error already set in store */
+      }
+    },
+    [resolveConflict],
+  );
 
   // ── 仿真自动加载（M10 行为） ──
   const stateMachines = useModelStore((s) => s.pipeline.model.stateMachines);
@@ -203,6 +229,24 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter }) => {
         onExportSysML={adapter.onExportSysML}
         onOpenTemplate={adapter.onOpenTemplate}
         onOpenAIGenerate={adapter.onOpenAIGenerate}
+        collabStrip={
+          <CollabStrip
+            entityKind={entityKind}
+            entityId={entityId}
+            canEdit
+          />
+        }
+      />
+
+      {/* M13：版本冲突合并对话框 */}
+      <ConflictModal
+        open={conflictOpen}
+        onOpenChange={(o) => {
+          setConflictOpen(o);
+          if (!o) clearConflict();
+        }}
+        mine={mineContent}
+        onResolve={handleResolve}
       />
 
       {adapter.error && (
