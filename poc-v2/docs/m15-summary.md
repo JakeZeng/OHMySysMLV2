@@ -151,6 +151,7 @@ view def StructureView satisfies SafetyViewpoint {
 | owned vs referenced 树上区分 | ✅ | 截图 09（`local` 徽章 vs `↳1`） |
 | 多视图复用同一元素不复制 | ✅ | 截图 10（`toHaveCount(1)`） |
 | ViewUsage 实例化 | ✅ | 截图 17–18；后端 3 条校验 + 8 子测试 |
+| ViewUsage 的 expose 真解析 | ✅ | E2E 给实例写入真实 content 后断言 `viewDefinitionId` 落库 + `1 resolved / 1 unresolved` + 实例内 `render as tree` 路由生效（不只是徽章） |
 | Promote to Package | ✅ | 截图 19–20（子树清空、元素回包） |
 | 无回归 | ✅ | 见下表 gates |
 

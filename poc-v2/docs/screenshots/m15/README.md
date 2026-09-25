@@ -78,7 +78,12 @@ cd poc-v2\frontend ; npx tsc --noEmit ; npx vitest run
 ```
 
 `gates`：go build + go test 全绿 / tsc clean / vitest **206 passed (19 files)** /
-poc-v2 根套件 **117 passed** / Playwright m15 两组全绿。
+poc-v2 根套件 **117 passed** / Playwright m15 两组 **9 passed**。
+
+> 注：截图 17/18 里新实例的画布是空的、`暴露元素` 显示「（空）」—— 这是**预期**，
+> `DEFAULT_VIEW_USAGE_BODY` 给的是全注释骨架。测试 17 随后会经 API 给实例写入真实
+> content，断言 expose 的 `1 resolved / 1 unresolved` 与实例内 `render as tree` 的路由
+> 都真的生效，避免只验到「树里多了一行」。
 
 ## 本轮顺带修掉的两个既有 bug
 
