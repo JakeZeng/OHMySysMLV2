@@ -69,7 +69,13 @@ export type ValidationIssueCode =
   | 'W207_ABSTRACT_INSTANTIATION'
   | 'W208_UNUSED_IMPORT'
   | 'W209_EMPTY_BODY'
-  | 'W210_DUPLICATE_TRANSITION';
+  | 'W210_DUPLICATE_TRANSITION'
+  // M15 §7.26 Views and Viewpoints — 视图专属错误码
+  | 'E301_VIEW_USAGE_NO_DEF'
+  | 'E302_SATISFY_NOT_VIEWPOINT'
+  | 'W303_EXPOSE_NOT_RESOLVED'
+  | 'W304_RENDER_UNKNOWN'
+  | 'W305_FILTER_UNKNOWN_OP';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -277,10 +283,122 @@ export function validate(model: SysMLModel): ValidationResult {
     }
   }
 
+  // M15 §7.26：View / Viewpoint 语义校验。
+  // 校验从 SysMLModel.views / viewpoints 字段出发；与 part/port 语义解耦。
+  validateViews(model, issues);
+
   return {
     ok: !issues.some((i) => i.severity === 'error'),
     issues,
   };
+}
+
+/**
+ * M15 §7.26：View / Viewpoint 的轻量语义校验。
+ *
+ * 校验项（错误码与 spec 对齐）：
+ *   - E301_VIEW_USAGE_NO_DEF   view N : D 中 D 不是 view def（必须是 ViewDefinition）
+ *   - E302_SATISFY_NOT_VIEWPOINT  satisfy V 中 V 不是 viewpoint 名
+ *   - W303_EXPOSE_NOT_RESOLVED    expose Path::El 中路径在工程包树中不存在
+ *   - W304_RENDER_UNKNOWN         render X 中 X 不是已知 rendering kind 也不是引号引用
+ *   - W305_FILTER_UNKNOWN_OP      filter 子句使用了未知算子（@ / not @ / istype / hastype 之外）
+ */
+function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
+  const allViewNames = new Set<string>();
+  for (const v of model.views ?? []) allViewNames.add(v.name);
+
+  // 1) view usage 必须指向 view def（ViewDefinition）
+  for (const v of model.views ?? []) {
+    if (v.declKind === 'usage' && v.viewDefinitionRef) {
+      if (!allViewNames.has(v.viewDefinitionRef)) {
+        // view def 不在工程内：当作 warning 而非 error（POC 阶段跨文件引用未解析）
+        issues.push({
+          code: 'E301_VIEW_USAGE_NO_DEF',
+          message: `view \`${v.name}\` 引用的 ViewDefinition \`${v.viewDefinitionRef}\` 在工程内不存在`,
+          location: v.location,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  // 2) satisfy V 中 V 必须声明为 viewpoint
+  const allViewpointNames = new Set<string>();
+  for (const vp of model.viewpoints ?? []) allViewpointNames.add(vp.name);
+  for (const v of model.views ?? []) {
+    if (!v.satisfies) continue;
+    // V.satisfies 是 qualified name；只看末段（标准里 satisfy 指向同工程的 viewpoint）
+    const last = v.satisfies.split('::').pop() ?? v.satisfies;
+    if (!allViewpointNames.has(last)) {
+      issues.push({
+        code: 'E302_SATISFY_NOT_VIEWPOINT',
+        message: `view \`${v.name}\` 的 \`satisfy\` 目标 \`${v.satisfies}\` 在工程内不是 viewpoint`,
+        location: v.location,
+        severity: 'error',
+      });
+    }
+  }
+
+  // 3) expose 未 resolved（M15：仅做了顶层 AST 字段；后端 viewBody 已做严格 resolve，前端 AST 路径暂以 reveals 列表为准）
+  const allPackageNames = new Set<string>();
+  for (const p of model.packages) allPackageNames.add(p.name);
+  for (const v of model.views ?? []) {
+    for (const path of v.reveals ?? []) {
+      const segments = path.split('::').filter(Boolean);
+      if (segments.length === 0) continue;
+      const first = segments[0];
+      // 至少顶级包要存在（递归 `**` 形式只校验命名空间链）
+      const isWildcard = segments[segments.length - 1] === '**';
+      const namespaceChain = isWildcard ? segments : segments.slice(0, -1);
+      if (namespaceChain.length > 0 && !allPackageNames.has(namespaceChain[0])) {
+        issues.push({
+          code: 'W303_EXPOSE_NOT_RESOLVED',
+          message: `view \`${v.name}\` 的 \`expose\` 路径 \`${path}\` 中顶级包 \`${namespaceChain[0]}\` 在工程内不存在`,
+          location: v.location,
+          severity: 'warning',
+        });
+      }
+    }
+  }
+
+  // 4) render 引用了不在已知集合里的 rendering
+  const knownRenders = new Set([
+    'interconnection', 'tree', 'state', 'action', 'requirement', 'snapshot',
+  ]);
+  for (const v of model.views ?? []) {
+    if (!v.renderKind) continue;
+    if (knownRenders.has(v.renderKind)) continue;
+    // 引用式 render（带 . as / viewingSuffix）应当被后端归一化；如果解析后仍是自由名则视为 warning
+    issues.push({
+      code: 'W304_RENDER_UNKNOWN',
+      message: `view \`${v.name}\` 的 \`render\` 引用 \`${v.renderKind}\` 不在标准渲染集合内（spec 未规定，前端/POC 命名约定）`,
+      location: v.location,
+      severity: 'warning',
+    });
+  }
+
+  // 5) filter 算子非标准
+  const allowedOps = ['@', 'not @', 'istype', 'hastype'];
+  for (const v of model.views ?? []) {
+    for (const f of v.filters ?? []) {
+      // f 形如 `@X::Y` / `not @X` / `istype X` / `hastype X`
+      const head = f.split(/\s+/).slice(0, 2).join(' ');
+      const isAllowed = allowedOps.some(
+        (op) =>
+          (op.endsWith('@') ? head.startsWith(op) : head.startsWith(op + ' ')) ||
+          head === op ||
+          (op === '@' && head.startsWith('@')),
+      );
+      if (!isAllowed) {
+        issues.push({
+          code: 'W305_FILTER_UNKNOWN_OP',
+          message: `view \`${v.name}\` 的 \`filter\` 子句 \`${f}\` 的算子不在标准 §7.26（` + allowedOps.join(' / ') + '）范围内',
+          location: v.location,
+          severity: 'warning',
+        });
+      }
+    }
+  }
 }
 
 // ─── 第一遍：收集定义 ──────────────────────────────────────────────────

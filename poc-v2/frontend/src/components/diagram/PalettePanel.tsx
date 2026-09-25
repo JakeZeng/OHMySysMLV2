@@ -11,19 +11,31 @@
  */
 
 import * as React from 'react';
-import { Plus, Package2, Zap, FileText, GripVertical, Sparkles } from 'lucide-react';
+import {
+  Plus,
+  Package2,
+  Zap,
+  FileText,
+  Link2,
+  Hash,
+  GripVertical,
+  Sparkles,
+} from 'lucide-react';
 import {
   PALETTE_ITEMS,
+  PALETTE_CATEGORIES,
   type PaletteItem,
   type PaletteKind,
+  type PaletteCategory,
 } from '../../lib/insertSnippet';
 import { insertSnippetIntoPackage } from '../../lib/textOps';
 import { useModelStore } from '../../stores/modelStore';
 import { useToast } from '../ui/Toast';
 import { generateUniqueName } from '../../lib/naming';
 
+/** M15：扩展为 5 类（结构/行为/需求/关系/枚举），与 palette 一一对应 */
 const CATEGORIES: Array<{
-  key: PaletteItem['category'];
+  key: PaletteCategory;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   color: string;
@@ -31,6 +43,8 @@ const CATEGORIES: Array<{
   { key: '结构', label: '结构', icon: Package2, color: 'text-blue-600 dark:text-blue-300' },
   { key: '行为', label: '行为', icon: Zap, color: 'text-violet-600 dark:text-violet-300' },
   { key: '需求', label: '需求', icon: FileText, color: 'text-amber-600 dark:text-amber-300' },
+  { key: '关系', label: '关系', icon: Link2, color: 'text-emerald-600 dark:text-emerald-300' },
+  { key: '枚举', label: '枚举', icon: Hash, color: 'text-rose-600 dark:text-rose-300' },
 ];
 
 export const PalettePanel: React.FC = () => {

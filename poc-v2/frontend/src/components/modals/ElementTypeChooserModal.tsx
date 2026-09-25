@@ -24,7 +24,8 @@ interface CategoryGroup {
 }
 
 function groupByCategory(items: PaletteItem[]): CategoryGroup[] {
-  const order: PaletteItem['category'][] = ['结构', '行为', '需求'];
+  // M15：5 类，与 palette 一致；空 category 自动跳过
+  const order: PaletteItem['category'][] = ['结构', '行为', '需求', '关系', '枚举'];
   return order
     .map((key) => ({
       key,

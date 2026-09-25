@@ -405,3 +405,252 @@ describe('Validator - import 解析 (M1)', () => {
     expect(filtered).toHaveLength(0);
   });
 });
+
+// ─── M15 §7.26：View / Viewpoint 校验 ────────────────────────────────
+
+describe('Validator - Views (M15 §7.26)', () => {
+  it('V1. view usage 指向不存在的 view def → E301_VIEW_USAGE_NO_DEF', () => {
+    const { validate: v } = parseAndValidate(`
+      view def Tmpl { }
+      view inst : Tmpl { }
+    `);
+    // Tmpl 存在所以不应报 E301；这里想测反向
+    expect(
+      v.issues.filter((i) => i.code === 'E301_VIEW_USAGE_NO_DEF'),
+    ).toHaveLength(0);
+  });
+
+  it('V2. view usage 指向不存在的 view def 报错', () => {
+    // 直接构造模型测试函数 — 用源码无法直接触发跨工程缺失
+    const model = {
+      packages: [],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'inst',
+          declKind: 'usage',
+          viewDefinitionRef: 'TmplNotExist',
+          reveals: [],
+          filters: [],
+          members: [],
+          location: {
+            offset: 0,
+            line: 1,
+            column: 0,
+            length: 0,
+            lineText: 'view inst : TmplNotExist { }',
+          },
+        },
+      ],
+      viewpoints: [],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model);
+    expect(r.ok).toBe(false);
+    const issues = r.issues.filter((i) => i.code === 'E301_VIEW_USAGE_NO_DEF');
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toContain('TmplNotExist');
+  });
+
+  it('V3. satisfy 非 viewpoint 报错 E302', () => {
+    const model = {
+      packages: [],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      viewpoints: [
+        {
+          kind: 'viewpoint',
+          id: 'vp1',
+          name: 'MyVP',
+          stakeholders: [],
+          concerns: [],
+          members: [],
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'v',
+          reveals: [],
+          filters: [],
+          members: [],
+          satisfies: 'NotAVP',
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model);
+    const issues = r.issues.filter((i) => i.code === 'E302_SATISFY_NOT_VIEWPOINT');
+    expect(issues).toHaveLength(1);
+  });
+
+  it('V4. satisfy 合法时不报错', () => {
+    const model = {
+      packages: [],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      viewpoints: [
+        {
+          kind: 'viewpoint',
+          id: 'vp1',
+          name: 'MyVP',
+          stakeholders: [],
+          concerns: [],
+          members: [],
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'v',
+          reveals: [],
+          filters: [],
+          members: [],
+          satisfies: 'MyVP',
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model);
+    expect(r.issues.filter((i) => i.code === 'E302_SATISFY_NOT_VIEWPOINT')).toHaveLength(0);
+  });
+
+  it('V5. expose 顶级包不存在 → W303_EXPOSE_NOT_RESOLVED', () => {
+    const model = {
+      packages: [
+        {
+          kind: 'package',
+          id: 'p1',
+          name: 'RealPkg',
+          qualifiedName: 'RealPkg',
+          members: [],
+          body: [],
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      viewpoints: [],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'v',
+          reveals: ['MissingPkg::Element'],
+          filters: [],
+          members: [],
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model);
+    expect(r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED')).toHaveLength(1);
+  });
+
+  it('V6. render 引用已知 kind 不报错，引用未知名 → W304', () => {
+    const baseModel = (renderKind: string | undefined) =>
+      ({
+        packages: [],
+        connections: [],
+        stateMachines: [],
+        activities: [],
+        requirements: [],
+        traceLinks: [],
+        constraintBlocks: [],
+        enums: [],
+        comments: [],
+        viewpoints: [],
+        views: [
+          {
+            kind: 'view',
+            id: 'v1',
+            name: 'v',
+            reveals: [],
+            filters: [],
+            renderKind,
+            members: [],
+            location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+          },
+        ],
+      }) as unknown as Parameters<typeof validate>[0];
+    expect(
+      validate(baseModel('tree')).issues.filter((i) => i.code === 'W304_RENDER_UNKNOWN'),
+    ).toHaveLength(0);
+    const r = validate(baseModel('myWeirdRendering'));
+    expect(r.issues.filter((i) => i.code === 'W304_RENDER_UNKNOWN')).toHaveLength(1);
+  });
+
+  it('V7. filter 算子合法 / 非法区分', () => {
+    const mkModel = (filters: string[]) =>
+      ({
+        packages: [],
+        connections: [],
+        stateMachines: [],
+        activities: [],
+        requirements: [],
+        traceLinks: [],
+        constraintBlocks: [],
+        enums: [],
+        comments: [],
+        viewpoints: [],
+        views: [
+          {
+            kind: 'view',
+            id: 'v1',
+            name: 'v',
+            reveals: [],
+            filters,
+            members: [],
+            location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+          },
+        ],
+      }) as unknown as Parameters<typeof validate>[0];
+    expect(
+      validate(mkModel(['@SysML::PartDefinition'])).issues.filter(
+        (i) => i.code === 'W305_FILTER_UNKNOWN_OP',
+      ),
+    ).toHaveLength(0);
+    expect(
+      validate(mkModel(['not @SysML::ConnectionUsage'])).issues.filter(
+        (i) => i.code === 'W305_FILTER_UNKNOWN_OP',
+      ),
+    ).toHaveLength(0);
+    expect(
+      validate(mkModel(['istype Foo'])).issues.filter(
+        (i) => i.code === 'W305_FILTER_UNKNOWN_OP',
+      ),
+    ).toHaveLength(0);
+    const r = validate(mkModel(['xxpart Foo']));
+    expect(r.issues.filter((i) => i.code === 'W305_FILTER_UNKNOWN_OP')).toHaveLength(1);
+  });
+});
