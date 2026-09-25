@@ -108,9 +108,8 @@ async function createViewpoint(
       stakeholder: body.stakeholder ?? '',
       concern: body.concern ?? '',
       description: body.description ?? '',
-      content:
-        body.content ??
-        `viewpoint ${body.name} {\n  stakeholder: ${body.stakeholder ?? 'TBD'};\n  concern: ${body.concern ?? 'TBD'};\n}\n`,
+      // §7.26：ViewpointDefinition 的标准写法；stakeholder/concern 走 API 字段
+      content: body.content ?? `viewpoint def ${body.name} {\n  subject : Vehicle;\n}\n`,
     },
   });
   if (!r.ok()) {
@@ -150,7 +149,7 @@ test.describe.serial('M15 Viewpoint 截图归档', () => {
       stakeholder: 'SafetyEngineer',
       concern: '整车功能安全',
       description: '聚焦功能安全的视角',
-      content: 'viewpoint SafetyView {\n  stakeholder: SafetyEngineer;\n  concern: 整车功能安全 + 失效模式;\n}\n',
+      content: 'viewpoint def SafetyView {\n  subject : Vehicle;\n}\n',
     });
 
     await injectAuth(page, auth);

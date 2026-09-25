@@ -1,14 +1,14 @@
 /**
- * M15 ViewRenderer — 视图渲染路由（SysML v2 §7.26 `render as <kind>;`）。
+ * M15 ViewRenderer — 视图渲染路由（SysML v2 §7.26 `render <RenderingRef>;`）。
  *
- * 根据 view.renderKind（解析自 content 的 `render as <kind>;` 子句）分发：
+ * 根据 view.renderKind（解析自 content 的 `render <RenderingRef>;` 子句，按引用名推导）分发：
  *   - interconnection（默认）→ 可编辑互连图（ViewModelingPane / DiagramCanvas）
  *   - tree                  → TreeRenderer（ownership 投影树）
  *   - requirement           → RequirementRenderer（需求表）
  *   - state / action / snapshot → 暂未实现，回退到 interconnection 图
  *
  * tree / requirement 是「只读渲染」：顶部 ViewpointSummary 展示 satisfies /
- * render as / filter / expose 解析状态，下方是结构化结果。interconnection
+ * render / filter / expose 解析状态，下方是结构化结果。interconnection
  * 保持既有的可编辑建模面板，避免破坏 M12 的编辑体验。
  */
 

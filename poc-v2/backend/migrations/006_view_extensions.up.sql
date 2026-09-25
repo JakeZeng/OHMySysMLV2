@@ -5,8 +5,8 @@
 --
 -- 字段语义：
 --   - viewpoint_id  — 关联 viewpoint.id（nullable，外键 SET NULL）
---   - viewpoint_qualified_name — 解析自 `view ... satisfies X;` 中的 X（SysML 路径）
---   - render_kind — 解析自 `render as <kind>;` 子句，默认 'interconnection'
+--   - viewpoint_qualified_name — 解析自 `satisfy X;`（body 内子句）或 legacy `view ... satisfies X;`
+--   - render_kind — 由 `render <RenderingRef>;` 的引用名推导，默认 'interconnection'
 --   - filter_qualified_names — JSON 数组，解析自 `filter @X;` 子句列表
 --   - inner_elements — JSON 数组，view body 内 owned 的元素（part def X 等），含 kind/location
 --   - exposed_elements_unresolved — JSON 数组，expose 路径无法 resolve 的元素（path + reason）

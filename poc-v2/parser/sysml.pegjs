@@ -72,28 +72,107 @@
     };
   }
 
-  // M15 §7.26：view 是 Namespace，body 里同时有「子句」(expose/render/filter)
+  /**
+   * 从 rendering usage 的名字推断渲染方式。
+   *
+   * 标准**不规定**渲染怎么做 —— "SysML provides no specific constructs for
+   * specifying how a view is rendered"，渲染定义由工具/用户库提供。所以这里只能
+   * 按名字猜：去掉 `as` 前缀与 `Diagram`/`View`/`Table` 后缀再小写，命中已知种类即用。
+   * 这是本 POC 的约定，不是标准（标准里 `asTreeDiagram` 只是恰好叫这个名字的
+   * rendering usage）。认不出来就回落到 interconnection 图。
+   */
+  function deriveRenderKind(ref) {
+    if (!ref) return undefined;
+    const bare = String(ref).split('::').pop();
+    const s = bare.replace(/^as/i, '').replace(/(Diagram|View|Table)$/i, '').toLowerCase();
+    for (const k of ['interconnection', 'requirement', 'snapshot', 'state', 'action', 'tree']) {
+      if (s.includes(k)) return k;
+    }
+    return 'interconnection';
+  }
+
+  // M15 §7.26：view 是 Namespace，body 里同时有「子句」(expose/render/filter/satisfy)
   // 和 owned 成员（part def 等）。按 kind 分拣后返回。
-  function makeView(loc, name, satisfies, clauses, isDef) {
+  function makeView(loc, name, declKind, viewDefinitionRef, prefixes, clauses) {
     const reveals = [];
     const filters = [];
     const members = [];
     let renderKind;
+    let renderingRef;
+    let satisfies;
+    let specializes;
+    for (const p of prefixes || []) {
+      if (p && p.satisfies && !satisfies) satisfies = p.satisfies;
+      if (p && p.specializes && !specializes) specializes = p.specializes;
+    }
     for (const cl of clauses) {
-      if (cl.kind === 'expose') reveals.push(cl.path);
-      else if (cl.kind === 'filter') filters.push(cl.path);
-      else if (cl.kind === 'render') renderKind = cl.renderKind;
-      else members.push(cl);
+      if (cl.kind === 'expose') {
+        reveals.push(cl.wildcard ? cl.path + '::**' : cl.path);
+        if (cl.inline) filters.push(cl.inline);
+      } else if (cl.kind === 'filter') {
+        filters.push(cl.text);
+      } else if (cl.kind === 'render') {
+        renderKind = cl.renderKind;
+        renderingRef = cl.renderingRef;
+      } else if (cl.kind === 'satisfy') {
+        // 标准位置：body 内的 satisfy 子句
+        if (!satisfies) satisfies = cl.path;
+      } else if (cl.kind === 'import') {
+        // view body 内的 import（标准允许，如 `import Views::;`）
+      } else {
+        members.push(cl);
+      }
     }
     return {
       kind: 'view',
       id: nextId('view'),
       name,
-      isDefinition: !!isDef,
+      // 'definition' | 'usage' | 'shorthand'（shorthand 非标准，兼容历史内容）
+      declKind,
+      // legacy：M15 前期只有 definition/shorthand 两态，保留布尔位避免上层改动
+      isDefinition: declKind === 'definition',
+      // ViewUsage 的实例化目标（`view Name : Def`）
+      viewDefinitionRef: viewDefinitionRef || undefined,
+      specializes: specializes || undefined,
       satisfies: satisfies || undefined,
       reveals,
       filters,
       renderKind,
+      // 标准里 render 后面引用的是 rendering usage，这里保留原始引用名
+      renderingRef,
+      members,
+      location: locationOf(loc),
+    };
+  }
+
+  /**
+   * Viewpoint（§7.26）：标准里 ViewpointDefinition 是 RequirementDefinition 的一种，
+   * 关注点用需求式成员（`subject : Vehicle;`）表达。`stakeholder:` / `concern:` 是本
+   * POC 自造的 legacy 元数据，保留解析只为不让历史内容报错。
+   */
+  function makeViewpoint(loc, name, declKind, viewpointDefinitionRef, clauses) {
+    const stakeholders = [];
+    const concerns = [];
+    const members = [];
+    let subject;
+    for (const cl of clauses) {
+      if (cl.kind === 'subject') subject = cl.typeRef;
+      else if (cl.kind === 'stakeholder') stakeholders.push(cl.text);
+      else if (cl.kind === 'concern') concerns.push(cl.text);
+      else if (cl.kind === 'expose' || cl.kind === 'filter' || cl.kind === 'render') {
+        // viewpoint 体里出现 view 子句是非法的，忽略而不是报错
+      } else members.push(cl);
+    }
+    return {
+      kind: 'viewpoint',
+      id: nextId('vp'),
+      name,
+      declKind,
+      isDefinition: declKind === 'definition',
+      viewpointDefinitionRef: viewpointDefinitionRef || undefined,
+      subject,
+      stakeholders,
+      concerns,
       members,
       location: locationOf(loc),
     };
@@ -115,6 +194,7 @@ File
       const enums = [];
       const comments = [];
       const views = [];
+      const viewpoints = [];
       for (const pair of items) {
         const it = pair[1];
         if (it.kind === 'package') packages.push(it);
@@ -127,12 +207,14 @@ File
         else if (it.kind === 'enumDef') enums.push(it);
         else if (it.kind === 'comment') comments.push(it);
         else if (it.kind === 'view') views.push(it);
+        else if (it.kind === 'viewpoint') viewpoints.push(it);
       }
-      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments, views };
+      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments, views, viewpoints };
     }
 
 NamespaceOrTopLevel
-  = ViewDef
+  = ViewDecl
+  / ViewpointDecl
   / Package
   / StateMachine
   / Activity
@@ -143,21 +225,62 @@ NamespaceOrTopLevel
   / CommentBlock
   / ConnectStatement
 
-// ─── View (§7.26) ──────────────────────────────────────────────────────
+// ─── View / Viewpoint (§7.26) ──────────────────────────────────────────
 //
-// 标准写法是 `view def Name { ... }`（ViewDefinition）与
-// `view name : Def { ... }`（ViewUsage）；本 POC 另外直接支持
-// `view Name { ... }` 简写（M12 起应用自己生成的内容就是这个形状）。
-// 两种都解析，用 isDefinition 区分。
+// 严格对齐标准的写法（ptc/25-04-06 §7.26）：
+//
+//   view def 'Part Structure View' { import Views::; filter @SysML::PartUsage; render asTreeDiagram; }
+//   view 'vehicle parts view' : 'Part Structure View' { expose M::**; render asMyTreeDiagram; }
+//   viewpoint 'vehicle structure perspective' : 'System Structure Perspective' { subject : Vehicle; }
+//
+// 关键点（都是标准明确规定的，之前实现错了）：
+//   · `render` 后面跟的是 **rendering usage 的限定名引用**（`asTreeDiagram` 是一个
+//     标识符），不是「as + kind 枚举」；也可以是 `render rendering name : Def;` 声明式。
+//     标准不规定渲染细节（"SysML provides no specific constructs for specifying how a
+//     view is rendered"），渲染库由工具提供。
+//   · `satisfy <viewpoint>;` 是 **body 内子句**，不是 body 前的 `satisfies`。
+//   · ViewUsage 用 `view Name : Def` 表达；`expose` 支持 `::**` 通配与内联 `[...]` 过滤；
+//     被 expose 的元素是 **protected 可见性**。
+//   · filter 的算子有 `@` / `istype` / `hastype`，且可加 `not`。
+//   · 单引号名字（可含空格）是标准名字语法。
+//
+// 为兼容 M12 起应用自产的历史内容，下面额外**容忍**三种非标准写法（都带 legacy 标记，
+// 新生成的内容一律改用标准形式）：
+//   · `view Name { }`            无 def / 无 `:` 的 ViewUsage（语法里 `type?` 可选，本身合法）
+//   · `render as <kind>;`        as + 枚举
+//   · `view def V satisfies VP { }` / `viewpoint V { stakeholder: …; concern: …; }`
 
-ViewDef
-  = "view" WS "def" WS name:QualifiedName sat:ViewSatisfies? clauses:ViewBody
-    { return makeView(location().start.offset, name, sat, clauses, true); }
-  / "view" WS name:QualifiedName sat:ViewSatisfies? clauses:ViewBody
-    { return makeView(location().start.offset, name, sat, clauses, false); }
+ViewDecl
+  = ViewDefDecl
+  / ViewUsageDecl
+  / ViewShorthandDecl
 
+// ViewDefinition　`view def Name …`
+ViewDefDecl
+  = "view" WS "def" WS name:Name pref:ViewPrefix* body:ViewBody
+    { return makeView(location().start.offset, name, 'definition', undefined, pref, body); }
+
+// ViewUsage　`view Name : Def …`（标准形式）
+ViewUsageDecl
+  = "view" WS name:Name _ ":" _ def:QName pref:ViewPrefix* body:ViewBody
+    { return makeView(location().start.offset, name, 'usage', def, pref, body); }
+
+// `view Name …`（无 def、无 :）—— 合法 ViewUsage，只是没有显式定义引用
+ViewShorthandDecl
+  = "view" WS name:Name pref:ViewPrefix* body:ViewBody
+    { return makeView(location().start.offset, name, 'shorthand', undefined, pref, body); }
+
+ViewPrefix
+  = ViewSpecializes
+  / ViewSatisfies
+
+ViewSpecializes
+  = WS ":>" _ n:QName { return { specializes: n }; }
+  / WS "specializes" WS n:QName { return { specializes: n }; }
+
+// legacy：`view def V satisfies VP { }` —— 标准把 satisfy 放在 body 内
 ViewSatisfies
-  = WS "satisfies" WS qn:QualifiedName { return qn; }
+  = WS "satisfies" WS n:QName { return { satisfies: n }; }
 
 ViewBody
   = OPEN _ clauses:(_ ViewBodyClause)* CLOSE
@@ -167,23 +290,119 @@ ViewBodyClause
   = ExposeStatement
   / RenderStatement
   / FilterStatement
+  / SatisfyStatement
+  / ImportStatement
   / PackageMember
 
+// `expose M::**;` / `expose M::A::**;` / `expose M::A;` / `expose M::A [@X];`
 ExposeStatement
-  = "expose" WS path:QualifiedName _ ";"
-    { return { kind: 'expose', path }; }
+  = "expose" WS p:ExposePath inline:InlineFilter? _ ";"
+    { return { kind: 'expose', path: p.path, wildcard: p.wildcard, inline: inline || undefined }; }
 
+ExposePath
+  = head:QName _ "::" _ "**" { return { path: head, wildcard: true }; }
+  / "**" { return { path: '', wildcard: true }; }
+  / "*" _ "::" _ "*" { return { path: '', wildcard: true }; }
+  / qn:QName { return { path: qn, wildcard: false }; }
+
+InlineFilter
+  = _ "[" _ e:FilterExprText _ "]" { return e; }
+
+FilterExprText
+  = $( [^\]]* ) { return text().trim(); }
+
+// `render asTreeDiagram;`（引用式，标准） / `render rendering name : Def;`（声明式，标准）
+// / `render as tree;`（legacy）
 RenderStatement
-  = "render" WS "as" WS k:RenderKindName _ ";"
-    { return { kind: 'render', renderKind: k }; }
+  = "render" WS "rendering" WS name:Name _ ":" _ def:QName _ ";"
+    { return { kind: 'render', renderingRef: def, declaredName: name, renderKind: deriveRenderKind(def) }; }
+  / "render" WS "as" WS k:LegacyRenderKindName _ ";"
+    { return { kind: 'render', renderKind: k, legacy: true }; }
+  / "render" WS ref:QName _ ";"
+    { return { kind: 'render', renderingRef: ref, renderKind: deriveRenderKind(ref) }; }
 
-RenderKindName
+// legacy：`render as <kind>;`
+LegacyRenderKindName
   = ("interconnection" / "requirement" / "snapshot" / "state" / "action" / "tree")
     { return text(); }
 
+// `filter @SysML::PartUsage;` / `filter not @SysML::ConnectionUsage;`
+// / `filter istype SysML::PartUsage;` / `filter hastype X;`
 FilterStatement
-  = "filter" WS "@" _ path:QualifiedName _ ";"
-    { return { kind: 'filter', path }; }
+  = "filter" WS neg:FilterNot? op:FilterOperator? qn:QName _ ";"
+    {
+      return {
+        kind: 'filter',
+        path: qn,
+        negated: !!neg,
+        operator: op || undefined,
+        text: (neg ? 'not ' : '') + (op || '') + qn,
+      };
+    }
+
+FilterNot
+  = "not" WS { return true; }
+
+FilterOperator
+  = "@" { return '@'; }
+  / "istype" WS { return 'istype '; }
+  / "hastype" WS { return 'hastype '; }
+
+// `satisfy 'vehicle structure perspective';` —— 标准位置：body 内
+SatisfyStatement
+  = "satisfy" WS qn:QName _ ";" { return { kind: 'satisfy', path: qn }; }
+
+// ─── Viewpoint (§7.26) ─────────────────────────────────────────────────
+//
+// ViewpointDefinition 是 RequirementDefinition 的一种特化，关注点通过 `subject`
+// 等需求式成员表达。legacy 的 `stakeholder:` / `concern:` 是本 POC 自造的元数据
+// （不是标准），保留解析以免历史内容报错。
+
+ViewpointDecl
+  = "viewpoint" WS "def" WS name:Name _ ":" _ def:QName body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'definition', def, body); }
+  / "viewpoint" WS "def" WS name:Name body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'definition', undefined, body); }
+  / "viewpoint" WS name:Name _ ":" _ def:QName body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'usage', def, body); }
+  / "viewpoint" WS name:Name body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'shorthand', undefined, body); }
+
+ViewpointBody
+  = OPEN _ clauses:(_ ViewpointBodyClause)* CLOSE
+    { return clauses.map(c => c[1]); }
+
+ViewpointBodyClause
+  = SubjectStatement
+  / LegacyStakeholderStatement
+  / LegacyConcernStatement
+  / ViewBodyClause
+
+// 标准：`subject : Vehicle;`
+SubjectStatement
+  = "subject" _ ":" _ t:QName _ ";" { return { kind: 'subject', typeRef: t }; }
+
+// legacy（非标准）：`stakeholder: SafetyEngineer;` / `concern: 任意文本;`
+LegacyStakeholderStatement
+  = "stakeholder" _ ":" _ v:$([^;]*) _ ";"
+    { return { kind: 'stakeholder', text: v.trim() }; }
+
+LegacyConcernStatement
+  = "concern" _ ":" _ v:$([^;]*) _ ";"
+    { return { kind: 'concern', text: v.trim() }; }
+
+// ─── 名字（§7.26：允许单引号，可含空格）────────────────────────────────
+
+Name
+  = QuotedName
+  / $([a-zA-Z_][a-zA-Z0-9_]*)
+
+QuotedName
+  = "'" chars:$([^']*) "'" { return chars; }
+
+QName
+  = head:Name tail:(_ "::" _ n:Name { return n; })*
+    { return [head, ...tail].join('::'); }
 
 // ─── Package ───────────────────────────────────────────────────────────
 
@@ -227,18 +446,24 @@ PackageMember
 ImportStatement
   = "import" WS qn:QualifiedName _ suffix:ImportSuffix? _ ";"
     {
+      // 裸 `::` 引的是命名空间自身，不把后缀写进 namespace；
+      // 只有 `::**` 才是递归导入（`::*` 是直接成员）。
+      const bare = suffix === '::';
       return {
         kind: 'import',
         id: nextId('imp'),
-        namespace: qn + (suffix || ''),
-        isRecursive: !!suffix,
+        namespace: bare ? qn : qn + (suffix || ''),
+        isRecursive: suffix === '::**',
         location: locationOf(location().start.offset),
       };
     }
 
+// `::*`（直接成员）/ `::**`（递归成员）/ `::`（命名空间自身）
+// 注意 `**` 必须排在 `*` 前面，否则 "::**" 会被 `::*` 吃掉一个星号。
 ImportSuffix
-  = "::" _ "*" { return '::*'; }
-  / "::" _ "*" WS "*" { return '::**'; }
+  = "::" _ "**" { return '::**'; }
+  / "::" _ "*" { return '::*'; }
+  / "::" { return '::'; }
 
 // ─── Part Definition ───────────────────────────────────────────────────
 

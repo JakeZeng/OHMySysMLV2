@@ -66,11 +66,14 @@ export interface ViewSummary {
   // ── M15 增量（SysML v2 §7.26） ──────────────────────────────
   /** definition（模板） vs usage（实例） */
   kind?: 'definition' | 'usage';
-  /** 解析自 `render as <kind>;`，决定用哪个 renderer */
+  /**
+   * 渲染方式 —— 解析自 `render <RenderingRef>;` 子句的引用名。
+   * 标准里 render 的参数是渲染用法的限定名引用（不是枚举），这里按其名字推导出 renderer。
+   */
   renderKind?: RenderKind;
   /** ViewUsage 实例化的 ViewDefinition */
   viewDefinitionId?: string;
-  /** 满足的 Viewpoint（解析自 `view V satisfies VP;`） */
+  /** 满足的 Viewpoint（解析自 body 内 `satisfy VP;`；legacy 的 body 前 `satisfies` 也识别） */
   viewpointId?: string;
   viewpointQualifiedName?: string;
   /**
@@ -82,7 +85,7 @@ export interface ViewSummary {
   exposeCount?: number;
   /** 未 resolve 的 expose 计数（路径在工程包树中不存在） */
   exposeUnresolvedCount?: number;
-  /** 解析自 `filter @X;` */
+  /** 解析自 `filter @X;`（算子随名字一起保留，如 `@SysML::PartUsage` / `not @X`） */
   filterQualifiedNames?: string[];
 }
 
@@ -93,7 +96,12 @@ export interface InnerElement {
   line?: number;
 }
 
-/** 视图渲染方式（解析自 `render as <kind>;`） */
+/**
+ * 视图渲染方式（由 `render <RenderingRef>;` 的引用名推导而来）。
+ *
+ * 标准不定义"如何渲染"的具体构造 —— 渲染是 rendering 用法的事，
+ * 这里的枚举只是本实现把引用名映射到可用 renderer 的落点。
+ */
 export type RenderKind =
   | 'interconnection'
   | 'tree'

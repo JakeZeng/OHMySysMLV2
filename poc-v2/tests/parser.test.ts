@@ -328,7 +328,9 @@ describe('Parser - 注释与空白', () => {
 // ─── M15 §7.26：view 是顶层 Namespace ─────────────────────────────────
 
 describe('Parser - View (§7.26)', () => {
-  it('24. `view def V satisfies VP { ... }` 解析为 ViewDefinition', () => {
+  // 用例 24–27 覆盖 **legacy 方言**（`render as <kind>;`、body 前 `satisfies`）——
+  // M12 起的存量内容仍是这个写法，必须继续解析得了。标准写法见下面 28–40。
+  it('24. `view def V satisfies VP { ... }` 解析为 ViewDefinition（legacy 方言）', () => {
     const r = parse(`
       package VehicleModel { part def Vehicle; }
       view def StructureView satisfies SafetyViewpoint {
@@ -346,7 +348,8 @@ describe('Parser - View (§7.26)', () => {
     expect(v.satisfies).toBe('SafetyViewpoint');
     expect(v.renderKind).toBe('tree');
     expect(v.reveals).toEqual(['VehicleModel::Vehicle', 'VehicleModel::Engine']);
-    expect(v.filters).toEqual(['PartUsage']);
+    // filter 文本含算子（标准形式 `filter @X;` 的算子是 `@`）
+    expect(v.filters).toEqual(['@PartUsage']);
     // view 不进 packages —— 它是独立的 Namespace 类别
     expect(r.model.packages).toHaveLength(1);
   });
@@ -384,13 +387,147 @@ describe('Parser - View (§7.26)', () => {
     expect(r.model.views[0].members).toHaveLength(0);
   });
 
-  it('27. render as <kind> 只接受标准取值', () => {
+  it('27. legacy `render as <kind>` 只接受已知取值', () => {
     const ok = parse('view V { render as requirement; }');
     expect(ok.ok).toBe(true);
     expect(ok.model.views[0].renderKind).toBe('requirement');
 
     const bad = parse('view V { render as hologram; }');
     expect(bad.ok).toBe(false);
+  });
+});
+
+// ─── M15 §7.26 标准写法（ptc/25-04-06）────────────────────────────────
+//
+// 这批用例是查证规范正文后补的：先前实现只认自己的一套方言（`render as <kind>;`
+// 枚举、body 前 `satisfies`、无 `view X : Def`），13 条标准写法全部解析失败。
+// 标准要点：render 后跟 rendering usage 的**限定名引用**；`satisfy` 在 body 内；
+// ViewUsage 用 `:`；expose 支持 `::**` 与内联 `[...]`；filter 有 `@`/`istype`/
+// `hastype` 算子且可 `not`；名字可用单引号。
+
+describe('Parser - §7.26 标准写法', () => {
+  it('28. `render <renderingRef>;` —— render 后是限定名引用而非 kind 枚举', () => {
+    const r = parse(`view def 'Part Structure View' { render asTreeDiagram; }`);
+    expect(r.ok).toBe(true);
+    const v = r.model.views[0];
+    // 标准里 `asTreeDiagram` 是一个 rendering usage 的名字，不是 `as` + `tree`
+    expect(v.renderingRef).toBe('asTreeDiagram');
+    expect(v.declKind).toBe('definition');
+    // renderKind 是本 POC 按名字推断出来的路由键（标准不规定渲染细节）
+    expect(v.renderKind).toBe('tree');
+  });
+
+  it('29. `render rendering name : Def;` 声明式渲染', () => {
+    const r = parse('view def V { render rendering myRender : MyTreeDiagram; }');
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].renderingRef).toBe('MyTreeDiagram');
+    expect(r.model.views[0].renderKind).toBe('tree');
+  });
+
+  it('30. 认不出的 rendering 名回落到 interconnection', () => {
+    const r = parse('view def V { render asWhatever; }');
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].renderKind).toBe('interconnection');
+  });
+
+  it('31. `view Name : Def { }` —— 标准的 ViewUsage 形式', () => {
+    const r = parse(`view 'vehicle parts view' : 'Part Structure View' { expose M::**; }`);
+    expect(r.ok).toBe(true);
+    const v = r.model.views[0];
+    expect(v.name).toBe('vehicle parts view');
+    expect(v.declKind).toBe('usage');
+    expect(v.viewDefinitionRef).toBe('Part Structure View');
+    expect(v.isDefinition).toBe(false);
+  });
+
+  it('32. `satisfy X;` 是 body 内子句（标准位置）', () => {
+    const r = parse(`view V : Def { satisfy 'vehicle structure perspective'; }`);
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].satisfies).toBe('vehicle structure perspective');
+  });
+
+  it('33. legacy：body 前的 `satisfies` 仍被容忍', () => {
+    const r = parse('view def V satisfies VP { }');
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].satisfies).toBe('VP');
+  });
+
+  it('34. `expose X::**` 递归通配 + 内联过滤', () => {
+    const r = parse('view V { expose VehicleDesignModel::**; }');
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].reveals).toEqual(['VehicleDesignModel::**']);
+
+    const r2 = parse('view V { expose M::A [@SysML::PartUsage]; }');
+    expect(r2.ok).toBe(true);
+    expect(r2.model.views[0].reveals).toEqual(['M::A']);
+    expect(r2.model.views[0].filters).toEqual(['@SysML::PartUsage']);
+  });
+
+  it('35. filter 算子 @ / istype / hastype 与取反', () => {
+    const cases: Array<[string, string]> = [
+      ['filter @SysML::PartUsage;', '@SysML::PartUsage'],
+      ['filter not @SysML::ConnectionUsage;', 'not @SysML::ConnectionUsage'],
+      ['filter istype SysML::PartUsage;', 'istype SysML::PartUsage'],
+      ['filter hastype PartDef;', 'hastype PartDef'],
+    ];
+    for (const [clause, expected] of cases) {
+      const r = parse(`view V { ${clause} }`);
+      expect(r.ok, clause).toBe(true);
+      expect(r.model.views[0].filters, clause).toEqual([expected]);
+    }
+  });
+
+  it('36. view body 内可 `import`（标准允许，如 import Views::;）', () => {
+    const r = parse('view def V { import Views::; filter @SysML::PartUsage; }');
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].filters).toEqual(['@SysML::PartUsage']);
+  });
+
+  it('37. `viewpoint def` / `viewpoint X : Def` + `subject : T;`', () => {
+    const d = parse('viewpoint def VP { subject : Vehicle; }');
+    expect(d.ok).toBe(true);
+    expect(d.model.viewpoints).toHaveLength(1);
+    expect(d.model.viewpoints[0].declKind).toBe('definition');
+    expect(d.model.viewpoints[0].subject).toBe('Vehicle');
+    // viewpoint 与 view 是两个并列的顶层类别
+    expect(d.model.views).toHaveLength(0);
+
+    const u = parse(`viewpoint 'vehicle structure perspective' : 'System Structure Perspective' { subject : Vehicle; }`);
+    expect(u.ok).toBe(true);
+    expect(u.model.viewpoints[0].declKind).toBe('usage');
+    expect(u.model.viewpoints[0].viewpointDefinitionRef).toBe('System Structure Perspective');
+  });
+
+  it('38. legacy：应用自产 viewpoint content（stakeholder/concern）不再报错', () => {
+    const r = parse(`viewpoint SafetyView {
+      stakeholder: SafetyEngineer;
+      concern: 整车功能安全;
+    }`);
+    expect(r.ok).toBe(true);
+    const vp = r.model.viewpoints[0];
+    expect(vp.name).toBe('SafetyView');
+    expect(vp.stakeholders).toEqual(['SafetyEngineer']);
+    expect(vp.concerns).toEqual(['整车功能安全']);
+  });
+
+  it('39. 单引号名字可含空格，且能用在 expose / satisfies 引用里', () => {
+    const r = parse(`view def 'Part Structure View' {
+      expose 'My Model'::'Part A';
+      satisfy 'a viewpoint with spaces';
+    }`);
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].reveals).toEqual(['My Model::Part A']);
+    expect(r.model.views[0].satisfies).toBe('a viewpoint with spaces');
+  });
+
+  it('40. `import X::**`（递归）与 `import X::`（命名空间自身）', () => {
+    const a = parse('package P { import Foo::**; }');
+    expect(a.ok).toBe(true);
+    expect((a.model.packages[0].members[0] as any).namespace).toBe('Foo::**');
+
+    const b = parse('package P { import Views::; }');
+    expect(b.ok).toBe(true);
+    expect((b.model.packages[0].members[0] as any).namespace).toBe('Views');
   });
 });
 

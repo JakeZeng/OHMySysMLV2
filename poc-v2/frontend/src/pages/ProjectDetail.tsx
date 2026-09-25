@@ -55,28 +55,43 @@ const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
 }
 `;
 
-const DEFAULT_VIEW_BODY = (name: string) => `view ${name} {
-  // 使用 expose 语句跨包引用元素：
-  // expose ::SomeElement;
+/**
+ * M15 §7.26：ViewDefinition 骨架（标准写法）。
+ *
+ * 标准要点：
+ *   - 定义用 `view def <名> { … }`，实例用 `view <名> : <定义>`；
+ *   - 渲染用 `render <RenderingRef>;` —— 参数是**渲染用法的限定名引用**，
+ *     不是枚举（规范原文：SysML 不提供指定"视图如何渲染"的具体构造）；
+ *   - 过滤用 `filter @<Metaclass>;`（算子 @ / istype / hastype，可 `not` 取反）；
+ *   - 引用元素用 `expose <Pkg>::<Element>;`，整包递归用 `expose <Pkg>::**;`。
+ */
+const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
+  // 作用范围：import Views::;  filter @SysML::PartUsage;
+  // 渲染方式：render <RenderingRef>;   例：render TreeDiagram;
+  // 引用元素：expose <Pkg>::<Element>;  整包 recursion：expose <Pkg>::**;
 }
 `;
 
 /**
- * M15 §7.26：ViewUsage 模板 —— 视图实例继承模板的 render/expose 语义。
+ * M15 §7.26：ViewUsage 骨架 —— 视图实例继承模板的 render/expose 语义。
  * 新实例给一份可直接编辑的骨架，并注明它实例化自哪个 ViewDefinition。
  */
 const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view ${name} {
   // 实例化自 ViewDefinition「${definitionName}」（§7.26 ViewUsage）
   // 在这里按该实例的语境重写 expose / render：
-  // expose ::SomeElement;
-  // render as interconnection;
+  // expose <Pkg>::<Element>;
+  // render <RenderingRef>;
 }
 `;
 
-const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint ${name} {
-  // 描述利益相关方关注点（UI hint；非 SysML 强制）
-  // stakeholder: <stakeholder>;
-  // concern: <concern>;
+/**
+ * M15 §7.26：ViewpointDefinition 骨架。
+ * Viewpoint 是利益相关方关注点（stakeholder / concern / subject）。
+ */
+const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint def ${name} {
+  // subject : <Type>;
+  // stakeholder '<stakeholder>';
+  // concern '<concern>';
 }
 `;
 

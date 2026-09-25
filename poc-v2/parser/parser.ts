@@ -63,7 +63,7 @@ export function parse(source: string): ParseResult {
     });
     return {
       ok: false,
-      model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [], views: [] },
+      model: { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [], views: [], viewpoints: [] },
       errors,
     };
   } finally {
@@ -150,8 +150,9 @@ function flattenNestedMembers(model: SysMLModel): void {
     pkg.members = remaining;
   };
   for (const pkg of model.packages) walk(pkg);
-  // M15：view body 内的 owned 成员同样需要扁平化（view 是 Namespace）
+  // M15：view / viewpoint body 内的 owned 成员同样需要扁平化（两者都是 Namespace）
   for (const v of model.views ?? []) walk(v);
+  for (const vp of model.viewpoints ?? []) walk(vp);
   model.stateMachines.push(...collected);
   model.activities.push(...collectedActs);
   model.requirements.push(...collectedReqs);

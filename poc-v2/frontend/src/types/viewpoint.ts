@@ -2,7 +2,7 @@
  * M15 Viewpoint — SysML v2 §7.26 一等实体（利益相关方关注点）。
  *
  * Viewpoint 是 SysML v2 一等元素；用于表达"谁关心模型的什么"。
- * View（ViewDefinition/ViewUsage）可声明 `view V satisfies VP` 引用某个 Viewpoint。
+ * View（ViewDefinition/ViewUsage）可在 body 内 `satisfy VP;` 引用某个 Viewpoint。
  *
  * 字段语义：
  * - stakeholder：利益相关方（UI hint；如 "SafetyEngineer"）

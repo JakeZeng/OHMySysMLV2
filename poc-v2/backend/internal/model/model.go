@@ -118,7 +118,7 @@ type PackageContentRef struct {
 //
 // M15 升级要点：
 //   - kind 字段区分 Definition（template） vs Usage（实例）
-//   - 解析 expose / render as / filter @ / satisfies X 子句
+//   - 解析 expose / render <RenderingRef> / filter @ / satisfy X 子句
 //   - 跨包路径 resolve：ExposedElements = resolved；ExposedElementsUnresolved = unresolved
 //   - InnerElements = view body 内 owned 元素（view-private）
 //   - ViewpointID 关联外部 Viewpoint 实体（M15 新增）
@@ -145,10 +145,10 @@ type View struct {
 	ViewpointID            string `json:"viewpointId,omitempty"`
 	ViewpointQualifiedName string `json:"viewpointQualifiedName,omitempty"`
 
-	// M15：渲染方式（解析自 `render as <kind>;`）
+	// M15：渲染方式（由 `render <RenderingRef>;` 的引用名推导；legacy `render as <kind>;` 也识别）
 	RenderKind RenderKind `json:"renderKind"`
 
-	// M15：过滤规则列表（解析自 `filter @X;`）
+	// M15：过滤规则列表（解析自 `filter @X;`，算子文本随名字一起保留）
 	FilterQualifiedNames []string `json:"filterQualifiedNames"`
 
 	// 已解析的 expose 元素（resolve 成功）
@@ -283,7 +283,8 @@ const (
 	ViewKindUsage      ViewKind = "usage"
 )
 
-// RenderKind 视图渲染方式（解析自 `render as <kind>;`）。
+// RenderKind 视图渲染方式 —— 由 `render <RenderingRef>;` 的引用名推导
+// （标准里 render 的参数是 rendering 用法的引用，本实现按名字映射到可用 renderer）。
 type RenderKind string
 
 const (

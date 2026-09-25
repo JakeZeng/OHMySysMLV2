@@ -193,13 +193,13 @@ export const TreeRow: React.FC<TreeRowProps> = ({
         </span>
       )}
 
-      {/* M15：视图节点的 renderKind 徽章（默认 interconnection 不显示，避免噪音） */}
+      {/* M15：视图节点的 renderKind 徽章（由 `render <RenderingRef>;` 推导；默认不显示，避免噪音） */}
       {node.kind === 'view' &&
         node.renderKind &&
         node.renderKind !== 'interconnection' && (
           <span
             data-testid={`tree-renderkind-${node.encodedId}`}
-            title={`render as ${node.renderKind}`}
+            title={`render ${node.renderKind}`}
             className="shrink-0 rounded bg-blue-50 px-1 text-[10px] text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
           >
             {node.renderKind}

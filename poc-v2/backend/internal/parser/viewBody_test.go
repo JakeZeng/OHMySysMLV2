@@ -85,7 +85,8 @@ view V {
 	if len(r.FilterQualifiedNames) != 2 {
 		t.Fatalf("expected 2 filters, got %d: %v", len(r.FilterQualifiedNames), r.FilterQualifiedNames)
 	}
-	want := []string{"SysML::PartDefinition", "SysML::PartUsage"}
+	// 算子文本随名字一起保留（标准形式 `filter @X;` 的算子是语义的一部分）
+	want := []string{"@SysML::PartDefinition", "@SysML::PartUsage"}
 	for i, w := range want {
 		if r.FilterQualifiedNames[i] != w {
 			t.Errorf("filter[%d]: got %q want %q", i, r.FilterQualifiedNames[i], w)
@@ -93,14 +94,113 @@ view V {
 	}
 }
 
+// filter 算子 @ / istype / hastype 与取反 —— 与 TS 语法 tests/parser.test.ts 的期望逐条对齐
+func TestParseViewBody_FilterOperators(t *testing.T) {
+	cases := []struct{ clause, want string }{
+		{"filter @SysML::PartUsage;", "@SysML::PartUsage"},
+		{"filter not @SysML::ConnectionUsage;", "not @SysML::ConnectionUsage"},
+		{"filter istype SysML::PartUsage;", "istype SysML::PartUsage"},
+		{"filter hastype PartDef;", "hastype PartDef"},
+	}
+	for _, c := range cases {
+		t.Run(c.want, func(t *testing.T) {
+			r := ParseViewBody("view V { " + c.clause + " }")
+			if len(r.FilterQualifiedNames) != 1 {
+				t.Fatalf("got %v want [%s]", r.FilterQualifiedNames, c.want)
+			}
+			if r.FilterQualifiedNames[0] != c.want {
+				t.Errorf("got %q want %q", r.FilterQualifiedNames[0], c.want)
+			}
+		})
+	}
+}
+
 func TestParseViewBody_Satisfies(t *testing.T) {
-	content := `view vehicleTree satisfies StakeholderViewpoint {
+	pkgs := FromPackageContentRefs([]model.PackageContentRef{
+		{
+			ID: "p1", Name: "VehicleModel",
+			Content: "package VehicleModel {\n  part def Vehicle;\n  part def Engine;\n  part def Wheel;\n}",
+		},
+	})
+
+	// 标准：render 的参数是渲染用法的限定名引用；expose 用 `::**` 暴露整个命名空间
+	standard := `
+view vehicleTree : 'Part Structure View' {
+    expose VehicleModel::**;
+    filter @SysML::PartUsage;
+    render rendering treeDiagram : TreeRendering;
+    satisfy 'Stakeholder Viewpoint';
+}`
+	r := ParseViewBodyWithPackages(standard, pkgs)
+	if r.RenderKind != model.RenderKindTree {
+		t.Errorf("renderingRef 应推导出 tree，got %q", r.RenderKind)
+	}
+	if r.SatisfiesQualifiedName != "Stakeholder Viewpoint" {
+		t.Errorf("body 内 satisfy: got %q want %q", r.SatisfiesQualifiedName, "Stakeholder Viewpoint")
+	}
+	if len(r.FilterQualifiedNames) != 1 || r.FilterQualifiedNames[0] != "@SysML::PartUsage" {
+		t.Errorf("filters = %v", r.FilterQualifiedNames)
+	}
+	// 通配 expose 校验的是命名空间链，不要求末段是具体 def
+	if len(r.ExposedElements) != 1 {
+		t.Fatalf("通配 expose 应 resolved，got resolved=%v unresolved=%v",
+			r.ExposedElements, r.ExposedElementsUnresolved)
+	}
+	if r.ExposedElements[0].QualifiedName != "VehicleModel::**" ||
+		r.ExposedElements[0].Kind != "Namespace" {
+		t.Errorf("通配 expose = %+v", r.ExposedElements[0])
+	}
+
+	// legacy：body 前的 `satisfies`，容忍继续
+	legacy := `view vehicleTree satisfies StakeholderViewpoint {
     expose VehicleModel::Vehicle;
     render as tree;
 }`
-	r := ParseViewBody(content)
-	if r.SatisfiesQualifiedName != "StakeholderViewpoint" {
-		t.Errorf("got %q want %q", r.SatisfiesQualifiedName, "StakeholderViewpoint")
+	l := ParseViewBody(legacy)
+	if l.SatisfiesQualifiedName != "StakeholderViewpoint" {
+		t.Errorf("legacy satisfies: got %q want %q", l.SatisfiesQualifiedName, "StakeholderViewpoint")
+	}
+	if l.RenderKind != model.RenderKindTree {
+		t.Errorf("legacy render as tree: got %q", l.RenderKind)
+	}
+}
+
+// 标准渲染引用（`render <renderingRef>;` / `render rendering n : Def;`）的 kind 推导
+func TestParseViewBody_RenderRef(t *testing.T) {
+	cases := []struct {
+		clause string
+		want   model.RenderKind
+	}{
+		{"render TreeDiagram;", model.RenderKindTree},
+		{"render rendering treeDiagram : TreeRendering;", model.RenderKindTree},
+		{"render SysML::Rendering::InterconnectionView;", model.RenderKindInterconnection},
+		{"render RequirementTable;", model.RenderKindRequirement},
+		{"render SomeUnknownRendering;", model.RenderKindInterconnection},
+	}
+	for _, c := range cases {
+		t.Run(c.clause, func(t *testing.T) {
+			r := ParseViewBody("view V { " + c.clause + " }")
+			if r.RenderKind != c.want {
+				t.Errorf("got %q want %q", r.RenderKind, c.want)
+			}
+		})
+	}
+}
+
+// 带空格的单引号名称（标准名称语法）在路径规范化后应可解析到包名
+func TestParseViewBody_QuotedNames(t *testing.T) {
+	pkgs := FromPackageContentRefs([]model.PackageContentRef{
+		{
+			ID: "p1", Name: "Vehicle Model",
+			Content: "package 'Vehicle Model' {\n  part def Vehicle;\n}",
+		},
+	})
+	r := ParseViewBodyWithPackages(`view V { expose 'Vehicle Model'::Vehicle; }`, pkgs)
+	if len(r.ExposedElements) != 1 {
+		t.Fatalf("resolved=%v unresolved=%v", r.ExposedElements, r.ExposedElementsUnresolved)
+	}
+	if r.ExposedElements[0].QualifiedName != "Vehicle Model::Vehicle" {
+		t.Errorf("got %q want %q", r.ExposedElements[0].QualifiedName, "Vehicle Model::Vehicle")
 	}
 }
 

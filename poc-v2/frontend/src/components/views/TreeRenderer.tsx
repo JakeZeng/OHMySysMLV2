@@ -1,5 +1,5 @@
 /**
- * M15 TreeRenderer — `render as tree` 的视图渲染器。
+ * M15 TreeRenderer — 渲染引用名含 tree 的视图（如 `render TreeDiagram;`）的渲染器。
  *
  * 把 view 的 expose 引用按 SysML v2 qualified name（`A::B::C`）建成一棵
  * ownership 树，直观展示「视图投影了哪些命名空间下的元素」：

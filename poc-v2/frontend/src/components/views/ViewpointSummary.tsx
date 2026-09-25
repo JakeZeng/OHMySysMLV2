@@ -2,10 +2,10 @@
  * M15 ViewpointSummary — 视图顶部条，展示 SysML v2 §7.26 视图的元数据。
  *
  * 内容（全部解析自 view content，后端缓存）：
- *   - render as <kind>     渲染方式（决定 renderer）
- *   - satisfies <VP>       满足的 Viewpoint（可点击跳转）
- *   - filter @X;           元类过滤规则
- *   - expose 计数           resolved 绿 / unresolved 红（点击可展开详情）
+ *   - render <RenderingRef>  渲染方式（由渲染引用的名字推导出 renderer）
+ *   - satisfies <VP>         满足的 Viewpoint（可点击跳转）
+ *   - filter @X;             元类过滤规则（算子随名字一起展示）
+ *   - expose 计数            resolved 绿 / unresolved 红（点击可展开详情）
  *
  * 这些字段是「视图如何建模/如何呈现」的声明性元数据，与画布内容正交。
  */
@@ -49,7 +49,7 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
     >
       <span className="flex items-center gap-1">
         <Eye className="h-3 w-3 text-brand-500" />
-        <span className="text-gray-400">render as</span>
+        <span className="text-gray-400">render</span>
         <span
           data-testid="view-render-kind"
           className="rounded bg-blue-100 px-1.5 font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
@@ -86,7 +86,7 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
               key={f}
               className="rounded bg-violet-100 px-1.5 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200"
             >
-              @{f}
+              {f}
             </span>
           ))}
         </span>

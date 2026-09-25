@@ -1,11 +1,20 @@
 // Package parser 提供 SysML v2 文本的轻量级解析能力。
 //
-// M15 升级：view body 解析从单子句（仅 expose）扩展到完整子句集：
-//   - `expose A::B::C;`              跨包引用
-//   - `render as <kind>;`            渲染方式（interconnection/tree/...）
-//   - `filter @X::Y;`                元类过滤
-//   - `view Name satisfies VP;`      满足的 Viewpoint
+// M15 升级：view body 解析从单子句（仅 expose）扩展到完整子句集。
+//
+// **标准形式**（ptc/25-04-06 §7.26）：
+//   - `expose A::B::C;` / `expose A::**;`   跨包引用 / 递归通配
+//   - `render asTreeDiagram;`               引用 rendering usage（标准）
+//   - `render rendering n : Def;`           声明式 rendering（标准）
+//   - `filter @X;` / `filter not @X;` / `filter istype X;` / `filter hastype X;`
+//   - `satisfy 'a viewpoint';`              body 内子句（标准位置）
 //   - body 内嵌 def（part def X / requirement def Y 等） → InnerElement
+//
+// **legacy 形式**（本 POC 早期自造，继续容忍以免历史内容失效）：
+//   - `render as <kind>;`                   枚举而非 rendering 引用
+//   - `view Name satisfies VP { }`           satisfy 出现在 body 前
+//
+// 名字允许单引号（`'Part Structure View'`，可含空格）—— 标准名字语法。
 //
 // 路径 resolve：handler 层传入 projectPackages，验证 expose 路径是否能定位到包内 def。
 // resolved 列表与 unresolved 列表分离（带 reason）。
@@ -20,19 +29,35 @@ import (
 
 // ─── 正则定义 ─────────────────────────────────────────────────────────
 
-var (
-	// expose 路径：`expose A::B::C;` 或 `expose A.B.C;`
-	exposePathRe = regexp.MustCompile(`\bexpose\b\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*(?:::|\.)\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*;`)
+// namePat / qnamePat：SysML v2 名字可用单引号包裹（可含空格）。
+const (
+	namePat  = `(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)`
+	qnamePat = namePat + `(?:\s*(?:::|\.)\s*` + namePat + `)*`
+)
 
-	// render 子句：`render as <kind>;`
+var (
+	// expose 路径：`expose A::B::C;` / `expose A.B.C;` / `expose A::**;`
+	// 第二捕获组非空表示递归通配（暴露整个命名空间的成员）。
+	exposePathRe = regexp.MustCompile(`\bexpose\b\s+(` + qnamePat + `)\s*(::\s*\*\*)?\s*;`)
+
+	// legacy render：`render as <kind>;`
 	renderAsRe = regexp.MustCompile(`\brender\s+as\s+(tree|interconnection|state|action|requirement|snapshot)\s*;`)
 
-	// filter 子句：`filter @X::Y;`
-	filterAtRe = regexp.MustCompile(`\bfilter\s+@([A-Za-z_][A-Za-z0-9_]*(?:\s*(?:::|\.)\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*;`)
+	// 标准 render（声明式）：`render rendering name : Def;`
+	renderDeclRe = regexp.MustCompile(`\brender\s+rendering\s+` + namePat + `\s*:\s*(` + qnamePat + `)\s*;`)
 
-	// satisfies 子句：`view Name satisfies X::Y;`（顶层 view usage 形式）
-	// 注意：必须位于 view body 内；用简单的关键字前后空白匹配
-	satisfiesRe = regexp.MustCompile(`\bview\s+([A-Za-z_][A-Za-z0-9_]*)\s+satisfies\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*(?:::|\.)\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\{`)
+	// 标准 render（引用式）：`render asTreeDiagram;`
+	renderRefRe = regexp.MustCompile(`\brender\s+(` + qnamePat + `)\s*;`)
+
+	// filter 子句：`filter @X::Y;` / `filter not @X;` / `filter istype X;` / `filter hastype X;`
+	// 第一捕获组是「取反 + 算子」前缀，第二捕获组是 qualified name。
+	filterRe = regexp.MustCompile(`\bfilter\s+((?:not\s+)?(?:@|istype\s+|hastype\s+)?)(` + qnamePat + `)\s*;`)
+
+	// 标准 satisfy 子句（body 内）：`satisfy 'a viewpoint';`
+	satisfyRe = regexp.MustCompile(`\bsatisfy\s+(` + qnamePat + `)\s*;`)
+
+	// legacy satisfies 子句：`view Name satisfies X::Y {`
+	satisfiesRe = regexp.MustCompile(`\bview\s+` + namePat + `\s+satisfies\s+(` + qnamePat + `)\s*\{`)
 
 	// 内嵌元素定义（简化版）
 	// 匹配 `part def X { ... }` / `port def X` / `requirement def X` 等
@@ -98,29 +123,40 @@ func ParseViewBody(content string) ParsedViewBody {
 		return out
 	}
 
-	// 1. render as
-	if m := renderAsRe.FindStringSubmatch(content); m != nil {
-		out.RenderKind = model.RenderKind(m[1])
+	// 1. render —— 标准形式优先，legacy `render as <kind>` 兜底
+	switch {
+	case renderDeclRe.MatchString(content):
+		m := renderDeclRe.FindStringSubmatch(content)
+		out.RenderKind = renderKindFromRef(m[1])
+	case renderAsRe.MatchString(content):
+		out.RenderKind = model.RenderKind(renderAsRe.FindStringSubmatch(content)[1])
+	default:
+		// 排除 `render rendering …` 已被上面接走的情况，剩下的裸引用才是标准引用式
+		if m := renderRefRe.FindStringSubmatch(content); m != nil && !strings.HasPrefix(m[1], "rendering") {
+			out.RenderKind = renderKindFromRef(m[1])
+		}
 	}
 
-	// 2. filter @
-	filterMatches := filterAtRe.FindAllStringSubmatch(content, -1)
+	// 2. filter（含取反与算子）—— 保留算子文本，便于 UI 如实回显
+	filterMatches := filterRe.FindAllStringSubmatch(content, -1)
 	seenFilter := map[string]struct{}{}
 	for _, m := range filterMatches {
-		fqn := normalizePath(m[1])
-		if fqn == "" {
+		text := filterPrefix(m[1]) + normalizePath(m[2])
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		if _, dup := seenFilter[fqn]; dup {
+		if _, dup := seenFilter[text]; dup {
 			continue
 		}
-		seenFilter[fqn] = struct{}{}
-		out.FilterQualifiedNames = append(out.FilterQualifiedNames, fqn)
+		seenFilter[text] = struct{}{}
+		out.FilterQualifiedNames = append(out.FilterQualifiedNames, text)
 	}
 
-	// 3. satisfies
-	if m := satisfiesRe.FindStringSubmatch(content); m != nil {
-		out.SatisfiesQualifiedName = normalizePath(m[2])
+	// 3. satisfy —— 标准位置是 body 内子句；legacy 是 body 前的 `satisfies`
+	if m := satisfyRe.FindStringSubmatch(content); m != nil {
+		out.SatisfiesQualifiedName = normalizePath(m[1])
+	} else if m := satisfiesRe.FindStringSubmatch(content); m != nil {
+		out.SatisfiesQualifiedName = normalizePath(m[1])
 	}
 
 	// 4. 内嵌元素定义
@@ -150,23 +186,65 @@ func ParseViewBody(content string) ParsedViewBody {
 	exposeMatches := exposePathRe.FindAllStringSubmatch(content, -1)
 	seenExpose := map[string]struct{}{}
 	for _, m := range exposeMatches {
-		raw := strings.TrimSpace(m[1])
-		normalized := normalizePath(raw)
+		normalized := normalizePath(m[1])
 		if normalized == "" {
 			continue
 		}
-		if _, dup := seenExpose[normalized]; dup {
+		// `expose A::**;` —— 暴露命名空间全部（递归）成员。
+		// 它不对应单个元素，所以 Kind 标为 Namespace，resolve 时只校验命名空间存在。
+		wildcard := strings.TrimSpace(m[2]) != ""
+		key := normalized
+		if wildcard {
+			key = normalized + "::**"
+		}
+		if _, dup := seenExpose[key]; dup {
 			continue
 		}
-		seenExpose[normalized] = struct{}{}
+		seenExpose[key] = struct{}{}
 		kind := inferKind(content, normalized)
+		if wildcard {
+			kind = "Namespace"
+		}
 		out.ExposedElements = append(out.ExposedElements, model.ExposedElement{
-			QualifiedName: normalized,
+			QualifiedName: key,
 			Kind:          kind,
 		})
 	}
 
 	return out
+}
+
+// renderKindFromRef 从 rendering usage 的引用名推断渲染方式。
+//
+// 标准**不规定**渲染怎么做 —— "SysML provides no specific constructs for specifying
+// how a view is rendered"，rendering 定义由工具/用户库提供，名字本身无固定含义。
+// 所以这里只能按名字猜：去掉 `as` 前缀与 Diagram/View/Table 后缀再小写，命中已知
+// 种类即用。这是本 POC 的约定，不是标准；认不出来回落到 interconnection。
+//
+// 与前端 parser 的 deriveRenderKind 保持同一套规则（两边都会独立算一次）。
+func renderKindFromRef(ref string) model.RenderKind {
+	base := ref
+	if i := strings.LastIndex(base, "::"); i >= 0 {
+		base = base[i+2:]
+	}
+	low := strings.ToLower(strings.Trim(base, "'"))
+	low = strings.TrimPrefix(low, "as")
+	for _, suffix := range []string{"diagram", "view", "table"} {
+		low = strings.TrimSuffix(low, suffix)
+	}
+	for _, k := range []model.RenderKind{
+		model.RenderKindInterconnection,
+		model.RenderKindRequirement,
+		model.RenderKindSnapshot,
+		model.RenderKindState,
+		model.RenderKindAction,
+		model.RenderKindTree,
+	} {
+		if strings.Contains(low, string(k)) {
+			return k
+		}
+	}
+	return model.RenderKindInterconnection
 }
 
 // ParseViewBodyWithPackages 解析 + 跨包路径 resolve 校验。
@@ -276,22 +354,40 @@ func FromPackageContentRefs(refs []model.PackageContentRef) []PackageRef {
 //   - ok=false → reason 说明失败在哪一段
 func resolvePath(qualifiedName string, childrenOf map[string][]PackageRef) (string, string, bool) {
 	segments := strings.Split(qualifiedName, "::")
-	if len(segments) < 2 {
+	// `Pkg::**` —— 递归通配暴露整个命名空间，不对应单个元素
+	wildcard := segments[len(segments)-1] == "**"
+	if wildcard {
+		segments = segments[:len(segments)-1]
+	}
+	if len(segments) < 2 && !wildcard {
 		return "", "qualified name must be at least Pkg::Element", false
 	}
 
-	// 第一段：顶级包
-	current, found := findChildByName(childrenOf[""], segments[0])
-	if !found {
-		return "", "top-level package not found: " + segments[0], false
+	// 非通配时最后一段是元素名，其余是命名空间链；通配时整条都是命名空间链
+	nsSegs := segments
+	if !wildcard {
+		nsSegs = segments[:len(segments)-1]
+	}
+	if len(nsSegs) == 0 {
+		return "", "qualified name must name at least a namespace", false
 	}
 
-	// 中间段：嵌套包（除最后一段）
-	for i := 1; i < len(segments)-1; i++ {
-		current, found = findChildByName(childrenOf[current.ID], segments[i])
+	// 第一段：顶级包
+	current, found := findChildByName(childrenOf[""], nsSegs[0])
+	if !found {
+		return "", "top-level package not found: " + nsSegs[0], false
+	}
+
+	// 其余段：嵌套包
+	for i := 1; i < len(nsSegs); i++ {
+		current, found = findChildByName(childrenOf[current.ID], nsSegs[i])
 		if !found {
-			return "", "nested package not found: " + segments[i], false
+			return "", "nested package not found: " + nsSegs[i], false
 		}
+	}
+
+	if wildcard {
+		return "Namespace", "", true
 	}
 
 	defName := segments[len(segments)-1]
@@ -342,17 +438,40 @@ func findDefKind(content, name string) string {
 
 // ─── 工具函数 ────────────────────────────────────────────────────────
 
-// normalizePath 把 `A.B.C` 或 `A :: B :: C` 统一为 `A::B::C`，并修剪空白。
+// sepSpaceRe 匹配分隔符两侧的空白，用于 `A :: B` → `A::B`。
+// 只吃分隔符旁的空白（而非全部空白），因为标准名称 `'My Model'` 里的空格是名字的一部分。
+var sepSpaceRe = regexp.MustCompile(`\s*(::|\.)\s*`)
+
+// normalizePath 把 `A.B.C` / `A :: B :: C` / `'My Model'::'Part A'` 统一为
+// `A::B::C` / `My Model::Part A`，并修剪空白、去掉标准名称的单引号。
 func normalizePath(p string) string {
 	if p == "" {
 		return ""
 	}
-	noSpace := strings.Join(strings.Fields(p), "")
-	noSpace = strings.ReplaceAll(noSpace, ".", "::")
-	if noSpace == "" {
+	out := sepSpaceRe.ReplaceAllString(strings.TrimSpace(p), "$1")
+	out = strings.ReplaceAll(out, ".", "::")
+	out = strings.ReplaceAll(out, "'", "")
+	if out == "" {
 		return ""
 	}
-	return noSpace
+	return out
+}
+
+// filterPrefix 规范化 filter 算子文本，与 TS 语法保持一致：
+//
+//	@X / not @X / istype X / hastype X / X
+//
+// `@` 直接贴名字，istype / hastype 后用空格分隔（与 parser/sysml.pegjs 的 FilterExprText 对齐）。
+func filterPrefix(raw string) string {
+	op := strings.Join(strings.Fields(raw), " ")
+	switch {
+	case op == "":
+		return ""
+	case strings.HasSuffix(op, "@"):
+		return op // `@` 与 `not @` 都直接贴名字
+	default:
+		return op + " "
+	}
 }
 
 // inferKind 在 content 中查找定义语句，把最后一段映射到 kind。

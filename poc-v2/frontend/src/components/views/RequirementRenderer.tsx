@@ -1,5 +1,5 @@
 /**
- * M15 RequirementRenderer — `render as requirement` 的视图渲染器。
+ * M15 RequirementRenderer — 渲染引用名含 requirement 的视图（如 `render RequirementTable;`）的渲染器。
  *
  * 从 view 的 expose 引用 + owned 元素中筛出 RequirementDef / RequirementUsage，
  * 表格化展示（名称 / 类型 / 来源 / 状态）。SysML v2 需求视图的核心诉求是

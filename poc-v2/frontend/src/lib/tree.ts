@@ -56,7 +56,7 @@ export interface TreeNode {
   elementOwnerKind?: 'package' | 'view' | 'viewpoint';
   /** M15：视角的利益相关方（UI hint；显示在徽章上） */
   viewpointStakeholder?: string;
-  /** M15：视图渲染方式（`render as <kind>`，决定打开时走哪个 renderer） */
+  /** M15：视图渲染方式（由 `render <RenderingRef>;` 的引用名推导，决定打开时走哪个 renderer） */
   renderKind?: string;
   /** M15：视图种类（definition = 模板 / usage = 实例） */
   viewKind?: 'definition' | 'usage';

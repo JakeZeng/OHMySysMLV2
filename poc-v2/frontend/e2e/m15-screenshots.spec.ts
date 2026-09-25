@@ -34,12 +34,14 @@ const SHOT_DIR = '../docs/screenshots/m15';
  *
  *   viewpoint SafetyViewpoint             ← 利益相关方关注点
  *
- *   view StructureView satisfies SafetyViewpoint { expose VehicleModel::Vehicle; render as tree; }
- *   view RequirementsView { expose Reqs::SafetyReq; expose Reqs::PerfReq;
- *                           expose VehicleModel::MissingThing; render as requirement; }
- *   view LocalHelperView { part def HelperPort; expose VehicleModel::Vehicle; }  ← view-private (09)
- *   view BehaviorView  { expose VehicleModel::Vehicle; render as state; }        ← 复用 (10)
- *   view AuditView     { expose VehicleModel::Vehicle; render as snapshot; }     ← 复用 (10)
+ *   view def StructureView { expose …; satisfy SafetyViewpoint; render TreeDiagram; }
+ *   view def RequirementsView { expose …; render RequirementTable; }
+ *   view def LocalHelperView { part def HelperPort; expose …; }                  ← view-private (09)
+ *   view def BehaviorView { expose …; render StateDiagram; }                     ← 复用 (10)
+ *   view def AuditView    { expose …; render SnapshotDiagram; }                  ← 复用 (10)
+ *
+ * content 一律用 §7.26 标准写法：`view def <名> { … }`、
+ * `satisfy <Viewpoint>;`（body 内子句）、`render <RenderingRef>;`（渲染用法的引用名）。
  */
 // 注意：语法上 `port def X;`（无 body）暂时解析不了，端口统一用 part def 作类型。
 const VEHICLE_PKG = `package VehicleModel {
@@ -60,37 +62,38 @@ const REQS_PKG = `package Reqs {
 }
 `;
 
-const VIEW_STRUCTURE = `view StructureView satisfies SafetyViewpoint {
+const VIEW_STRUCTURE = `view def StructureView {
   expose VehicleModel::Vehicle;
   expose VehicleModel::Engine;
-  render as tree;
+  satisfy SafetyViewpoint;
+  render TreeDiagram;
 }
 `;
 
-const VIEW_REQUIREMENTS = `view RequirementsView {
+const VIEW_REQUIREMENTS = `view def RequirementsView {
   expose Reqs::SafetyReq;
   expose Reqs::PerfReq;
   expose VehicleModel::MissingThing;
-  render as requirement;
+  render RequirementTable;
 }
 `;
 
-const VIEW_LOCAL_HELPER = `view LocalHelperView {
+const VIEW_LOCAL_HELPER = `view def LocalHelperView {
   part def HelperPort;
   expose VehicleModel::Vehicle;
-  render as interconnection;
+  render InterconnectionView;
 }
 `;
 
-const VIEW_BEHAVIOR = `view BehaviorView {
+const VIEW_BEHAVIOR = `view def BehaviorView {
   expose VehicleModel::Vehicle;
-  render as state;
+  render StateDiagram;
 }
 `;
 
-const VIEW_AUDIT = `view AuditView {
+const VIEW_AUDIT = `view def AuditView {
   expose VehicleModel::Vehicle;
-  render as snapshot;
+  render SnapshotDiagram;
 }
 `;
 
@@ -189,7 +192,9 @@ async function createViewpoint(
       stakeholder,
       concern,
       description: `${name} 视角`,
-      content: `viewpoint ${name} {\n  stakeholder: ${stakeholder};\n  concern: ${concern};\n}\n`,
+      // §7.26：ViewpointDefinition 用 `viewpoint def`；stakeholder/concern 走 API 字段
+      // （标准正文没有 stakeholder/concern 子句，那是本 POC 的元数据扩展）
+      content: `viewpoint def ${name} {\n  subject : Vehicle;\n}\n`,
     },
   });
   if (!r.ok()) throw new Error(`createViewpoint ${r.status()}: ${await r.text()}`);
@@ -376,7 +381,7 @@ test.describe.serial('M15 截图归档', () => {
     await page.waitForTimeout(300);
 
     // 02：renderKind 徽章 —— 把 4 个 view 行一起框进来，
-    //     展示 `render as <kind>` 的取值多样性（snapshot / state / 空 / tree）
+    //     展示 `render <RenderingRef>;` 引用名推导出的取值多样性（snapshot / state / 空 / tree）
     await expect(
       page.locator(`[data-testid="tree-renderkind-view:${s.vStructure}"]`).first(),
     ).toBeVisible({ timeout: 8000 });
@@ -497,7 +502,7 @@ test.describe.serial('M15 截图归档', () => {
   });
 
   // ── 04：TreeRenderer ──────────────────────────────────────
-  test('04. render as tree 的渲染结果', async ({ page, request }) => {
+  test('04. render TreeDiagram 的渲染结果', async ({ page, request }) => {
     const auth = await bootstrap(request, 'm15shot4');
     const s = await seed(request, auth);
     await injectAuth(page, auth);
@@ -507,7 +512,7 @@ test.describe.serial('M15 截图归档', () => {
     await expect(page.locator('[data-testid="tree-renderer"]').first()).toBeVisible({
       timeout: 15_000,
     });
-    // 顶部条应显示 render as 结构树 + resolve 计数
+    // 顶部条应显示 render 结构树 + resolve 计数
     await expect(page.locator('[data-testid="view-render-kind"]').first()).toHaveText(
       /结构树/,
     );
@@ -516,7 +521,7 @@ test.describe.serial('M15 截图归档', () => {
   });
 
   // ── 05 / 06：RequirementRenderer + resolve 状态 ────────────
-  test('05,06. render as requirement 的渲染结果 + resolved/unresolved 状态', async ({
+  test('05,06. render RequirementTable 的渲染结果 + resolved/unresolved 状态', async ({
     page,
     request,
   }) => {
@@ -601,11 +606,12 @@ test.describe.serial('M15 截图归档', () => {
     await updateView(request, auth, usage.id, {
       name: usage.name,
       version: usage.version,
+      // 标准 ViewUsage 形式：`view <名> : <ViewDefinition 引用> { … }`
       content: [
-        `view ${usage.name} {`,
+        `view ${usage.name} : StructureView {`,
         '  expose VehicleModel::Vehicle;',
         '  expose VehicleModel::Nope;',
-        '  render as tree;',
+        '  render TreeDiagram;',
         '}',
         '',
       ].join('\n'),
@@ -616,7 +622,7 @@ test.describe.serial('M15 截图归档', () => {
     await expect(sum).toBeVisible({ timeout: 15_000 });
     await expect(sum).toContainText(/1 resolved/);
     await expect(sum).toContainText(/1 unresolved/);
-    // render as tree 是在实例自己的 content 里生效的
+    // render TreeDiagram 是在实例自己的 content 里生效的
     await expect(page.locator('[data-testid="tree-renderer"]').first()).toBeVisible();
   });
 

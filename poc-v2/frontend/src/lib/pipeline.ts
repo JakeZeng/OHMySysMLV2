@@ -36,6 +36,7 @@ export const EMPTY_MODEL: SysMLModel = {
   enums: [],
   comments: [],
   views: [],
+  viewpoints: [],
 };
 
 export const EMPTY_PIPELINE: PipelineResult = {

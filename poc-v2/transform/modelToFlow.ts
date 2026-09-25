@@ -86,10 +86,13 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
   for (const pkg of model.packages) {
     collectMembers(pkg, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
-  // M15 §7.26：view 是 Namespace，body 内的 owned 成员也要上图
+  // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
     collectMembers(v, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+  }
+  for (const vp of model.viewpoints ?? []) {
+    collectMembers(vp, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   connections.push(...model.connections);
   stateMachines.push(...model.stateMachines);

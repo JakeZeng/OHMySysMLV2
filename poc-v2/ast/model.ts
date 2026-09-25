@@ -255,17 +255,61 @@ export interface SysMLView {
   kind: 'view';
   id: string;
   name: string;
-  /** `view def Name` 形式（ViewDefinition）vs `view Name` 简写 */
+  /**
+   * 声明形式（§7.26）：
+   *   - `definition`  ← `view def Name { }`        （ViewDefinition）
+   *   - `usage`       ← `view Name : Def { }`       （ViewUsage，标准形式）
+   *   - `shorthand`   ← `view Name { }`             （ViewUsage 省略 `: Def`，语法里 `type?` 可选）
+   */
+  declKind?: 'definition' | 'usage' | 'shorthand';
+  /** 兼容位：`declKind === 'definition'` */
   isDefinition?: boolean;
-  /** 解析自 `view V satisfies VP;` 的 VP qualified name */
+  /** ViewUsage 的实例化目标，解析自 `view Name : Def` */
+  viewDefinitionRef?: string;
+  /** 解析自 `view Name :> Base;` 的特化目标 */
+  specializes?: string;
+  /**
+   * 被满足的 Viewpoint qualified name。
+   * 标准位置是 body 内的 `satisfy X;`；body 前的 `satisfies X` 是 legacy 写法。
+   */
   satisfies?: string;
-  /** `expose A::B::C;` 列表（引用，不改变元素归属） */
+  /** `expose A::B::C;` / `expose A::**;` 列表（引用，不改变元素归属） */
   reveals: string[];
-  /** `filter @X;` 列表 */
+  /** filter 条件列表，标准形式含算子与取反，如 `not @SysML::ConnectionUsage` */
   filters: string[];
-  /** 解析自 `render as <kind>;` */
+  /** 路由到哪个 renderer */
   renderKind?: string;
+  /**
+   * 解析自 `render X;` / `render rendering n : X;` 的 rendering usage 引用。
+   * 标准把「怎么渲染」交给工具提供的 rendering 库，名字本身无固定含义。
+   */
+  renderingRef?: string;
   /** body 内 owned 成员（与 package body 同一套成员规则） */
+  members: NamespaceMember[];
+  location: SourceLocation;
+}
+
+/**
+ * §7.26 Viewpoint —— 标准里 ViewpointDefinition 是 RequirementDefinition 的一种特化，
+ * 利益相关方关注点通过需求式成员（`subject : Vehicle;`）表达。
+ *
+ * `stakeholders` / `concerns` 是**非标准**的 legacy 元数据（本 POC 自造），保留只为
+ * 不让历史内容报错；新内容应改用 `subject`。
+ */
+export interface SysMLViewpoint {
+  kind: 'viewpoint';
+  id: string;
+  name: string;
+  declKind?: 'definition' | 'usage' | 'shorthand';
+  isDefinition?: boolean;
+  /** 解析自 `viewpoint Name : Def` */
+  viewpointDefinitionRef?: string;
+  /** 标准：`subject : Vehicle;` */
+  subject?: string;
+  /** legacy（非标准）：`stakeholder: X;` 列表 */
+  stakeholders: string[];
+  /** legacy（非标准）：`concern: X;` 列表 */
+  concerns: string[];
   members: NamespaceMember[];
   location: SourceLocation;
 }
@@ -290,6 +334,8 @@ export interface SysMLModel {
   comments: CommentBlock[];
   /** M15 §7.26：顶层 view（ViewDefinition / ViewUsage） */
   views: SysMLView[];
+  /** M15 §7.26：Viewpoint —— 与 view 并列的顶层 Namespace 类别 */
+  viewpoints: SysMLViewpoint[];
 }
 
 // ─── Parser Result ──────────────────────────────────────────────────────

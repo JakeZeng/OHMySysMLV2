@@ -6,7 +6,7 @@ import "time"
 // ViewDefinition 表示一个 SysML v2 ViewDefinition（M15 引入）。
 //
 // SysML v2 spec §7.26：ViewDefinition 是"模板"性质的视图定义，
-// 描述渲染/过滤规则（render as / filter @），不包含具体 expose 路径。
+// 描述渲染/过滤规则（render <RenderingRef> / filter @），不包含具体 expose 路径。
 // ViewDefinition 可以被 ViewUsage 实例化（通过 view_definition_id 关联）。
 //
 // MVP 存储实现：共用 `views` 表 + kind='definition' 区分。
