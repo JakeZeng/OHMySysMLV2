@@ -213,6 +213,50 @@ async function createView(
   return j?.data?.id ?? j?.id ?? '';
 }
 
+/**
+ * mutating 请求的 CSRF header。
+ *
+ * 前端 `services/api.ts` 的拦截器从 `csrf_token` cookie 读取后注入 `X-CSRF-Token`，
+ * E2E 这里手动做同一件事。注意 CSRF 跳过列表里有 `/api/v1/projects/*`（所以建视图的
+ * POST 不需要）却没有 `/api/v1/views/*` —— PUT 保存视图内容必须带 header。
+ */
+async function csrfHeaders(
+  request: APIRequestContext,
+  auth: Auth,
+): Promise<Record<string, string>> {
+  const state = await request.storageState();
+  const csrf = state.cookies.find((c) => c.name === 'csrf_token')?.value;
+  return { ...authHeaders(auth), ...(csrf ? { 'X-CSRF-Token': csrf } : {}) };
+}
+
+async function listViews(request: APIRequestContext, auth: Auth): Promise<any[]> {
+  const r = await request.get(`/api/v1/projects/${auth.projectId}/views`, {
+    headers: authHeaders(auth),
+  });
+  if (!r.ok()) throw new Error(`listViews ${r.status()}: ${await r.text()}`);
+  const j = await r.json();
+  return j?.data ?? j ?? [];
+}
+
+async function updateView(
+  request: APIRequestContext,
+  auth: Auth,
+  id: string,
+  patch: { name: string; content: string; version: number },
+): Promise<void> {
+  const r = await request.put(`/api/v1/views/${id}`, {
+    headers: await csrfHeaders(request, auth),
+    data: {
+      ...patch,
+      description: '',
+      colorTag: '',
+      renderingCategory: '',
+      metadata: {},
+    },
+  });
+  if (!r.ok()) throw new Error(`updateView ${r.status()}: ${await r.text()}`);
+}
+
 /** 建好全部固定数据，返回各实体 ID */
 async function seed(request: APIRequestContext, auth: Auth) {
   const vehPkg = await createPackage(request, auth, 'VehicleModel', VEHICLE_PKG);
@@ -544,6 +588,36 @@ test.describe.serial('M15 截图归档', () => {
     await expect(usageBadge).toHaveText('实例');
     await page.waitForTimeout(600);
     await shot(page, '18-viewusage-instance-badge.png');
+
+    // ── 实例不能只是"多了一行" ────────────────────────────────
+    // 骨架 content 全是注释，所以 17/18 的画布空、expose 为空是预期。
+    // 这里给它真实的 expose 子句，验证 §7.26 的 resolved/unresolved 在
+    // ViewUsage 上走的是和 ViewDefinition 同一条路径。
+    const usage = (await listViews(request, auth)).find((v: any) => v.kind === 'usage');
+    expect(usage, '新建的 ViewUsage 应出现在工程视图列表中').toBeTruthy();
+    // 实例与模板的链接真的落库了（不只是前端徽章）
+    expect(usage.viewDefinitionId).toBe(s.vStructure);
+
+    await updateView(request, auth, usage.id, {
+      name: usage.name,
+      version: usage.version,
+      content: [
+        `view ${usage.name} {`,
+        '  expose VehicleModel::Vehicle;',
+        '  expose VehicleModel::Nope;',
+        '  render as tree;',
+        '}',
+        '',
+      ].join('\n'),
+    });
+
+    await page.goto(`/projects/${auth.projectId}?view=${usage.id}`);
+    const sum = page.locator('[data-testid="view-expose-summary"]').first();
+    await expect(sum).toBeVisible({ timeout: 15_000 });
+    await expect(sum).toContainText(/1 resolved/);
+    await expect(sum).toContainText(/1 unresolved/);
+    // render as tree 是在实例自己的 content 里生效的
+    await expect(page.locator('[data-testid="tree-renderer"]').first()).toBeVisible();
   });
 
   // ── 19：Promote to Package（view-private → 包）──────────────
