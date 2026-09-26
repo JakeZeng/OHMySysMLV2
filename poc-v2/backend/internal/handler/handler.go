@@ -381,30 +381,8 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		serverError(c, "创建项目失败", err)
 		return
 	}
-	// 自动建默认根 Package（与项目同名，作为初始工作区）。
-	// modernc.org/sqlite + SetMaxOpenConns(1) 保证这里两次写入在同一连接上原子；
-	// 但为避免项目行建好后默认包失败留下"空项目"，失败时回滚项目行。
-	defaultPkg := &model.Package{
-		ID:        uuid.NewString(),
-		ProjectID: p.ID,
-		Name:      p.Name,
-		Version:   1,
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}
-	if err := h.repo.CreatePackage(c, defaultPkg); err != nil {
-		// 回滚项目行（避免项目存在但无默认包的不一致状态）
-		if delErr := h.repo.DeleteProject(c, p.ID); delErr != nil {
-			serverError(c, "创建默认包失败且回滚项目失败", fmt.Errorf("%w; rollback err: %v", err, delErr))
-			return
-		}
-		serverError(c, "创建默认根 Package 失败", err)
-		return
-	}
 	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetProject, p.ID,
 		`{"name":"`+escapeJSON(p.Name)+`","visibility":"`+p.Visibility+`"}`)
-	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetPackage, defaultPkg.ID,
-		`{"name":"`+escapeJSON(defaultPkg.Name)+`","project":"`+p.ID+`","auto":true}`)
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 

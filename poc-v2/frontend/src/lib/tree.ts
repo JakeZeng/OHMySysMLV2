@@ -121,35 +121,18 @@ function buildElementNode(
 }
 
 /**
- * M16：找出与项目同名的顶级包（创建项目时自动建的根 Package）。
- *
- * 若存在 → 让该包直接成为树的根节点（替代 'project' 节点），
- * 这样所有顶级 Package / View / Viewpoint 都挂在这个根 Package 下。
- * 优点：
- *   1. 树根与 SysML 实体对齐（Project 是我们的域容器，Package 才是 SysML 世界起点）
- *   2. 进入工程直接看到根 Package，符合「项目创建时自动建默认根 Package」的预期
- *   3. 用户在根 Package 上右键"新建子包/视图/视角"等菜单直接生效，无需双层跳转
- */
-function findRootPackage(
-  packages: PackageSummary[],
-  projectName: string,
-): PackageSummary | undefined {
-  return packages.find(
-    (p) => p.parentPackageId === '' && p.name === projectName,
-  );
-}
-
-/**
  * 构建工程树。
  *
- * 树根策略（M16）：
- *   - 若存在与项目同名的顶级包 → 让该包成为树根（覆盖 'project' 节点）
- *   - 否则回退：根 = 合成 'project' 节点（向后兼容旧数据）
+ * 树根策略（M16 用户澄清版）：
+ *   - 树根始终是合成的 'project' 节点（项目实体）
+ *   - 'project' 节点本身就是 SysML 命名空间根（即"特殊的根包节点"），
+ *     无需另外建一个与项目同名的 Package
+ *   - 用户在画布上新增 def/usage 时落到 project 节点下（即顶级 Package 节点）
  *
  * 容错策略：
- * - 父包不存在的包 → 挂到树根（不丢数据）
- * - packageId 不存在的视图 → 挂到树根
- * - 父子成环的包 → 断开环后挂到树根
+ * - 父包不存在的包 → 挂到工程根（不丢数据）
+ * - packageId 不存在的视图 → 挂到工程根
+ * - 父子成环的包 → 断开环后挂到工程根
  * - M14：packageElements[packageId] 注入的元素节点 → 挂在对应包下
  * - M15：viewpoints 节点 → 按 packageId 分组挂在对应包下；packageId 不存在时挂顶层
  *
@@ -166,11 +149,6 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   } = input;
 
   const packageIds = new Set(packages.map((p) => p.id));
-  const rootPkg = findRootPackage(packages, projectName);
-  // 根 Package 的 ID（决定"顶层"挂载点）：找到则用它，否则用 ''（fallback 给 project 节点）
-  const rootPkgId = rootPkg?.id ?? '';
-  const rootPkgParentKey = ''; // 原本挂在 '' 下的顶级包要重挂到 rootPkg 下
-  const rootKeyForViews = rootPkg ? rootPkg.id : '';
 
   const childrenOf = new Map<string, TreeNode[]>();
   const push = (parentKey: string, node: TreeNode) => {
@@ -180,7 +158,6 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   };
 
   // 包节点：按 parentPackageId 分组；父不存在则归顶层
-  // M16：若有 rootPkg，其他顶级 Package 的 parentKey 应改挂到 rootPkg 下
   const packageNodes = new Map<string, TreeNode>();
   for (const p of packages) {
     const parent = parentOf(p.parentPackageId);
@@ -191,24 +168,18 @@ export function buildTree(input: BuildTreeInput): TreeNode {
       name: p.name,
       children: [],
     });
-    let targetKey = packageIds.has(parent) ? parent : '';
-    // M16：把与根 Package 平级的顶级 Package 移到根 Package 下
-    if (rootPkg && p.id !== rootPkg.id && targetKey === rootPkgParentKey) {
-      targetKey = rootPkg.id;
-    }
-    push(targetKey, packageNodes.get(p.id)!);
+    // 父不存在（含空串）时挂顶层（工程根）
+    push(packageIds.has(parent) ? parent : '', packageNodes.get(p.id)!);
   }
 
   // 视图节点：按 packageId 分组
   // M15：子树 = view body 内 owned 元素（view-private）；expose 引用不进子树（徽章展示）。
-  // M16：view 的 packageId 为空（即挂在工程根）时，若有 rootPkg，则挂在 rootPkg 下
   for (const v of views) {
-    let parent = parentOf(v.packageId);
-    if (rootPkg && parent === '') parent = rootPkg.id;
+    const parent = parentOf(v.packageId);
     const children = (v.innerElements ?? [])
       .filter((e) => e?.name)
       .map((e) => buildElementNode(v.id, 'view', e));
-    push(packageIds.has(parent) ? parent : rootKeyForViews, {
+    push(packageIds.has(parent) ? parent : '', {
       encodedId: encodeNodeId('view', v.id),
       kind: 'view',
       id: v.id,
@@ -229,15 +200,13 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   }
 
   // M15：视角节点：按 packageId 分组；子树 = viewpoint body 内 owned 元素
-  // M16：viewpoint 的 packageId 为空时挂到 rootPkg 下
   if (viewpoints && viewpoints.length > 0) {
     for (const vp of viewpoints) {
-      let parent = parentOf(vp.packageId);
-      if (rootPkg && parent === '') parent = rootPkg.id;
+      const parent = parentOf(vp.packageId);
       const children = (vp.innerElements ?? [])
         .filter((e) => e?.name)
         .map((e) => buildElementNode(vp.id, 'viewpoint', e));
-      push(packageIds.has(parent) ? parent : rootKeyForViews, {
+      push(packageIds.has(parent) ? parent : '', {
         encodedId: encodeNodeId('viewpoint', vp.id),
         kind: 'viewpoint',
         id: vp.id,
@@ -292,28 +261,15 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   };
 
   const visited = new Set<string>();
-
-  // M16：根节点选择
-  // - 有 rootPkg → 用该 Package 作为树根（kind='package'，保持原有 encodedId）
-  // - 无 rootPkg → 用合成的 'project' 节点
-  let root: TreeNode;
-  if (rootPkg) {
-    const rootNode = packageNodes.get(rootPkg.id)!;
-    rootNode.children = assemble(rootPkg.id, visited);
-    root = rootNode;
-  } else {
-    root = {
-      encodedId: encodeNodeId('project', projectId),
-      kind: 'project',
-      id: projectId,
-      name: projectName,
-      children: assemble('', visited),
-    };
-  }
+  const root: TreeNode = {
+    encodedId: encodeNodeId('project', projectId),
+    kind: 'project',
+    id: projectId,
+    name: projectName,
+    children: assemble('', visited),
+  };
 
   // 环中包未被访问 → 补救挂到根（不丢数据）
-  // M16：rootPkg 模式下 root 是 package，所以补救也挂到 rootPkg 下
-  const rescueParent = rootPkg ? rootPkg.id : '';
   for (const p of packages) {
     if (!visited.has(p.id)) {
       visited.add(p.id);
@@ -322,13 +278,6 @@ export function buildTree(input: BuildTreeInput): TreeNode {
       root.children.push(node);
     }
   }
-  // 兜底：若 root 是 package 且没有 rootPkg fallback 时 children 为空，则清理空数组
-  if (root.children.length === 0 && rootPkg) {
-    // 不主动 push 兜底数据——避免在新建项目、还未拉取完时显示空
-    root.children = rootPkg ? assemble(rootPkg.id, visited) : [];
-  }
-  // 显式确保 rescueParent（应对 rootPkg 不存在的极端兼容情况）
-  void rescueParent;
 
   return root;
 }
