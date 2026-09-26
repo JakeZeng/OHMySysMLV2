@@ -48,6 +48,18 @@ export interface TreeRowProps {
   onFocus: (encodedId: string) => void;
   /** 视图行右侧的节点数徽章（可选） */
   badge?: number;
+  /**
+   * M16：包节点拖拽重排（仅对 package 节点生效）。
+   * - onPackageDragStart：dragstart 设 payload
+   * - onPackageDragOver：dragover 高亮（drop target）
+   * - onPackageDrop：drop 触发移动
+   * - dropTargetEncodedId：当前 hover 的 package encodedId（用于高亮样式）
+   */
+  onPackageDragStart?: (e: React.DragEvent, encodedId: string) => void;
+  onPackageDragOver?: (e: React.DragEvent, encodedId: string) => void;
+  onPackageDrop?: (e: React.DragEvent, encodedId: string) => void;
+  onPackageDragLeave?: (e: React.DragEvent, encodedId: string) => void;
+  dropTargetEncodedId?: string | null;
 }
 
 export const TreeRow: React.FC<TreeRowProps> = ({
@@ -61,6 +73,11 @@ export const TreeRow: React.FC<TreeRowProps> = ({
   onContextMenu,
   onFocus,
   badge,
+  onPackageDragStart,
+  onPackageDragOver,
+  onPackageDrop,
+  onPackageDragLeave,
+  dropTargetEncodedId,
 }) => {
   const hasChildren = node.children.length > 0;
 
@@ -113,12 +130,41 @@ export const TreeRow: React.FC<TreeRowProps> = ({
       onClick={() => onSelect(node.encodedId)}
       onFocus={() => onFocus(node.encodedId)}
       onContextMenu={(e) => onContextMenu(e, node.encodedId)}
+      // M16：仅 package 节点参与拖拽重排
+      draggable={node.kind === 'package' && !!onPackageDragStart}
+      onDragStart={
+        node.kind === 'package' && onPackageDragStart
+          ? (e) => onPackageDragStart(e, node.encodedId)
+          : undefined
+      }
+      onDragOver={
+        node.kind === 'package' && onPackageDragOver
+          ? (e) => onPackageDragOver(e, node.encodedId)
+          : undefined
+      }
+      onDrop={
+        node.kind === 'package' && onPackageDrop
+          ? (e) => onPackageDrop(e, node.encodedId)
+          : undefined
+      }
+      onDragLeave={
+        node.kind === 'package' && onPackageDragLeave
+          ? (e) => onPackageDragLeave(e, node.encodedId)
+          : undefined
+      }
       className={cn(
         'group flex h-7 cursor-pointer select-none items-center gap-1 rounded px-1 text-xs',
         'focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-500',
         selected
           ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
           : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800',
+        // M16：拖拽落点高亮
+        node.kind === 'package' && dropTargetEncodedId === node.encodedId
+          ? 'bg-emerald-100 outline outline-2 outline-emerald-500 dark:bg-emerald-900/40'
+          : '',
+        node.kind === 'package' && !!onPackageDragStart
+          ? 'cursor-grab active:cursor-grabbing'
+          : '',
       )}
       style={{ paddingLeft: depth * 14 + 4 }}
     >

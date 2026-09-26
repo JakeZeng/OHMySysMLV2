@@ -77,6 +77,8 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
     position: ContextMenuPosition;
     node: TreeNode;
   } | null>(null);
+  // M16：拖拽包节点时的落点 encodedId（用于高亮目标）
+  const [packageDropTargetId, setPackageDropTargetId] = React.useState<string | null>(null);
 
   // 切工程时加载该工程的展开态
   React.useEffect(() => {
@@ -152,6 +154,53 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
     },
     [menu, handleSelect, onAction],
   );
+
+  // M16：包拖拽重排
+  const handlePackageDragStart = React.useCallback(
+    (e: React.DragEvent, encodedId: string) => {
+      const row = rows.find((r) => r.node.encodedId === encodedId);
+      if (!row || row.node.kind !== 'package') return;
+      e.dataTransfer.setData('application/x-sysml-package', row.node.id);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    [rows],
+  );
+  const handlePackageDragOver = React.useCallback(
+    (e: React.DragEvent, encodedId: string) => {
+      if (!e.dataTransfer.types.includes('application/x-sysml-package')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setPackageDropTargetId(encodedId);
+    },
+    [],
+  );
+  const handlePackageDragLeave = React.useCallback(
+    (_e: React.DragEvent, _encodedId: string) => {
+      // 仅当真的离开（不在子节点）才清空；简化处理：全部清空，dragover 时再设回来
+      // setPackageDropTargetId(null); // 暂不主动清，避免 mouseover 子元素时闪烁
+    },
+    [],
+  );
+  const handlePackageDrop = React.useCallback(
+    (e: React.DragEvent, encodedId: string) => {
+      e.preventDefault();
+      setPackageDropTargetId(null);
+      const sourcePkgId = e.dataTransfer.getData('application/x-sysml-package');
+      if (!sourcePkgId) return;
+      const target = rows.find((r) => r.node.encodedId === encodedId);
+      if (!target || target.node.kind !== 'package') return;
+      // 自环保护：源 == 目标
+      if (sourcePkgId === target.node.id) return;
+      onAction({ type: 'move-package', id: sourcePkgId, parentPackageId: target.node.id });
+    },
+    [onAction, rows],
+  );
+  // 清空落点（onDragEnd 不在 TreeRow，所以放全局 dragend 监听）
+  React.useEffect(() => {
+    const clear = () => setPackageDropTargetId(null);
+    window.addEventListener('dragend', clear);
+    return () => window.removeEventListener('dragend', clear);
+  }, []);
 
   // ── 键盘导航 ────────────────────────────────────────
   const focusRow = React.useCallback(
@@ -314,6 +363,12 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
             onSelect={handleSelect}
             onContextMenu={handleContextMenu}
             onFocus={setFocusedId}
+            // M16：包节点拖拽重排
+            onPackageDragStart={handlePackageDragStart}
+            onPackageDragOver={handlePackageDragOver}
+            onPackageDrop={handlePackageDrop}
+            onPackageDragLeave={handlePackageDragLeave}
+            dropTargetEncodedId={packageDropTargetId}
           />
         ))}
       </div>

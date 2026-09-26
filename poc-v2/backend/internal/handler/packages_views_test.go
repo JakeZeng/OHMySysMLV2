@@ -80,8 +80,9 @@ func TestPackagesCRUD(t *testing.T) {
 			t.Fatalf("status = %d", w.Code)
 		}
 		list := parseJSON(t, w.Body.Bytes())["data"].([]any)
-		if len(list) != 1 {
-			t.Errorf("len = %d, want 1", len(list))
+		// M16：项目创建时自动建默认根 Package（同名），故应见 2 个：默认 + 新建的 Pkg1
+		if len(list) != 2 {
+			t.Errorf("len = %d, want 2 (default + Pkg1)", len(list))
 		}
 	})
 
@@ -146,6 +147,166 @@ func TestPackagesCRUD(t *testing.T) {
 			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 		}
 	})
+}
+
+// TestCreateProjectAutoRootPackage：M16 验证「创建项目时自动建默认根 Package（与项目同名）」。
+func TestCreateProjectAutoRootPackage(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	resp := registerUser(t, r, "autouser", "auto@example.com", "pass123456")
+	token := authToken(t, resp)
+	authHeader := "Bearer " + token
+
+	// 1. 创建项目
+	body := jsonBody(gin.H{"name": "AutoPkgProj", "description": ""})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create project: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	projectID := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+
+	// 2. List packages：应至少 1 个默认 Package（同名）
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID+"/packages", nil)
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list packages: status = %d", w.Code)
+	}
+	list := parseJSON(t, w.Body.Bytes())["data"].([]any)
+	if len(list) < 1 {
+		t.Fatalf("expected >= 1 default package, got %d", len(list))
+	}
+	defaultPkg := list[0].(map[string]any)
+	if defaultPkg["name"] != "AutoPkgProj" {
+		t.Errorf("default package name = %v, want AutoPkgProj", defaultPkg["name"])
+	}
+	if defaultPkg["parentPackageId"] != nil && defaultPkg["parentPackageId"] != "" {
+		t.Errorf("default package parentPackageId = %v, want nil/empty", defaultPkg["parentPackageId"])
+	}
+
+	// 3. 校验默认 Package content 为空且 version=1
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/packages/"+defaultPkg["id"].(string), nil)
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get default package: status = %d", w.Code)
+	}
+	full := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	if full["content"] != "" {
+		t.Errorf("default package content = %v, want empty", full["content"])
+	}
+	if full["version"].(float64) != 1 {
+		t.Errorf("default package version = %v, want 1", full["version"])
+	}
+}
+
+// TestPackageMoveCycle：M16 验证「移动包到自身 / 后代会形成环」。
+func TestPackageMoveCycle(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	resp := registerUser(t, r, "cycleuser", "cycle@example.com", "pass123456")
+	token := authToken(t, resp)
+	authHeader := "Bearer " + token
+
+	// 建项目（自动建默认包 P0）
+	body := jsonBody(gin.H{"name": "CycleProj"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	projectID := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+
+	// 建 P1（顶级）
+	body = jsonBody(gin.H{"name": "P1"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/packages", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create P1: status = %d", w.Code)
+	}
+	p1 := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	p1ID := p1["id"].(string)
+	p1Ver := int(p1["version"].(float64))
+
+	// 在 P1 下建 P2
+	body = jsonBody(gin.H{"name": "P2", "parentPackageId": p1ID})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/packages", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create P2: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	p2 := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	p2ID := p2["id"].(string)
+	p2Ver := int(p2["version"].(float64))
+
+	// 1. 把 P1 设为自身的父 → 400
+	body = jsonBody(gin.H{"name": "P1", "parentPackageId": p1ID, "version": p1Ver})
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/packages/"+p1ID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("self-cycle: status = %d, want 400", w.Code)
+	}
+
+	// 2. 把 P1 移到 P2 下（P2 是 P1 的后代）→ 400
+	body = jsonBody(gin.H{"name": "P1", "parentPackageId": p2ID, "version": p1Ver})
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/packages/"+p1ID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("descendant-cycle: status = %d, want 400", w.Code)
+	}
+
+	// 3. 跨项目父包 → 400
+	resp2 := registerUser(t, r, "other", "other@example.com", "pass123456")
+	otherToken := authToken(t, resp2)
+	body = jsonBody(gin.H{"name": "OtherProj"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+otherToken)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	otherProjID := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)["id"].(string)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+otherProjID+"/packages", nil)
+	req.Header.Set("Authorization", "Bearer "+otherToken)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	otherDefault := parseJSON(t, w.Body.Bytes())["data"].([]any)[0].(map[string]any)
+
+	body = jsonBody(gin.H{"name": "P1", "parentPackageId": otherDefault["id"], "version": p1Ver})
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/packages/"+p1ID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden && w.Code != http.StatusBadRequest && w.Code != http.StatusConflict {
+		t.Errorf("cross-project parent: status = %d, want 400/403/409", w.Code)
+	}
+
+	// 4. 合法移动：P2 移到顶级（parent = ""）→ 200
+	body = jsonBody(gin.H{"name": "P2", "parentPackageId": "", "version": p2Ver})
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/packages/"+p2ID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("legal move to top: status = %d, body = %s", w.Code, w.Body.String())
+	}
 }
 
 func TestPackagesAuth(t *testing.T) {

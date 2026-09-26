@@ -332,8 +332,16 @@ export interface DiagramCanvasProps {
   nodeCount?: number;
   /** M11: 是否处于可交互（drag）模式；text 模式时画布只读 */
   interactive?: boolean;
-  /** M11: Palette 拖入创建回调 */
-  onPaletteDrop?: (kind: string, flowPosition: { x: number; y: number }) => void;
+  /**
+   * M16: Palette 拖入创建回调。
+   * - hoveredNodeId 为 null → 落到画布空白处，由调用方按 package body 末尾插入
+   * - hoveredNodeId 存在 → 拖到该节点上；调用方判定 canNest 后决定嵌套或拒绝
+   */
+  onPaletteDrop?: (
+    kind: string,
+    flowPosition: { x: number; y: number },
+    hoveredNodeId: string | null,
+  ) => void;
   /** M11: 双击画布空白处按当前视图类型创建回调 */
   onPaneDoubleClick?: (flowPosition: { x: number; y: number }) => void;
   /** M11: 节点之间画线创建连接（drag 模式） */
@@ -371,6 +379,8 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   const wrapperRef = useRef<HTMLDivElement>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = React.useState<string | null>(null);
+  // M16：拖拽时跟踪鼠标下的 nodeId（onDragOver 用 elementFromPoint 实时判断）
+  const [hoveredPaletteDropNodeId, setHoveredPaletteDropNodeId] = React.useState<string | null>(null);
 
   const scheduleClear = useCallback(() => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -444,13 +454,20 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       const cls: string[] = [];
       if (idStr === highlightedNodeId) cls.push('rf-node-highlight');
       if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
+      // M16：拖拽 palette 时实时高亮目标节点（绿=def 可嵌 / 红=usage 不可嵌）
+      if (idStr === hoveredPaletteDropNodeId) {
+        const nodeType = (n.data as { nodeType?: string } | undefined)?.nodeType ?? '';
+        // def 类的 nodeType 通常含 'sysml' 且不带 'Usage'，如 sysmlPartDef / sysmlPortDef
+        const isDef = /sysml.*Def$/.test(nodeType) || /sysml.*Definition$/.test(nodeType);
+        cls.push(isDef ? 'rf-palette-drop-ok' : 'rf-palette-drop-bad');
+      }
       return {
         ...n,
         id: idStr,
         className: cls.length > 0 ? cls.join(' ') : undefined,
       };
     });
-  }, [nodes, highlightedNodeId, highlightNodeIds]);
+  }, [nodes, highlightedNodeId, highlightNodeIds, hoveredPaletteDropNodeId]);
   const stableEdges = useMemo(
     () => edges.map((e) => ({ ...e, id: String(e.id) })),
     [edges]
@@ -532,14 +549,21 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [onSelectionChange]
   );
 
-  // ─── M11: 拖拽支持 ─────────────────────────────────────────────────
+  // ─── M11: 拖拽支持 ──────────────────────────────────────────
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!interactive) return;
     if (e.dataTransfer.types.includes('application/x-sysml-palette')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
+      // M16：实时检测鼠标下的 react-flow node；用于"拖到 def 上嵌成员 / 拖到 usage 上拒绝"分支
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const nodeEl = el?.closest('.react-flow__node') as HTMLElement | null;
+      const nodeId = nodeEl?.getAttribute('data-id') ?? null;
+      if (nodeId !== hoveredPaletteDropNodeId) {
+        setHoveredPaletteDropNodeId(nodeId);
+      }
     }
-  }, [interactive]);
+  }, [interactive, hoveredPaletteDropNodeId]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (!interactive) return;
@@ -549,7 +573,12 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     const instance = rfInstanceRef.current;
     if (!instance) return;
     const flowPos = instance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    onPaletteDrop(kind, flowPos);
+    // 用落点重算 hovered nodeId，避免 onDragOver 与 onDrop 之间状态漂移
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const nodeEl = el?.closest('.react-flow__node') as HTMLElement | null;
+    const hoveredId = nodeEl?.getAttribute('data-id') ?? null;
+    onPaletteDrop(kind, flowPos, hoveredId);
+    setHoveredPaletteDropNodeId(null);
   }, [interactive, onPaletteDrop]);
 
   const handlePaneDoubleClick = useCallback((e: React.MouseEvent) => {

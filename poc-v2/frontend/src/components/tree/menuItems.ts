@@ -56,6 +56,13 @@ export function menuItemsFor(
           icon: icon(Square),
           separatorBefore: true,
         },
+        {
+          id: 'move-to-top',
+          label: '移动到顶级',
+          icon: icon(ArrowUpToLine),
+          separatorBefore: true,
+          hint: '拖拽',
+        },
         { id: 'rename', label: '重命名', icon: icon(Pencil), separatorBefore: true, hint: 'F2' },
         { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
       ];
@@ -192,6 +199,13 @@ export function actionFor(
         type: 'create-element-trigger',
         parentPackageId: target.kind === 'package' ? target.id : '',
       };
+
+    case 'move-to-top':
+      // M16：右键包节点 → 移到顶级（拖拽也可实现）
+      if (target.kind === 'package') {
+        return { type: 'move-package', id: target.id, parentPackageId: null };
+      }
+      return null;
 
     case 'element-goto-canvas':
       if (target.kind === 'element' && elementRef) {

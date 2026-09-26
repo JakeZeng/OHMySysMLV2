@@ -381,8 +381,30 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		serverError(c, "创建项目失败", err)
 		return
 	}
+	// 自动建默认根 Package（与项目同名，作为初始工作区）。
+	// modernc.org/sqlite + SetMaxOpenConns(1) 保证这里两次写入在同一连接上原子；
+	// 但为避免项目行建好后默认包失败留下"空项目"，失败时回滚项目行。
+	defaultPkg := &model.Package{
+		ID:        uuid.NewString(),
+		ProjectID: p.ID,
+		Name:      p.Name,
+		Version:   1,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := h.repo.CreatePackage(c, defaultPkg); err != nil {
+		// 回滚项目行（避免项目存在但无默认包的不一致状态）
+		if delErr := h.repo.DeleteProject(c, p.ID); delErr != nil {
+			serverError(c, "创建默认包失败且回滚项目失败", fmt.Errorf("%w; rollback err: %v", err, delErr))
+			return
+		}
+		serverError(c, "创建默认根 Package 失败", err)
+		return
+	}
 	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetProject, p.ID,
 		`{"name":"`+escapeJSON(p.Name)+`","visibility":"`+p.Visibility+`"}`)
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetPackage, defaultPkg.ID,
+		`{"name":"`+escapeJSON(defaultPkg.Name)+`","project":"`+p.ID+`","auto":true}`)
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
@@ -904,11 +926,44 @@ func (h *Handler) UpdatePackage(c *gin.Context) {
 	}
 
 	p.Name = req.Name
-	p.ParentPackageID = req.ParentPackageID
 	p.Description = req.Description
 	p.Content = req.Content
 	if req.Metadata != nil {
 		p.Metadata = req.Metadata
+	}
+
+	// 变更父包前校验：父包必须存在、属于同项目、不能形成环。
+	if req.ParentPackageID != p.ParentPackageID {
+		if req.ParentPackageID != "" {
+			parent, err := h.repo.GetPackage(c, req.ParentPackageID)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					badRequest(c, "父包不存在", nil)
+					return
+				}
+				serverError(c, "校验父包失败", err)
+				return
+			}
+			if parent.ProjectID != p.ProjectID {
+				badRequest(c, "父包必须属于同一项目", nil)
+				return
+			}
+			// 环检测：父包不能是自身或自身的后代
+			if req.ParentPackageID == p.ID {
+				badRequest(c, "不能将包设置为自身的父包", nil)
+				return
+			}
+			isDesc, err := h.repo.IsPackageDescendant(c, p.ID, req.ParentPackageID)
+			if err != nil {
+				serverError(c, "校验包嵌套关系失败", err)
+				return
+			}
+			if isDesc {
+				badRequest(c, "不能将包移动到其后代包下（会形成环）", nil)
+				return
+			}
+		}
+		p.ParentPackageID = req.ParentPackageID
 	}
 	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
 	// M13：force=true 时跳过 WHERE version=? 校验（直接覆盖）

@@ -19,6 +19,7 @@ describe('menuItemsFor', () => {
       'create-view',
       'create-viewpoint',
       'create-element-trigger',
+      'move-to-top',
       'rename',
       'delete',
     ]);

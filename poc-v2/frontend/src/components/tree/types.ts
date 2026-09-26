@@ -65,6 +65,15 @@ export type TreeAction =
       id: string;
       name: string;
     }
+  /**
+   * M16：移动包到新父包下（树拖拽重排 / 右键"移动到..."菜单）。
+   * parentPackageId = null 表示移到顶级。
+   */
+  | {
+      type: 'move-package';
+      id: string;
+      parentPackageId: string | null;
+    }
   /** 复制视图 */
   | { type: 'duplicate-view'; id: string; name: string }
   /** 打开视图属性面板 */

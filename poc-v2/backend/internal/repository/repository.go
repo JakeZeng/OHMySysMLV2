@@ -981,6 +981,35 @@ func (r *SQLiteRepository) DeletePackage(ctx context.Context, id string) error {
 	return nil
 }
 
+// IsPackageDescendant 检查 candidateID 是否是 ancestorID 的后代（含多级嵌套）。
+// 用于 UpdatePackage 的环检测：不能把包移动到自身的后代包下。
+// candidateID == ancestorID 也视为"是后代"（自环）。
+func (r *SQLiteRepository) IsPackageDescendant(ctx context.Context, ancestorID, candidateID string) (bool, error) {
+	cur := candidateID
+	depth := 0
+	const maxDepth = 1000 // 防御性上限：理论上包嵌套深度不应超过此值
+	for depth < maxDepth {
+		if cur == ancestorID {
+			return true, nil
+		}
+		var parentID sql.NullString
+		err := r.db.QueryRowContext(ctx,
+			`SELECT parent_package_id FROM packages WHERE id = ?`, cur).Scan(&parentID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			return false, err
+		}
+		if !parentID.Valid {
+			return false, nil
+		}
+		cur = parentID.String
+		depth++
+	}
+	return false, fmt.Errorf("包嵌套深度超过 %d 层", maxDepth)
+}
+
 // ─── Views (M12 一等 SysML v2 ViewDefinition，M15 升级含 kind / renderKind / viewpoint 等) ───
 
 // viewSelectColumns 共享的 SELECT 列（避免 CreateView / scanView / GetView 重复硬编码）。

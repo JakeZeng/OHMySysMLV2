@@ -495,6 +495,40 @@ export const ProjectDetail: React.FC = () => {
     [refreshPackages, refreshViews, refreshViewpoints, showToast],
   );
 
+  // M16：移动包到新父包下（树拖拽 / 右键）
+  const handleMovePackage = React.useCallback(
+    async (id: string, parentPackageId: string | null) => {
+      try {
+        const full = await packageApi.get(id);
+        // 跳过无变化的请求
+        if ((full.parentPackageId || null) === parentPackageId) return;
+        await packageApi.update(id, {
+          name: full.name,
+          parentPackageId: parentPackageId ?? undefined,
+          description: full.description,
+          content: full.content,
+          metadata: full.metadata,
+          version: full.version,
+        });
+        await refreshPackages();
+        showToast({
+          title: '已移动',
+          description: parentPackageId
+            ? `包已设为另一包的子包`
+            : `包已移到顶级`,
+          variant: 'success',
+        });
+      } catch (e) {
+        showToast({
+          title: '移动失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [refreshPackages, showToast],
+  );
+
   const handleDelete = React.useCallback(
     async (kind: 'package' | 'view' | 'viewpoint', id: string, name: string) => {
       const kindLabel = kind === 'package' ? '包' : kind === 'view' ? '视图' : '视角';
@@ -763,6 +797,9 @@ export const ProjectDetail: React.FC = () => {
         case 'delete':
           void handleDelete(action.kind, action.id, action.name);
           break;
+        case 'move-package':
+          void handleMovePackage(action.id, action.parentPackageId);
+          break;
         case 'duplicate-view':
           void handleDuplicateView(action.id, action.name);
           break;
@@ -782,6 +819,7 @@ export const ProjectDetail: React.FC = () => {
       handlePromoteElement,
       handleRename,
       handleDelete,
+      handleMovePackage,
       handleDuplicateView,
       setSearchParams,
       showToast,
