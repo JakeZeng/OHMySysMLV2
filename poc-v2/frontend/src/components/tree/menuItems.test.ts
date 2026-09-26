@@ -5,8 +5,12 @@
 import { describe, it, expect } from 'vitest';
 import { menuItemsFor, actionFor } from './menuItems';
 
-const ids = (kind: Parameters<typeof menuItemsFor>[0]) =>
-  menuItemsFor(kind).map((i) => i.id);
+const ids = (
+  kind: Parameters<typeof menuItemsFor>[0],
+  elementOwnerKind: 'package' | 'view' | 'viewpoint' = 'package',
+  viewKind: 'definition' | 'usage' = 'definition',
+  isRootPackage: boolean = false,
+) => menuItemsFor(kind, elementOwnerKind, viewKind, isRootPackage).map((i) => i.id);
 
 describe('menuItemsFor', () => {
   it('project root can only create a top-level package', () => {
@@ -22,6 +26,16 @@ describe('menuItemsFor', () => {
       'move-to-top',
       'rename',
       'delete',
+    ]);
+  });
+
+  it('root package (M16) 隐藏「移动到顶级」和「删除」', () => {
+    expect(ids('package', 'package', 'definition', true)).toEqual([
+      'create-package',
+      'create-view',
+      'create-viewpoint',
+      'create-element-trigger',
+      'rename',
     ]);
   });
 

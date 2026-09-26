@@ -22,7 +22,7 @@ import { useModelStore } from '../../stores/modelStore';
 import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { generateUniqueName } from '../../lib/naming';
-import { canNest, insertSnippetIntoElement } from '../../lib/textOps';
+import { canNestIntoBody, nodeKindHasBody, insertSnippetIntoElement } from '../../lib/textOps';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
@@ -174,19 +174,24 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
 
       // M16：拖到节点上的分支
       if (hoveredNodeId) {
-        // 1. usage 类不能嵌套 → 拒绝
-        if (!canNest(kind)) {
+        // 1. 反查目标节点类型（nodeType 含 body 信息的标识）
+        const hoveredNode = adapter.pipeline.nodes.find(
+          (n) => String(n.id) === hoveredNodeId,
+        );
+        const hoveredNodeType = (hoveredNode?.data as { nodeType?: string } | undefined)?.nodeType;
+        // 2. 判定目标节点是否能接收嵌套：def 类（含 body）可，usage 类不可
+        if (!canNestIntoBody(hoveredNodeType)) {
+          // usage 节点无 body → 拒绝（任意 palette 元素都不能嵌进去）
           showToast({
             title: '该元素不支持嵌套成员',
-            description: `${item.label} 是 usage 类型，没有 body；请拖到 def 节点或画布空白处`,
+            description: hoveredNodeType
+              ? `${hoveredNodeType} 是 usage 节点（无 body）；请拖到 def 节点或画布空白处`
+              : '目标节点无 body；请拖到 def 节点或画布空白处',
             variant: 'error',
           });
           return;
         }
-        // 2. 从 hovered nodeId 反查元素 name
-        const hoveredNode = adapter.pipeline.nodes.find(
-          (n) => String(n.id) === hoveredNodeId,
-        );
+        // 3. 从 hovered nodeId 反查元素 name（按 label）
         const elementName = String(
           (hoveredNode?.data as { label?: string } | undefined)?.label ?? '',
         );
@@ -198,7 +203,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
           });
           return;
         }
-        // 3. 嵌到目标 def body
+        // 4. 嵌到目标 def body（任何 palette 元素都能嵌，包括 usage 类）
         const snippet = item.generate(name);
         const result = insertSnippetIntoElement(adapter.content, elementName, snippet);
         if (!result.ok) {

@@ -6,30 +6,42 @@
  */
 
 import type { SysMLModel } from '@ast/model';
-import type { PaletteKind } from './insertSnippet';
 
 /**
- * M16：判断拖入的 palette 元素 kind 是否能作为另一个 def 元素的嵌套成员。
+ * M16：判定拖放目标节点（画布上的 react-flow node）的类型，看它能否"接收嵌套成员"。
  *
- * SysML v2 规范：def 类（`part def X { ... }`、`port def P { ... }` 等）
- * 可包含 body，内部可放 usage / 嵌套 def；usage 类（`part x : T;`、
- * `port p;` 等）无 body，不能被嵌套。
+ * SysML v2 规范：
+ *   - def 类（含 body 的元素，如 `part def X { ... }`）— 可作为嵌套目标，
+ *     body 内可放任何 def / usage（嵌套成员）
+ *   - usage 类（无 body 的元素，如 `part x : T;`、`attribute a;`）— 不能嵌套
  *
- * 拖到 def 节点上 → 嵌到该 def 的 body 末尾；
- * 拖到 usage 节点上 → 拒绝（toast 报错）。
+ * 因此能否嵌套取决于 **目标节点**，而不是被拖的 element kind。
+ *
+ * nodeType 命名约定（与 modelToFlow.ts / DiagramCanvas.tsx 同步）：
+ *   def 类：'sysmlPartDef' / 'sysmlPortDef' / 'sysmlItemDef' / 'sysmlAttributeDef' /
+ *          'sysmlInterfaceDef' / 'sysmlOccurrenceDef' / 'sysmlConnectionDef' /
+ *          'sysmlActionDef' / 'sysmlStateDef' / 'sysmlCalcDef' /
+ *          'sysmlRequirementDef' / 'sysmlConstraintDef' / 'sysmlUseCaseDef' /
+ *          'sysmlAnalysisCaseDef' / 'sysmlVerificationCaseDef' / 'sysmlEnumDef'
+ *   usage 类：'sysmlPartUsage' / 'sysmlPortUsage' / 'sysmlAttributeUsage' /
+ *            'sysmlReferenceUsage' / 'sysmlItemUsage' / 'sysmlTransition' /
+ *            'sysmlInitialState' / 'sysmlFinalState' / 'sysmlState'
  */
-export function canNest(kind: PaletteKind): boolean {
-  // 与 PaletteItem.form === 'def' 等价；这里直接走 kind 判断以避免引入 insertSnippet 循环依赖。
-  // def 类关键字：part/port/item/attribute/interface/occurrence/connection/action/state/calc/
-  //              requirement/constraint/useCase/analysisCase/verificationCase/enum
-  const defKinds: PaletteKind[] = [
-    'partDef', 'portDef', 'itemDef', 'attributeDef', 'interfaceDef',
-    'occurrenceDef', 'connectionDef',
-    'actionDef', 'stateDef', 'calcDef',
-    'requirementDef', 'constraintDef', 'useCaseDef', 'analysisCaseDef', 'verificationCaseDef',
-    'enumDef',
-  ];
-  return defKinds.includes(kind);
+export function nodeKindHasBody(nodeType: string | undefined): boolean {
+  if (!nodeType) return false;
+  // 规则：nodeType 以 'sysml' 开头、以 'Def' 结尾（含 actionDef 等 *Def）
+  // 但要排除 'state'（用法节点，无 body）和 'Transition'（无 body）
+  if (!nodeType.startsWith('sysml')) return false;
+  // usage 类显式排除（不含 'Usage' 后缀的常见误判）
+  const usageOnlyKinds = ['sysmlState', 'sysmlTransition', 'sysmlInitialState', 'sysmlFinalState'];
+  if (usageOnlyKinds.includes(nodeType)) return false;
+  return /Def$/.test(nodeType);
+}
+
+/** M16：判定某 palette 元素是否能嵌套（嵌到目标 def body 内）。 */
+export function canNestIntoBody(nodeType: string | undefined): boolean {
+  // 只要目标节点有 body（def 类），任何 palette 元素都能嵌套
+  return nodeKindHasBody(nodeType);
 }
 
 /**

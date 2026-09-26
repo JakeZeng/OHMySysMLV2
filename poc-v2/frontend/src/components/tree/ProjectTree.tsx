@@ -393,6 +393,8 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
                 menu.node.kind,
                 menu.node.elementOwnerKind ?? 'package',
                 menu.node.viewKind ?? 'definition',
+                // M16：根 Package 不能"移动到顶级"/删除
+                root.kind === 'package' && menu.node.id === root.id,
               )
             : []
         }
