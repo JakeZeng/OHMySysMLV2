@@ -79,8 +79,10 @@ RUN chown -R app:app /var/cache/nginx /var/log/nginx /run \
     && chown -R app:app /usr/share/nginx/html
 
 # 健康检查：访问 SPA 根，验证 nginx 起来且静态文件可服务
+# 用 127.0.0.1 而非 localhost：alpine 中 localhost 优先解析为 IPv6 ::1，
+# 而 nginx `listen 80` 只监听 IPv4，会导致健康检查误判 connection refused
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
-    CMD wget -q --spider http://localhost/ || exit 1
+    CMD wget -q --spider http://127.0.0.1/ || exit 1
 
 EXPOSE 80
 
