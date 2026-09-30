@@ -127,6 +127,11 @@ function flattenNestedMembers(model: SysMLModel): void {
   const collectedActs: typeof model.activities = [];
   const collectedReqs: typeof model.requirements = [];
   const collectedCbs: typeof model.constraintBlocks = [];
+  // M16 P1：视图进包后，包内 view/viewpoint 需要提升到顶层数组（validateViews /
+  // modelToFlow / 视图面板都只扫 model.views）。与 stateMachine 等不同——视图
+  // **同时保留在 members 里**（归属关系是 §7.26 语义的一部分：树面板按包展示视图）。
+  const collectedViews: typeof model.views = [];
+  const collectedVps: typeof model.viewpoints = [];
   const walk = (pkg: { members: any[] }): void => {
     const remaining: any[] = [];
     for (const m of pkg.members) {
@@ -135,13 +140,25 @@ function flattenNestedMembers(model: SysMLModel): void {
         // 子包本身必须留在父包 members 里：本函数只负责把可可视化元素
         // 提到顶层，子包被丢掉的话它体内的 part def 就再也到不了画布。
         remaining.push(m);
+      } else if (m.kind === 'view') {
+        m._hoisted = true; // M16 P1：validator W307 只对真正顶层的元素告警
+        collectedViews.push(m);
+        remaining.push(m); // 保留归属
+      } else if (m.kind === 'viewpoint') {
+        m._hoisted = true;
+        collectedVps.push(m);
+        remaining.push(m); // 保留归属
       } else if (m.kind === 'stateMachine') {
+        m._hoisted = true;
         collected.push(m);
       } else if (m.kind === 'activity') {
+        m._hoisted = true;
         collectedActs.push(m);
       } else if (m.kind === 'requirement') {
+        m._hoisted = true;
         collectedReqs.push(m);
       } else if (m.kind === 'constraintBlock') {
+        m._hoisted = true;
         collectedCbs.push(m);
       } else {
         remaining.push(m);
@@ -149,12 +166,22 @@ function flattenNestedMembers(model: SysMLModel): void {
     }
     pkg.members = remaining;
   };
-  for (const pkg of model.packages) walk(pkg);
+  for (const pkg of model.packages) {
+    // 隐式根包只装顶层裸元素，不含视图（顶层视图直接进 model.views），照常 walk
+    walk(pkg);
+  }
   // M15：view / viewpoint body 内的 owned 成员同样需要扁平化（两者都是 Namespace）
+  // 注意：包内提升上来的视图（collectedViews）也要 walk 自己的 body——统一在
+  // 下面对 model.views 的最终集合做（先合并再 walk 会重复，所以先 walk 原顶层，
+  // 再 walk 新提升的）。
   for (const v of model.views ?? []) walk(v);
   for (const vp of model.viewpoints ?? []) walk(vp);
+  for (const v of collectedViews) walk(v);
+  for (const vp of collectedVps) walk(vp);
   model.stateMachines.push(...collected);
   model.activities.push(...collectedActs);
   model.requirements.push(...collectedReqs);
   model.constraintBlocks.push(...collectedCbs);
+  model.views.push(...collectedViews);
+  model.viewpoints.push(...collectedVps);
 }

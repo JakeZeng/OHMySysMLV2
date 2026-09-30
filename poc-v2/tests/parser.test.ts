@@ -328,15 +328,14 @@ describe('Parser - 注释与空白', () => {
 // ─── M15 §7.26：view 是顶层 Namespace ─────────────────────────────────
 
 describe('Parser - View (§7.26)', () => {
-  // 用例 24–27 覆盖 **legacy 方言**（`render as <kind>;`、body 前 `satisfies`）——
-  // M12 起的存量内容仍是这个写法，必须继续解析得了。标准写法见下面 28–40。
-  it('24. `view def V satisfies VP { ... }` 解析为 ViewDefinition（legacy 方言）', () => {
+  // M16 P1（Q18=B）：24/27/33 原来是 legacy 方言用例，现在改为断言「拒绝解析」；
+  // 25 改为官方等价写法（expose 只能在 ViewUsage 体内）。
+  it('24. 标准 ViewDefinition：filter/render/satisfy 在 body 内，无 expose', () => {
     const r = parse(`
       package VehicleModel { part def Vehicle; }
-      view def StructureView satisfies SafetyViewpoint {
-        expose VehicleModel::Vehicle;
-        expose VehicleModel::Engine;
-        render as tree;
+      view def StructureView {
+        satisfy SafetyViewpoint;
+        render asTreeDiagram;
         filter @PartUsage;
       }
     `);
@@ -344,14 +343,22 @@ describe('Parser - View (§7.26)', () => {
     expect(r.model.views).toHaveLength(1);
     const v = r.model.views[0];
     expect(v.name).toBe('StructureView');
-    expect(v.isDefinition).toBe(true);
+    expect(v.declKind).toBe('definition');
     expect(v.satisfies).toBe('SafetyViewpoint');
+    expect(v.renderingRef).toBe('asTreeDiagram');
     expect(v.renderKind).toBe('tree');
-    expect(v.reveals).toEqual(['VehicleModel::Vehicle', 'VehicleModel::Engine']);
-    // filter 文本含算子（标准形式 `filter @X;` 的算子是 `@`）
     expect(v.filters).toEqual(['@PartUsage']);
     // view 不进 packages —— 它是独立的 Namespace 类别
     expect(r.model.packages).toHaveLength(1);
+  });
+
+  it('24b. 方言拒绝：body 前 `satisfies` + `render as <kind>`（M16 P1 移除）', () => {
+    expect(parse('view def V satisfies VP { }').ok).toBe(false);
+    expect(parse('view def V { render as tree; }').ok).toBe(false);
+  });
+
+  it('24c. 官方硬约束拒绝：view def 体内不允许 expose', () => {
+    expect(parse('view def V { expose M::A; }').ok).toBe(false);
   });
 
   it('25. `view V { part def X; }` 的 body 成员归 view 所有（V::X）', () => {
@@ -363,11 +370,11 @@ describe('Parser - View (§7.26)', () => {
     `);
     expect(r.ok).toBe(true);
     const v = r.model.views[0];
-    expect(v.isDefinition).toBe(false);
+    expect(v.declKind).toBe('shorthand');
     expect(v.reveals).toEqual(['VehicleModel::Vehicle']);
     expect(v.members).toHaveLength(1);
-    expect(v.members[0].kind).toBe('partDef');
-    expect(v.members[0].name).toBe('HelperPort');
+    expect((v.members[0] as any).kind).toBe('partDef');
+    expect((v.members[0] as any).name).toBe('HelperPort');
   });
 
   it('26. view body 内的 state machine 参与扁平化（可视化依赖顶层数组）', () => {
@@ -387,13 +394,14 @@ describe('Parser - View (§7.26)', () => {
     expect(r.model.views[0].members).toHaveLength(0);
   });
 
-  it('27. legacy `render as <kind>` 只接受已知取值', () => {
-    const ok = parse('view V { render as requirement; }');
+  it('27. 方言拒绝：`render as <kind>;` 枚举形式已移除（M16 P1）', () => {
+    // 官方 render 后跟 rendering usage 引用或声明式内联，不存在 as+枚举
+    expect(parse('view V { render as requirement; }').ok).toBe(false);
+    expect(parse('view V { render as hologram; }').ok).toBe(false);
+    // 官方引用式仍然工作
+    const ok = parse('view V { render asRequirementTable; }');
     expect(ok.ok).toBe(true);
-    expect(ok.model.views[0].renderKind).toBe('requirement');
-
-    const bad = parse('view V { render as hologram; }');
-    expect(bad.ok).toBe(false);
+    expect(ok.model.views[0].renderingRef).toBe('asRequirementTable');
   });
 });
 
@@ -437,7 +445,6 @@ describe('Parser - §7.26 标准写法', () => {
     expect(v.name).toBe('vehicle parts view');
     expect(v.declKind).toBe('usage');
     expect(v.viewDefinitionRef).toBe('Part Structure View');
-    expect(v.isDefinition).toBe(false);
   });
 
   it('32. `satisfy X;` 是 body 内子句（标准位置）', () => {
@@ -446,8 +453,10 @@ describe('Parser - §7.26 标准写法', () => {
     expect(r.model.views[0].satisfies).toBe('vehicle structure perspective');
   });
 
-  it('33. legacy：body 前的 `satisfies` 仍被容忍', () => {
-    const r = parse('view def V satisfies VP { }');
+  it('33. 方言拒绝：body 前的 `satisfies` 已移除（官方无此关键字，M16 P1）', () => {
+    expect(parse('view def V satisfies VP { }').ok).toBe(false);
+    // 官方等价：body 内 satisfy 子句
+    const r = parse('view V : D { satisfy VP; }');
     expect(r.ok).toBe(true);
     expect(r.model.views[0].satisfies).toBe('VP');
   });
@@ -477,10 +486,12 @@ describe('Parser - §7.26 标准写法', () => {
     }
   });
 
-  it('36. view body 内可 `import`（标准允许，如 import Views::;）', () => {
-    const r = parse('view def V { import Views::; filter @SysML::PartUsage; }');
+  it('36. view body 内可 `import`（官方形式 `import Views::*;`）', () => {
+    const r = parse('view def V { import Views::*; filter @SysML::PartUsage; }');
     expect(r.ok).toBe(true);
     expect(r.model.views[0].filters).toEqual(['@SysML::PartUsage']);
+    // M16 P1：方言拒绝——尾随裸 `::`（规范示例被抄漏 `*` 的产物）
+    expect(parse('view def V { import Views::; }').ok).toBe(false);
   });
 
   it('37. `viewpoint def` / `viewpoint X : Def` + `subject : T;`', () => {
@@ -498,20 +509,29 @@ describe('Parser - §7.26 标准写法', () => {
     expect(u.model.viewpoints[0].viewpointDefinitionRef).toBe('System Structure Perspective');
   });
 
-  it('38. legacy：应用自产 viewpoint content（stakeholder/concern）不再报错', () => {
-    const r = parse(`viewpoint SafetyView {
-      stakeholder: SafetyEngineer;
-      concern: 整车功能安全;
+  it('38. 官方 viewpoint 成员：stakeholder usage / frame concern / doc（附录 A 原文形式）', () => {
+    const r = parse(`viewpoint def SafetyViewpoint {
+      frame concern vs : VehicleSafety;
+      stakeholder se : SafetyEngineer;
+      doc /* identify system safety features */;
+      subject;
     }`);
     expect(r.ok).toBe(true);
     const vp = r.model.viewpoints[0];
-    expect(vp.name).toBe('SafetyView');
-    expect(vp.stakeholders).toEqual(['SafetyEngineer']);
-    expect(vp.concerns).toEqual(['整车功能安全']);
+    expect(vp.name).toBe('SafetyViewpoint');
+    const kinds = vp.members.map((m) => m.kind);
+    expect(kinds).toContain('frameConcern');
+    expect(kinds).toContain('stakeholderUsage');
+    expect(kinds).toContain('doc');
+    expect((vp.members.find((m) => m.kind === 'doc') as any).text)
+      .toBe('identify system safety features');
+    // M16 P1：自造方言 `stakeholder: 文本;` / `concern: 文本;` 拒绝解析
+    expect(parse('viewpoint V { stakeholder: SafetyEngineer; }').ok).toBe(false);
+    expect(parse('viewpoint V { concern: 整车功能安全; }').ok).toBe(false);
   });
 
-  it('39. 单引号名字可含空格，且能用在 expose / satisfies 引用里', () => {
-    const r = parse(`view def 'Part Structure View' {
+  it('39. 单引号名字可含空格，且能用在 expose / satisfy 引用里（expose 在 usage 体内）', () => {
+    const r = parse(`view 'Part Structure View' {
       expose 'My Model'::'Part A';
       satisfy 'a viewpoint with spaces';
     }`);
@@ -520,14 +540,116 @@ describe('Parser - §7.26 标准写法', () => {
     expect(r.model.views[0].satisfies).toBe('a viewpoint with spaces');
   });
 
-  it('40. `import X::**`（递归）与 `import X::`（命名空间自身）', () => {
+  it('40. `import X::**`（递归）与 `import X::*`（直接成员）', () => {
     const a = parse('package P { import Foo::**; }');
     expect(a.ok).toBe(true);
     expect((a.model.packages[0].members[0] as any).namespace).toBe('Foo::**');
 
-    const b = parse('package P { import Views::; }');
+    const b = parse('package P { import Views::*; }');
     expect(b.ok).toBe(true);
-    expect((b.model.packages[0].members[0] as any).namespace).toBe('Views');
+    expect((b.model.packages[0].members[0] as any).namespace).toBe('Views::*');
+    expect((b.model.packages[0].members[0] as any).isRecursive).toBe(false);
+
+    // M16 P1：方言拒绝——尾随裸 `::`
+    expect(parse('package P { import Views::; }').ok).toBe(false);
+  });
+});
+
+// ─── M16 P1：官方对齐（视图进包 / 隐式根 Namespace / expose 官方形式 / 方言拒绝）───
+
+describe('Parser - M16 P1 官方对齐', () => {
+  it('41. view / viewpoint 可以作为包成员（官方示例惯例）', () => {
+    const r = parse(`package ViewDefinitions {
+      view def TreeView { render asTreeDiagram; }
+      view def PartsTreeView :> TreeView { filter @SysML::PartUsage; }
+    }
+    package VehicleViews {
+      view vehiclePartsTree : PartsTreeView {
+        satisfy SafetyViewpoint;
+        expose PartsTree::**;
+        filter @Safety;
+      }
+      viewpoint def SafetyViewpoint { subject : Vehicle; }
+    }`);
+    expect(r.ok).toBe(true);
+    // 包内视图保留归属（members 里）
+    const pkg0 = r.model.packages[0];
+    expect(pkg0.members.filter((m) => m.kind === 'view')).toHaveLength(2);
+    const pkg1 = r.model.packages[1];
+    expect(pkg1.members.some((m) => m.kind === 'view')).toBe(true);
+    expect(pkg1.members.some((m) => m.kind === 'viewpoint')).toBe(true);
+    // 同时提升到顶层数组（validateViews / modelToFlow 依赖）
+    expect(r.model.views).toHaveLength(3);
+    expect(r.model.viewpoints).toHaveLength(1);
+    const usage = r.model.views.find((v) => v.name === 'vehiclePartsTree')!;
+    expect(usage.declKind).toBe('usage');
+    expect(usage.reveals).toEqual(['PartsTree::**']);
+    expect(usage.satisfies).toBe('SafetyViewpoint');
+    const specialized = r.model.views.find((v) => v.name === 'PartsTreeView')!;
+    expect(specialized.specializes).toBe('TreeView');
+  });
+
+  it('42. 顶层裸 def/usage 归入隐式根包（官方 RootNamespace）', () => {
+    const r = parse(`part def FreeStanding { attribute a : Real; }
+part f : FreeStanding;
+alias FS for FreeStanding;`);
+    expect(r.ok).toBe(true);
+    const root = r.model.packages.find((p) => p.isImplicitRoot);
+    expect(root).toBeDefined();
+    expect(root!.name).toBe('');
+    const kinds = root!.members.map((m) => m.kind);
+    expect(kinds).toContain('partDef');
+    expect(kinds).toContain('partUsage');
+    expect(kinds).toContain('alias');
+  });
+
+  it('43. expose 官方四形式 + 内联 filter；裸通配拒绝', () => {
+    const r = parse(`view V : D {
+      expose P::X;
+      expose P::X::**;
+      expose P::*;
+      expose P::*::**;
+      expose P::Y [@Safety];
+    }`);
+    expect(r.ok).toBe(true);
+    expect(r.model.views[0].reveals).toEqual([
+      'P::X', 'P::X::**', 'P::*', 'P::*::**', 'P::Y',
+    ]);
+    expect(r.model.views[0].filters).toEqual(['@Safety']);
+    // 官方：expose 必须以 QualifiedName 开头
+    expect(parse('view V { expose **; }').ok).toBe(false);
+    expect(parse('view V { expose *::*; }').ok).toBe(false);
+    expect(parse('view V { expose ::**; }').ok).toBe(false);
+  });
+
+  it('44. 方言拒绝：`package Sub : Parent`（官方 Package 无特化能力）', () => {
+    expect(parse('package Sub : Parent { }').ok).toBe(false);
+    expect(parse('package Sub : A, B { }').ok).toBe(false);
+    // 普通包不受影响
+    expect(parse('package Sub { }').ok).toBe(true);
+  });
+
+  it('45. 官方约束：一个 view 多条 render → multipleRenders 标记', () => {
+    const r = parse('view def V { render asTreeDiagram; render asElementTable; }');
+    expect(r.ok).toBe(true);
+    const v = r.model.views[0];
+    expect(v.multipleRenders).toBe(true);
+    // 第一条生效
+    expect(v.renderingRef).toBe('asTreeDiagram');
+  });
+
+  it('46. doc / alias 作为包成员', () => {
+    const r = parse(`package P {
+      doc /* 包级文档 */;
+      alias Short for Some::Long::Name;
+      part def A;
+    }`);
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m) => m.kind);
+    expect(kinds).toContain('doc');
+    expect(kinds).toContain('alias');
+    expect((r.model.packages[0].members.find((m) => m.kind === 'alias') as any).target)
+      .toBe('Some::Long::Name');
   });
 });
 

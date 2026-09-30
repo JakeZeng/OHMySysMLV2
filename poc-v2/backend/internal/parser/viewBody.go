@@ -1,18 +1,17 @@
 // Package parser 提供 SysML v2 文本的轻量级解析能力。
 //
 // M15 升级：view body 解析从单子句（仅 expose）扩展到完整子句集。
+// M16 P1（Q18=B 官方对齐，ptc/25-04-05 §7.26 / §8.2.2.26）：
+// 自造方言全部移除（`render as <kind>;`、body 前 `satisfies`），与 TS 语法同步。
 //
-// **标准形式**（ptc/25-04-06 §7.26）：
-//   - `expose A::B::C;` / `expose A::**;`   跨包引用 / 递归通配
+// **官方形式**：
+//   - expose 四种官方粒度 + 可选内联 filter：
+//     `expose P::X;` / `expose P::X::**;` / `expose P::*;` / `expose P::*::**;` / `expose P::X [@Y];`
 //   - `render asTreeDiagram;`               引用 rendering usage（标准）
 //   - `render rendering n : Def;`           声明式 rendering（标准）
 //   - `filter @X;` / `filter not @X;` / `filter istype X;` / `filter hastype X;`
 //   - `satisfy 'a viewpoint';`              body 内子句（标准位置）
 //   - body 内嵌 def（part def X / requirement def Y 等） → InnerElement
-//
-// **legacy 形式**（本 POC 早期自造，继续容忍以免历史内容失效）：
-//   - `render as <kind>;`                   枚举而非 rendering 引用
-//   - `view Name satisfies VP { }`           satisfy 出现在 body 前
 //
 // 名字允许单引号（`'Part Structure View'`，可含空格）—— 标准名字语法。
 //
@@ -36,17 +35,21 @@ const (
 )
 
 var (
-	// expose 路径：`expose A::B::C;` / `expose A.B.C;` / `expose A::**;`
-	// 第二捕获组非空表示递归通配（暴露整个命名空间的成员）。
-	exposePathRe = regexp.MustCompile(`\bexpose\b\s+(` + qnamePat + `)\s*(::\s*\*\*)?\s*;`)
-
-	// legacy render：`render as <kind>;`
-	renderAsRe = regexp.MustCompile(`\brender\s+as\s+(tree|interconnection|state|action|requirement|snapshot)\s*;`)
+	// expose 路径（M16 P1 官方四形式，§8.2.2.26 BNF）：
+	//   `expose P::X;` / `expose P::X::**;` / `expose P::*;` / `expose P::*::**;`
+	//   + 可选内联 filter `expose P::X [@Y];`
+	// 第二捕获组是通配后缀（`::*` / `::**` / `::*::**`），非空即命名空间级暴露。
+	// 官方要求 expose 必须以 QualifiedName 开头——裸 `expose **;` 不匹配（方言已移除）。
+	// 后缀备选必须按最长优先排序：`::*::**` > `::**` > `::*`（否则 `::*` 会吃掉
+	// `::**` 的第一个星号导致整体失配）。
+	exposePathRe = regexp.MustCompile(`\bexpose\b\s+(` + qnamePat + `)\s*(::\s*\*\s*::\s*\*\*|::\s*\*\*|::\s*\*)?(?:\s*\[[^\]]*\])?\s*;`)
 
 	// 标准 render（声明式）：`render rendering name : Def;`
 	renderDeclRe = regexp.MustCompile(`\brender\s+rendering\s+` + namePat + `\s*:\s*(` + qnamePat + `)\s*;`)
 
 	// 标准 render（引用式）：`render asTreeDiagram;`
+	// M16 P1：legacy `render as <kind>;` 枚举形式已移除（官方 render 后只有
+	// rendering usage 引用或声明式内联两种）。
 	renderRefRe = regexp.MustCompile(`\brender\s+(` + qnamePat + `)\s*;`)
 
 	// filter 子句：`filter @X::Y;` / `filter not @X;` / `filter istype X;` / `filter hastype X;`
@@ -54,10 +57,8 @@ var (
 	filterRe = regexp.MustCompile(`\bfilter\s+((?:not\s+)?(?:@|istype\s+|hastype\s+)?)(` + qnamePat + `)\s*;`)
 
 	// 标准 satisfy 子句（body 内）：`satisfy 'a viewpoint';`
+	// M16 P1：legacy body 前 `view Name satisfies VP {` 已移除（官方无 satisfies 关键字）。
 	satisfyRe = regexp.MustCompile(`\bsatisfy\s+(` + qnamePat + `)\s*;`)
-
-	// legacy satisfies 子句：`view Name satisfies X::Y {`
-	satisfiesRe = regexp.MustCompile(`\bview\s+` + namePat + `\s+satisfies\s+(` + qnamePat + `)\s*\{`)
 
 	// 内嵌元素定义（简化版）
 	// 匹配 `part def X { ... }` / `port def X` / `requirement def X` 等
@@ -123,13 +124,11 @@ func ParseViewBody(content string) ParsedViewBody {
 		return out
 	}
 
-	// 1. render —— 标准形式优先，legacy `render as <kind>` 兜底
+	// 1. render —— 官方两种形式：声明式内联 / 引用式（M16 P1：legacy 枚举已移除）
 	switch {
 	case renderDeclRe.MatchString(content):
 		m := renderDeclRe.FindStringSubmatch(content)
 		out.RenderKind = renderKindFromRef(m[1])
-	case renderAsRe.MatchString(content):
-		out.RenderKind = model.RenderKind(renderAsRe.FindStringSubmatch(content)[1])
 	default:
 		// 排除 `render rendering …` 已被上面接走的情况，剩下的裸引用才是标准引用式
 		if m := renderRefRe.FindStringSubmatch(content); m != nil && !strings.HasPrefix(m[1], "rendering") {
@@ -152,10 +151,8 @@ func ParseViewBody(content string) ParsedViewBody {
 		out.FilterQualifiedNames = append(out.FilterQualifiedNames, text)
 	}
 
-	// 3. satisfy —— 标准位置是 body 内子句；legacy 是 body 前的 `satisfies`
+	// 3. satisfy —— 官方唯一位置：body 内子句（M16 P1：body 前 satisfies 方言已移除）
 	if m := satisfyRe.FindStringSubmatch(content); m != nil {
-		out.SatisfiesQualifiedName = normalizePath(m[1])
-	} else if m := satisfiesRe.FindStringSubmatch(content); m != nil {
 		out.SatisfiesQualifiedName = normalizePath(m[1])
 	}
 
@@ -190,13 +187,11 @@ func ParseViewBody(content string) ParsedViewBody {
 		if normalized == "" {
 			continue
 		}
-		// `expose A::**;` —— 暴露命名空间全部（递归）成员。
-		// 它不对应单个元素，所以 Kind 标为 Namespace，resolve 时只校验命名空间存在。
-		wildcard := strings.TrimSpace(m[2]) != ""
-		key := normalized
-		if wildcard {
-			key = normalized + "::**"
-		}
+		// M16 P1 官方通配形式：`::*`（直接成员）/ `::**`（递归成员）/ `::*::**`。
+		// 通配暴露不对应单个元素，Kind 标为 Namespace，resolve 时只校验命名空间链。
+		suffix := strings.ReplaceAll(strings.TrimSpace(m[2]), " ", "")
+		wildcard := strings.Contains(suffix, "*")
+		key := normalized + suffix
 		if _, dup := seenExpose[key]; dup {
 			continue
 		}
@@ -354,9 +349,15 @@ func FromPackageContentRefs(refs []model.PackageContentRef) []PackageRef {
 //   - ok=false → reason 说明失败在哪一段
 func resolvePath(qualifiedName string, childrenOf map[string][]PackageRef) (string, string, bool) {
 	segments := strings.Split(qualifiedName, "::")
-	// `Pkg::**` —— 递归通配暴露整个命名空间，不对应单个元素
-	wildcard := segments[len(segments)-1] == "**"
-	if wildcard {
+	// M16 P1 官方通配：`Pkg::**`（递归成员）/ `Pkg::*`（直接成员）/ `Pkg::*::**`。
+	// 通配暴露整个命名空间，不对应单个元素——剥掉尾部所有 `*`/`**` 段后按包链校验。
+	wildcard := false
+	for len(segments) > 0 {
+		last := segments[len(segments)-1]
+		if last != "**" && last != "*" {
+			break
+		}
+		wildcard = true
 		segments = segments[:len(segments)-1]
 	}
 	if len(segments) < 2 && !wildcard {

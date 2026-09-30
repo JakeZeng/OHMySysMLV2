@@ -143,15 +143,12 @@ function validatePackage(raw: unknown, path: string, errors: ImportError[]): Pac
     }
   }
 
-  const inherits = Array.isArray(obj.inherits)
-    ? (obj.inherits as string[]).filter((s) => typeof s === 'string')
-    : undefined;
-
+  // M16 P1：官方 Package 无特化能力——导入 JSON 里的 package.inherits
+  // 是自造方言遗留字段，静默丢弃（不再进入 AST）。
   return {
     kind: 'package',
     id: typeof obj.id === 'string' ? obj.id : crypto.randomUUID(),
     name: obj.name as string,
-    inherits: inherits && inherits.length > 0 ? inherits : undefined,
     members,
     location,
   };

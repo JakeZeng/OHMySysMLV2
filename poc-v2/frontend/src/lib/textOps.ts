@@ -68,10 +68,8 @@ export interface SnippetScope {
  * 行为：
  *   - 空 content → 包一层 `package <defaultPkgName>`
  *   - scope 目标有 body → 插到闭合 `}` 前（沿用缩进探测 / 换行补齐）
- *   - AST 定位失败（解析错误 / 目标不存在 / 无 body）→ 回退正则版 insertSnippetIntoPackage
- *
- * 注：P1 语法对齐后 body 可能变为可选（官方 ViewBody 可省），届时再补
- * 「`;` 展开成块」分支（findBodyOpen 已能识别 semi）。
+ *   - scope 目标无 body（官方允许 `view V : D;` 省略 body）→ 把 `;` 展开成 `{ … }`
+ *   - AST 定位失败（解析错误 / 目标不存在）→ 回退正则版 insertSnippetIntoPackage
  */
 export function insertSnippetScoped(
   content: string,
@@ -104,9 +102,19 @@ export function insertSnippetScoped(
   }
 
   const bodyOpen = findBodyOpen(trimmed, loc.offset);
-  if (!bodyOpen || bodyOpen.semi !== undefined) {
-    // 找不到 body，或声明以 `;` 结尾（无 body）→ 交给正则路径兜底
+  if (!bodyOpen) {
     return insertSnippetIntoPackage(trimmed, snippet, defaultPkg);
+  }
+  if (bodyOpen.semi !== undefined) {
+    // M16 P1：官方允许省略 body（`view V : D;`）——插入时把 `;` 展开成块
+    const semi = bodyOpen.semi;
+    return (
+      trimmed.slice(0, semi) +
+      ' {\n' +
+      indentSnippet(trimmedSnippet, '  ') +
+      '\n}' +
+      trimmed.slice(semi + 1)
+    );
   }
 
   const closeOffset = findPackageClose(trimmed, loc.offset);

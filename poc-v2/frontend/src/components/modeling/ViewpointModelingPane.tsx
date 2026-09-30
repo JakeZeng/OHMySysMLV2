@@ -215,7 +215,7 @@ export const ViewpointModelingPane: React.FC<ViewpointModelingPaneProps> = ({
               spellCheck={false}
             />
             <p className="mt-2 text-[11px] text-gray-400">
-              示例：<code className="font-mono">viewpoint V {'{ stakeholder: ...; concern: ...; }'}</code>
+              示例（官方 §7.26 / 附录 A）：<code className="font-mono">viewpoint V {'{ subject : Vehicle; stakeholder se : Engineer; }'}</code>
             </p>
           </section>
         </div>

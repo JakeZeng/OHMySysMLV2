@@ -47,10 +47,12 @@ export interface Package extends SysMLNode {
   kind: 'package';
   name: string;
   /**
-   * 父包限定名（来自 `package Sub : Parent { ... }`）。
-   * M1 不做继承的 package 语义合并，仅用于 import 解析。
+   * M16 P1（官方 RootNamespace 对齐）：解析器为顶层裸 def/usage/import/alias
+   * 合成的**隐式根包**（对应规范的「隐式根 Namespace」，KerML §7.2.5.3）。
+   * name 恒为 ''；树面板显示为虚拟「模型根」，validator 对其成员发风格 warning。
+   * 注：自造的 `package Sub : Parent` 特化方言已按官方规范移除（Package 无特化能力）。
    */
-  inherits?: string[];
+  isImplicitRoot?: boolean;
   members: NamespaceMember[];
 }
 
@@ -58,6 +60,9 @@ export interface Package extends SysMLNode {
 export type NamespaceMember =
   | Package
   | ImportStatement
+  | AliasMember
+  | SysMLView
+  | SysMLViewpoint
   | PartDefinition
   | PortDefinition
   | PartUsage
@@ -70,13 +75,44 @@ export type NamespaceMember =
   | TraceLink
   | ConstraintBlock
   | EnumDefinition
+  | DocMember
+  | StakeholderUsage
+  | FrameConcernMember
   | CommentBlock;
 
-/** `import Foo::*;` 或 `import Bar;` */
+/** `import Foo::*;` 或 `import Bar;`（官方 MemberPrefix 可见性可选，如 `public import`） */
 export interface ImportStatement extends SysMLNode {
   kind: 'import';
   namespace: string;
   isRecursive: boolean;
+  visibility?: 'public' | 'private' | 'protected';
+}
+
+/** 官方 AliasMember：`alias Short for Some::Name;` */
+export interface AliasMember extends SysMLNode {
+  kind: 'alias';
+  name: string;
+  target: string;
+}
+
+/** 官方 DocumentationMember：`doc /* … *\/;` */
+export interface DocMember extends SysMLNode {
+  kind: 'doc';
+  text: string;
+}
+
+/** 官方 StakeholderUsage（附录 A）：`stakeholder se : SafetyEngineer;` */
+export interface StakeholderUsage extends SysMLNode {
+  kind: 'stakeholderUsage';
+  name: string;
+  typeRef: string;
+}
+
+/** 官方 frame concern（附录 A）：`frame concern vs : VehicleSafety;` */
+export interface FrameConcernMember extends SysMLNode {
+  kind: 'frameConcern';
+  name: string;
+  typeRef: string;
 }
 
 // ─── Definition ──────────────────────────────────────────────────────────
@@ -262,18 +298,20 @@ export interface SysMLView {
    *   - `shorthand`   ← `view Name { }`             （ViewUsage 省略 `: Def`，语法里 `type?` 可选）
    */
   declKind?: 'definition' | 'usage' | 'shorthand';
-  /** 兼容位：`declKind === 'definition'` */
-  isDefinition?: boolean;
   /** ViewUsage 的实例化目标，解析自 `view Name : Def` */
   viewDefinitionRef?: string;
-  /** 解析自 `view Name :> Base;` 的特化目标 */
+  /** 解析自 `view Name :> Base` 的特化目标（subclassification） */
   specializes?: string;
   /**
-   * 被满足的 Viewpoint qualified name。
-   * 标准位置是 body 内的 `satisfy X;`；body 前的 `satisfies X` 是 legacy 写法。
+   * 被满足的 Viewpoint qualified name，解析自 body 内的 `satisfy X;`。
+   * （body 前 `satisfies X` 是自造方言，M16 P1 已移除。）
    */
   satisfies?: string;
-  /** `expose A::B::C;` / `expose A::**;` 列表（引用，不改变元素归属） */
+  /**
+   * expose 引用列表（不改变元素归属）。官方四种粒度（§8.2.2.26）：
+   * `P::X` / `P::X::**` / `P::*` / `P::*::**`；可带内联 filter（进 filters）。
+   * 官方硬约束：expose 只能出现在 ViewUsage 体内（definition 的 body 无 expose）。
+   */
   reveals: string[];
   /** filter 条件列表，标准形式含算子与取反，如 `not @SysML::ConnectionUsage` */
   filters: string[];
@@ -284,6 +322,8 @@ export interface SysMLView {
    * 标准把「怎么渲染」交给工具提供的 rendering 库，名字本身无固定含义。
    */
   renderingRef?: string;
+  /** 官方约束「每个 view 至多一个 render」；true = 文本里出现多条 render（validator 报 E306） */
+  multipleRenders?: boolean;
   /** body 内 owned 成员（与 package body 同一套成员规则） */
   members: NamespaceMember[];
   location: SourceLocation;
@@ -291,25 +331,21 @@ export interface SysMLView {
 
 /**
  * §7.26 Viewpoint —— 标准里 ViewpointDefinition 是 RequirementDefinition 的一种特化，
- * 利益相关方关注点通过需求式成员（`subject : Vehicle;`）表达。
+ * 利益相关方关注点通过官方需求式成员表达：`subject : Vehicle;` /
+ * `stakeholder se : Engineer;` / `frame concern c : Concern;` / `doc /* … *\/;`。
  *
- * `stakeholders` / `concerns` 是**非标准**的 legacy 元数据（本 POC 自造），保留只为
- * 不让历史内容报错；新内容应改用 `subject`。
+ * M16 P1（Q18=B）：自造的 `stakeholder: 文本;` / `concern: 文本;` 方言已移除，
+ * stakeholders/concerns 数组字段一并删除；官方 stakeholder/frame concern 进 members。
  */
 export interface SysMLViewpoint {
   kind: 'viewpoint';
   id: string;
   name: string;
   declKind?: 'definition' | 'usage' | 'shorthand';
-  isDefinition?: boolean;
   /** 解析自 `viewpoint Name : Def` */
   viewpointDefinitionRef?: string;
   /** 标准：`subject : Vehicle;` */
   subject?: string;
-  /** legacy（非标准）：`stakeholder: X;` 列表 */
-  stakeholders: string[];
-  /** legacy（非标准）：`concern: X;` 列表 */
-  concerns: string[];
   members: NamespaceMember[];
   location: SourceLocation;
 }

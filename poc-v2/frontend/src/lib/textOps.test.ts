@@ -160,6 +160,17 @@ describe('insertSnippetScoped（M16 P0 统一插入路径）', () => {
     expect(parse(out).errors).toEqual([]);
   });
 
+  it('无 body 的 view usage（`view V : D;`，官方允许）→ 展开成块', () => {
+    const c = 'view def D {\n}\nview V : D;';
+    const out = insertSnippetScoped(c, 'part def Owned;', {
+      scopeKind: 'view',
+      scopeName: 'V',
+    });
+    expect(out).toContain('view V : D {');
+    expect(out).toContain('part def Owned;');
+    expect(parse(out).errors).toEqual([]);
+  });
+
   it('view scope 未命中名字但只有一个视图 → 命中唯一视图', () => {
     const c = 'view Only {\n}';
     const out = insertSnippetScoped(c, 'part def X;', { scopeKind: 'view' });

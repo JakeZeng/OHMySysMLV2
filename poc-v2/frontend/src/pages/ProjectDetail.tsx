@@ -66,9 +66,9 @@ const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
  *   - 引用元素用 `expose <Pkg>::<Element>;`，整包递归用 `expose <Pkg>::**;`。
  */
 const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
-  // 作用范围：import Views::;  filter @SysML::PartUsage;
-  // 渲染方式：render <RenderingRef>;   例：render TreeDiagram;
-  // 引用元素：expose <Pkg>::<Element>;  整包 recursion：expose <Pkg>::**;
+  // 作用范围：import Views::*;  filter @SysML::PartUsage;
+  // 渲染方式：render <RenderingRef>;   例：render asTreeDiagram;
+  // （expose 只能出现在 view usage 体内——官方约束，§8.2.2.26）
 }
 `;
 
@@ -85,13 +85,13 @@ const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view 
 `;
 
 /**
- * M15 §7.26：ViewpointDefinition 骨架。
- * Viewpoint 是利益相关方关注点（stakeholder / concern / subject）。
+ * M15 §7.26 / M16 P1：ViewpointDefinition 骨架（官方成员形式，附录 A）。
+ * Viewpoint 是利益相关方关注点：subject / stakeholder usage / frame concern / doc。
  */
 const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint def ${name} {
   // subject : <Type>;
-  // stakeholder '<stakeholder>';
-  // concern '<concern>';
+  // stakeholder se : <StakeholderType>;
+  // frame concern fc : <ConcernType>;
 }
 `;
 

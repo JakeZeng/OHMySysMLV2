@@ -52,10 +52,10 @@
       "properties": {
         "kind": { "const": "package" },
         "id": { "type": "string" },
-        "name": { "type": "string", "minLength": 1 },
-        "inherits": {
-          "type": "array",
-          "items": { "type": "string" }
+        "name": { "type": "string" },
+        "isImplicitRoot": {
+          "type": "boolean",
+          "description": "M16 P1：解析器为顶层裸元素合成的隐式根包（官方隐式根 Namespace，name 为空串）"
         },
         "members": {
           "type": "array",

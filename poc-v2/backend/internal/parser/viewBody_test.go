@@ -29,8 +29,23 @@ func TestParseViewBody_Expose(t *testing.T) {
 		},
 		{
 			name:    "no expose",
-			content: `view V { render as tree; }`,
+			content: `view V { render asTreeDiagram; }`,
 			want:    []string{},
+		},
+		{
+			name:    "official namespace expose P::*",
+			content: `view V { expose PkgA::*; }`,
+			want:    []string{"PkgA::*"},
+		},
+		{
+			name:    "official recursive namespace expose P::*::**",
+			content: `view V { expose PkgA::*::**; }`,
+			want:    []string{"PkgA::*::**"},
+		},
+		{
+			name:    "inline filter after expose",
+			content: `view V { expose PkgA::**[@SysML::PartUsage]; }`,
+			want:    []string{"PkgA::**"},
 		},
 	}
 
@@ -53,16 +68,19 @@ func TestParseViewBody_Expose(t *testing.T) {
 	}
 }
 
-func TestParseViewBody_RenderAs(t *testing.T) {
+// M16 P1（Q18=B）：`render as <kind>;` 枚举方言已移除——render 后只有官方
+// 引用式 / 声明式两种；方言文本不再产生 renderKind（回落 interconnection）。
+func TestParseViewBody_RenderForms(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
 		want    model.RenderKind
 	}{
 		{"default interconnection", `view V { }`, model.RenderKindInterconnection},
-		{"explicit tree", `view V { render as tree; }`, model.RenderKindTree},
-		{"requirement", `view V { render as requirement; }`, model.RenderKindRequirement},
-		{"unknown defaults to interconnection", `view V { render as unknown; }`, model.RenderKindInterconnection},
+		{"official tree ref", `view V { render asTreeDiagram; }`, model.RenderKindTree},
+		{"official requirement ref", `view V { render asRequirementTable; }`, model.RenderKindRequirement},
+		{"unknown ref defaults to interconnection", `view V { render asHologram; }`, model.RenderKindInterconnection},
+		{"legacy `render as tree` no longer recognized", `view V { render as tree; }`, model.RenderKindInterconnection},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -151,17 +169,17 @@ view vehicleTree : 'Part Structure View' {
 		t.Errorf("通配 expose = %+v", r.ExposedElements[0])
 	}
 
-	// legacy：body 前的 `satisfies`，容忍继续
+	// M16 P1（Q18=B）：body 前 `satisfies` 与 `render as <kind>` 方言已移除，不再识别
 	legacy := `view vehicleTree satisfies StakeholderViewpoint {
     expose VehicleModel::Vehicle;
     render as tree;
 }`
 	l := ParseViewBody(legacy)
-	if l.SatisfiesQualifiedName != "StakeholderViewpoint" {
-		t.Errorf("legacy satisfies: got %q want %q", l.SatisfiesQualifiedName, "StakeholderViewpoint")
+	if l.SatisfiesQualifiedName != "" {
+		t.Errorf("prefix satisfies 方言不应再被识别: got %q", l.SatisfiesQualifiedName)
 	}
-	if l.RenderKind != model.RenderKindTree {
-		t.Errorf("legacy render as tree: got %q", l.RenderKind)
+	if l.RenderKind != model.RenderKindInterconnection {
+		t.Errorf("legacy render as tree 不应再产生 tree: got %q", l.RenderKind)
 	}
 }
 

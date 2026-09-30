@@ -75,7 +75,10 @@ export type ValidationIssueCode =
   | 'E302_SATISFY_NOT_VIEWPOINT'
   | 'W303_EXPOSE_NOT_RESOLVED'
   | 'W304_RENDER_UNKNOWN'
-  | 'W305_FILTER_UNKNOWN_OP';
+  | 'W305_FILTER_UNKNOWN_OP'
+  // M16 P1（官方对齐）
+  | 'E306_VIEW_MULTIPLE_RENDER'
+  | 'W307_TOPLEVEL_BARE';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -215,9 +218,7 @@ export function validate(model: SysMLModel): ValidationResult {
   // W208: 未使用的 import
   for (const [pkgQName, imports] of scope.imports) {
     for (const imp of imports) {
-      const ns = imp.namespace.endsWith('::*')
-        ? imp.namespace.slice(0, -3)
-        : imp.namespace;
+      const ns = stripImportSuffix(imp.namespace);
       // 检查是否有任何引用使用了这个命名空间
       let used = false;
       for (const [, sym] of scope.partDefs) {
@@ -284,8 +285,12 @@ export function validate(model: SysMLModel): ValidationResult {
   }
 
   // M15 §7.26：View / Viewpoint 语义校验。
-  // 校验从 SysMLModel.views / viewpoints 字段出发；与 part/port 语义解耦。
+  // 校验从 SysMLModel.views / viewpoints 字段出发（M16 P1：包内视图已被
+  // flattenNestedMembers 提升进这两个数组，因此天然覆盖包内视图）。
   validateViews(model, issues);
+
+  // M16 P1（Q1/Q19）：顶层裸元素风格 warning
+  validateTopLevelStyle(model, issues);
 
   return {
     ok: !issues.some((i) => i.severity === 'error'),
@@ -377,6 +382,18 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
     });
   }
 
+  // 4.5) M16 P1：官方约束「每个 view def/usage 至多一个 ViewRenderingMembership」
+  for (const v of model.views ?? []) {
+    if (v.multipleRenders) {
+      issues.push({
+        code: 'E306_VIEW_MULTIPLE_RENDER',
+        message: `view \`${v.name}\` 声明了多条 render 子句（官方约束：每个 view 至多一个 render）`,
+        location: v.location,
+        severity: 'error',
+      });
+    }
+  }
+
   // 5) filter 算子非标准
   const allowedOps = ['@', 'not @', 'istype', 'hastype'];
   for (const v of model.views ?? []) {
@@ -397,6 +414,55 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
           severity: 'warning',
         });
       }
+    }
+  }
+}
+
+/**
+ * M16 P1（Q1/Q19）：顶层裸元素风格 warning。
+ *
+ * 官方允许顶层元素（隐式根 Namespace，KerML §7.2.5.3），但官方所有完整示例
+ * 都放在 package 内——工具给出建议性 warning，不阻塞。
+ *
+ * 注意：flattenNestedMembers 会把包内 view/viewpoint/stateMachine 等**提升**到
+ * model 顶层数组（带 `_hoisted` 标记）；这里只对真正写在文本顶层的元素告警。
+ */
+function validateTopLevelStyle(model: SysMLModel, issues: ValidationIssue[]): void {
+  const warn = (what: string, name: string, loc: SourceLocation) => {
+    issues.push({
+      code: 'W307_TOPLEVEL_BARE',
+      message: `顶层裸 ${what} \`${name}\`：官方允许（隐式根 Namespace），但建议放入 package 内（官方示例惯例）`,
+      location: loc,
+      severity: 'warning',
+    });
+  };
+  const isHoisted = (n: unknown): boolean => !!(n as { _hoisted?: boolean })?._hoisted;
+
+  for (const v of model.views ?? []) {
+    if (!isHoisted(v)) warn('view', v.name, v.location);
+  }
+  for (const vp of model.viewpoints ?? []) {
+    if (!isHoisted(vp)) warn('viewpoint', vp.name, vp.location);
+  }
+  for (const sm of model.stateMachines ?? []) {
+    if (!isHoisted(sm)) warn('state machine', sm.name, sm.location);
+  }
+  for (const act of model.activities ?? []) {
+    if (!isHoisted(act)) warn('activity', act.name, act.location);
+  }
+  for (const req of model.requirements ?? []) {
+    if (!isHoisted(req)) warn('requirement', req.name, req.location);
+  }
+  for (const cb of model.constraintBlocks ?? []) {
+    if (!isHoisted(cb)) warn('constraint def', cb.name, cb.location);
+  }
+  // 隐式根包成员（顶层裸 part def / port def / usage / import / alias / doc）
+  for (const pkg of model.packages) {
+    if (!pkg.isImplicitRoot) continue;
+    for (const m of pkg.members) {
+      if (m.kind === 'doc' || m.kind === 'import' || m.kind === 'comment') continue;
+      const name = (m as { name?: string }).name;
+      if (name) warn(m.kind, name, m.location);
     }
   }
 }
@@ -422,7 +488,11 @@ function collectFromPackage(
   scope.packages.set(qualifiedName, pkg);
 
   for (const m of pkg.members) {
-    const memberQName = `${qualifiedName}::${memberName(m)}`;
+    // M16 P1：隐式根包（qualifiedName === ''）的成员直接用裸名作限定名，
+    // 避免产生 `::X` 这种畸形前缀。
+    const memberQName = qualifiedName
+      ? `${qualifiedName}::${memberName(m)}`
+      : memberName(m);
 
     switch (m.kind) {
       case 'package':
@@ -540,6 +610,13 @@ function memberName(m: NamespaceMember): string {
     case 'constraintBlock': return m.name;
     case 'enumDef': return m.name;
     case 'comment': return '';           // 不参与成员名拼接
+    // M16 P1 新成员类别
+    case 'view': return m.name;
+    case 'viewpoint': return m.name;
+    case 'alias': return m.name;
+    case 'doc': return '';                // 不参与成员名拼接
+    case 'stakeholderUsage': return m.name;
+    case 'frameConcern': return m.name;
   }
 }
 
@@ -799,6 +876,16 @@ function checkPartUsageRefs(
   }
 }
 
+/**
+ * M16 P1：剥离 import/expose 命名空间的官方后缀（`::*` 直接成员 / `::**` 递归成员）。
+ * 旧实现只处理 `::*`，`Foo::**` 会带着后缀去查符号表导致 E112 误报。
+ */
+function stripImportSuffix(namespace: string): string {
+  if (namespace.endsWith('::**')) return namespace.slice(0, -4);
+  if (namespace.endsWith('::*')) return namespace.slice(0, -3);
+  return namespace;
+}
+
 function checkImportTarget(
   imp: ImportStatement,
   qualifiedName: string,
@@ -806,8 +893,8 @@ function checkImportTarget(
   issues: ValidationIssue[]
 ): void {
   // `import Foo;` → Foo 必须是已知的 package
-  // `import Foo::*;` → 同上
-  const ns = imp.namespace; // 可能是 "Foo" 或 "Foo::*"
+  // `import Foo::*;` / `import Foo::**;` → 同上（剥离后缀）
+  const ns = stripImportSuffix(imp.namespace);
   if (!scope.packages.has(ns) && !scope.partDefs.has(ns) && !scope.portDefs.has(ns)) {
     // 仅当命名空间前导段未找到时报错
     if (!scope.packages.has(ns)) {

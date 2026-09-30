@@ -66,17 +66,18 @@ func (h *Handler) packageRefsForResolve(c *gin.Context, projectID string) []pars
 	return parser.FromPackageContentRefs(refs)
 }
 
-// resolveSatisfiedViewpointID 把 `view V satisfies VP;` 里解析出的 qualified name
+// resolveSatisfiedViewpointID 把 body 内 `satisfy VP;` 子句解析出的 qualified name
 // 映射到工程内真实存在的 Viewpoint ID。
 //
-// SysML v2 §7.26 的 satisfies 是语义关系而非纯字符串：只有解析到实体，
+// SysML v2 §7.26 的 satisfy 是语义关系而非纯字符串：只有解析到实体，
 // UI 才能给出可点击的跳转（否则退化为只显示名字的弱引用）。
+// （M16 P1：body 前 `satisfies` 方言已移除，官方唯一位置是 body 内子句。）
 //
 // 匹配策略（宽松，按优先级）：
 //  1. qualified name 末段与 viewpoint 名完全相等
 //  2. qualified name 与 viewpoint 名完全相等
 //
-// 找不到返回空串（不报错 —— 允许"先写 satisfies 再建 viewpoint"的建模顺序）。
+// 找不到返回空串（不报错 —— 允许"先写 satisfy 再建 viewpoint"的建模顺序）。
 func (h *Handler) resolveSatisfiedViewpointID(c *gin.Context, projectID, qualifiedName string) string {
 	if qualifiedName == "" {
 		return ""

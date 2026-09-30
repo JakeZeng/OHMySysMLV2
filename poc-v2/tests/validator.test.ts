@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Validator 单元测试
  *
  * 覆盖：
@@ -476,8 +476,6 @@ describe('Validator - Views (M15 §7.26)', () => {
           kind: 'viewpoint',
           id: 'vp1',
           name: 'MyVP',
-          stakeholders: [],
-          concerns: [],
           members: [],
           location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
         },
@@ -516,8 +514,6 @@ describe('Validator - Views (M15 §7.26)', () => {
           kind: 'viewpoint',
           id: 'vp1',
           name: 'MyVP',
-          stakeholders: [],
-          concerns: [],
           members: [],
           location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
         },

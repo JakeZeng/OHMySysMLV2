@@ -70,10 +70,8 @@ export function serialize(model: SysMLModel): string {
 
 function serializePackage(pkg: Package, indent: number, out: string[]): void {
   const pad = '  '.repeat(indent);
-  const inherits = pkg.inherits && pkg.inherits.length > 0
-    ? ` : ${pkg.inherits.join(', ')}`
-    : '';
-  out.push(`${pad}package ${pkg.name}${inherits} {`);
+  // M16 P1：官方 Package 无特化能力（`package Sub : Parent` 方言已移除）
+  out.push(`${pad}package ${pkg.name} {`);
 
   // 按类别分组：import → def → usage → connection
   const imports: ImportStatement[] = [];

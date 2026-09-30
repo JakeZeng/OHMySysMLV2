@@ -75,7 +75,9 @@ export function insertClauseIntoView(
 export function buildExposeClause(path: string, recursive = false): string {
   const p = path.trim();
   if (!p) {
-    return `expose ::**;`;
+    // M16 P1：官方 expose 必须以 QualifiedName 开头——裸 `expose ::**;` 是非法
+    // 方言，不再生成。空 payload 时产出注释占位符（P3 接元素选择器对话框）。
+    return `// expose <Pkg>::<Element>;  ← 待选择目标元素`;
   }
   if (recursive) {
     const base = p.replace(/::\*\*$/, '');
@@ -156,7 +158,8 @@ export function buildRenderClause(kind: RenderKind): string {
 export function buildSatisfyClause(vqname: string): string {
   const v = vqname.trim();
   if (!v) {
-    return `satisfy NewViewpoint;`;
+    // M16 P1：不再凭空生成 `satisfy NewViewpoint;`（悬空引用触发 E302）。
+    return `// satisfy <Viewpoint>;  ← 待选择视角`;
   }
   return `satisfy ${v};`;
 }

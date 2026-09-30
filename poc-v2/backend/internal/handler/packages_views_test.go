@@ -357,7 +357,7 @@ func TestViewDefinitionUsage(t *testing.T) {
 	t.Run("Create_Definition_DefaultsKind", func(t *testing.T) {
 		code, data := postView(projectID, gin.H{
 			"name":    "StructureDef",
-			"content": "view StructureDef { render as tree; }",
+			"content": "view StructureDef { render asTreeDiagram; }",
 		})
 		if code != http.StatusOK {
 			t.Fatalf("status = %d", code)
@@ -377,7 +377,7 @@ func TestViewDefinitionUsage(t *testing.T) {
 	t.Run("Create_Usage", func(t *testing.T) {
 		code, data := postView(projectID, gin.H{
 			"name":             "StructureUsage",
-			"content":          "view StructureUsage { render as tree; }",
+			"content":          "view StructureUsage { render asTreeDiagram; }",
 			"kind":             "usage",
 			"viewDefinitionId": defID,
 		})
@@ -447,7 +447,7 @@ func TestViewDefinitionUsage(t *testing.T) {
 	t.Run("Update_WithoutKind_PreservesUsage", func(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":    "StructureUsage",
-			"content": "view StructureUsage { render as snapshot; }",
+			"content": "view StructureUsage { render asSnapshotTable; }",
 			"version": int(usageV),
 		})
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/views/"+usageID, body)
@@ -516,7 +516,7 @@ func TestViewpointsCRUD(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":        "StakeholderView",
 			"description": "利益相关方关注点",
-			"content":     "viewpoint StakeholderView { concern: 整车结构; }",
+			"content":     "viewpoint StakeholderView { subject : Vehicle; }",
 			"stakeholder": "SafetyEngineer",
 			"concern":     "整车结构 + 失效模式",
 		})
@@ -577,7 +577,7 @@ func TestViewpointsCRUD(t *testing.T) {
 		body := jsonBody(gin.H{
 			"name":        "SafetyView",
 			"description": "更新后的视角",
-			"content":     "viewpoint SafetyView { concern: 安全; }",
+			"content":     "viewpoint SafetyView { subject : Vehicle; }",
 			"stakeholder": "SafetyOfficer",
 			"concern":     "功能安全",
 			"version":     int(vpV1),

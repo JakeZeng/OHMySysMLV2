@@ -274,7 +274,17 @@ Playwright m15 两组        ✅ 9 passed（20 张截图，夹具已改标准写
 
 ## 9. 引用源
 
-- OMG SysML v2 §7.26 Views and Viewpoints（ptc/25-04-06）
-- 8.2.2.25.2 View Usages（同上 PDF）—— `ViewUsage : 'view' name ('::>' …)? (':' type)? body`，`type?` 可选
-- KerML §8 Namespaces
+> M16 P1 订正：本节原混用了 Beta 2 与 Beta 4 两套编号，现统一到官方编号。
+> Beta 2（ptc/24-02-03）里本章是 §7.25 / BNF 8.2.2.25；Beta 4（规范文本 ptc/25-04-05，
+> changebar 版 ptc/25-04-06）与正式版（formal/26-03-02）里是 §7.26 / BNF 8.2.2.26。
+> 正文示例的机器可读源是附录 A `SimpleVehicleModel.sysml`（= OMG 信息性文档 ptc/25-04-31）。
+
+- OMG SysML v2 §7.26 Views and Viewpoints（Beta 4 = ptc/25-04-05；正式版 = formal/26-03-02）
+- §8.2.2.26（BNF，同上前述编号）—— ViewUsage 的官方产生式为
+  `ViewUsage = OccurrenceUsagePrefix 'view' UsageDeclaration? ValuePart? ViewBody`；
+  其中 `UsageDeclaration` 的 `: <type>` 部分可选（本文早先误引作 `ViewUsage : 'view' name …`）
+- KerML §7.2.5.3 根命名空间（顶层元素属于**隐式根 Namespace**，非 Package）
+- Eclipse/OMG 参考实现：github.com/Systems-Modeling/SysML-v2-Pilot-Implementation
+  （Xtext 语法 `SysML.xtext` / `KerML.xtext`；示例 `sysml/src/examples`、`sysml/src/training/42. Views`、
+  `sysml/src/validation/11-View and Viewpoint`；标准库 `sysml.library/Systems Library/Views.sysml`）
 - 截图归档与复跑命令：`poc-v2/docs/screenshots/m15/README.md`

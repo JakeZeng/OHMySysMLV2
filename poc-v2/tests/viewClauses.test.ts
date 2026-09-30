@@ -17,8 +17,10 @@ describe('buildExposeClause', () => {
     expect(buildExposeClause('Vehicle::Engine')).toBe('expose Vehicle::Engine;');
   });
 
-  it('空 path 退化为 ::**', () => {
-    expect(buildExposeClause('')).toBe('expose ::**;');
+  it('空 path → 注释占位符（M16 P1：裸 `expose ::**;` 是非法方言，不再生成）', () => {
+    const out = buildExposeClause('');
+    expect(out.startsWith('//')).toBe(true);
+    expect(out).not.toContain('expose ::**');
   });
 
   it('recursive 追加 ::**', () => {
@@ -78,8 +80,10 @@ describe('buildSatisfyClause', () => {
     expect(buildSatisfyClause('StakeholderViewpoint')).toBe('satisfy StakeholderViewpoint;');
   });
 
-  it('空字符串 fallback', () => {
-    expect(buildSatisfyClause('')).toBe('satisfy NewViewpoint;');
+  it('空字符串 → 注释占位符（M16 P1：不再凭空生成悬空 satisfy）', () => {
+    const out = buildSatisfyClause('');
+    expect(out.startsWith('//')).toBe(true);
+    expect(out).not.toContain('satisfy NewViewpoint');
   });
 
   it('支持带空格 viewpoint', () => {
