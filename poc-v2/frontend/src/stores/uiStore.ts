@@ -10,11 +10,16 @@ import { create } from 'zustand';
 
 export type ModelingMode = 'drag' | 'text';
 
+/** M16 P2（Q2）：树组织模式 — 同为全局 UI 偏好，不是 SysML 语义 */
+export type TreeOrgMode = 'package' | 'view';
+
 interface UIState {
   sidebarOpen: boolean;
   theme: 'light' | 'dark';
   /** M12：建模模式 — 全局 UI 偏好（非 SysML 语义） */
   modelingMode: ModelingMode;
+  /** M16 P2：树组织模式（按包层级 / 跨包视图视角） */
+  treeOrgMode: TreeOrgMode;
   /** M12：右侧属性面板是否显影 */
   propertiesPaneOpen: boolean;
 
@@ -22,6 +27,7 @@ interface UIState {
   setSidebar: (open: boolean) => void;
   setTheme: (t: 'light' | 'dark') => void;
   setModelingMode: (m: ModelingMode) => void;
+  setTreeOrgMode: (m: TreeOrgMode) => void;
   togglePropertiesPane: () => void;
   setPropertiesPane: (open: boolean) => void;
 }
@@ -46,10 +52,21 @@ const STORED_MODELING_MODE = (() => {
   return 'drag' as const;
 })();
 
+const STORED_TREE_ORG_MODE = (() => {
+  try {
+    const m = localStorage.getItem('sysmlv2.treeOrgMode');
+    if (m === 'package' || m === 'view') return m;
+  } catch {
+    /* ignore */
+  }
+  return 'package' as const;
+})();
+
 export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   theme: STORED_THEME,
   modelingMode: STORED_MODELING_MODE,
+  treeOrgMode: STORED_TREE_ORG_MODE,
   propertiesPaneOpen: true,
 
   toggleSidebar() {
@@ -76,6 +93,15 @@ export const useUIStore = create<UIState>((set) => ({
       /* ignore */
     }
     set({ modelingMode: m });
+  },
+
+  setTreeOrgMode(m) {
+    try {
+      localStorage.setItem('sysmlv2.treeOrgMode', m);
+    } catch {
+      /* ignore */
+    }
+    set({ treeOrgMode: m });
   },
 
   togglePropertiesPane() {

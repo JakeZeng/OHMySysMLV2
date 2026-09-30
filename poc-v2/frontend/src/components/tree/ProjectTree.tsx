@@ -16,6 +16,7 @@
 
 import * as React from 'react';
 import { useTreeStore } from '../../stores/treeStore';
+import { useUIStore } from '../../stores/uiStore';
 import {
   buildTree,
   visibleRows,
@@ -78,6 +79,10 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
     node: TreeNode;
   } | null>(null);
 
+  // M16 P2（Q2）：树组织模式 —— 按包层级 / 跨包视图视角（全局 UI 偏好）
+  const treeOrgMode = useUIStore((s) => s.treeOrgMode);
+  const setTreeOrgMode = useUIStore((s) => s.setTreeOrgMode);
+
   // 切工程时加载该工程的展开态
   React.useEffect(() => {
     setProject(projectId);
@@ -92,8 +97,9 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
         views,
         viewpoints,
         packageElements,
+        orgMode: treeOrgMode,
       }),
-    [projectId, projectName, packages, views, viewpoints, packageElements],
+    [projectId, projectName, packages, views, viewpoints, packageElements, treeOrgMode],
   );
 
   const rows = React.useMemo(
@@ -292,6 +298,40 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
       className={cn('flex h-full flex-col overflow-hidden', className)}
       data-testid="project-tree"
     >
+      {/* M16 P2：组织模式切换（Q2 视图视角） */}
+      <div
+        className="flex items-center gap-1 border-b border-gray-100 px-2 py-1 dark:border-gray-800"
+        data-testid="tree-org-toggle"
+      >
+        <button
+          type="button"
+          onClick={() => setTreeOrgMode('package')}
+          className={cn(
+            'rounded px-2 py-0.5 text-[10px] font-medium transition',
+            treeOrgMode === 'package'
+              ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+              : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800',
+          )}
+          data-testid="tree-org-package"
+          title="按包层级组织（SysML v2 命名空间归属）"
+        >
+          按包
+        </button>
+        <button
+          type="button"
+          onClick={() => setTreeOrgMode('view')}
+          className={cn(
+            'rounded px-2 py-0.5 text-[10px] font-medium transition',
+            treeOrgMode === 'view'
+              ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
+              : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800',
+          )}
+          data-testid="tree-org-view"
+          title="视图视角：跨包平铺全部视图与视角（模型层归属不变）"
+        >
+          视图视角
+        </button>
+      </div>
       <div
         role="tree"
         aria-label="工程树"

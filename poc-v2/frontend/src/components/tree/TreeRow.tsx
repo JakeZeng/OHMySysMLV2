@@ -163,6 +163,16 @@ export const TreeRow: React.FC<TreeRowProps> = ({
 
       <span className="flex-1 truncate" title={node.name}>
         {node.name}
+        {/* M16 P2：视图视角模式下的归属包路径 */}
+        {node.pathLabel && (
+          <span
+            className="ml-1 text-[10px] text-gray-400 dark:text-gray-500"
+            data-testid={`tree-pathlabel-${node.encodedId}`}
+            title={`归属：${node.pathLabel}`}
+          >
+            {node.pathLabel}
+          </span>
+        )}
       </span>
 
       {/* M15：视角节点的 stakeholder 徽章（短文本） */}

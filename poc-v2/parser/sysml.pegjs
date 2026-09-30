@@ -608,19 +608,24 @@ PartBodyMember
 // ─── Port Definition ───────────────────────────────────────────────────
 
 PortDef
-  = isAbstract:(AbstractKw WS)? "port" WS "def" WS name:Identifier WS dir:Direction? specialization:PortDefSpecialization? OPEN _ body:(_ PortBodyMember)* CLOSE
+  = isAbstract:(AbstractKw WS)? "port" WS "def" WS name:Identifier dir:(WS Direction)? specialization:PortDefSpecialization? body:PortDefBody
     {
       return {
         kind: 'portDef',
         id: nextId('portDef'),
         name,
         isAbstract: !!isAbstract,
-        direction: dir || undefined,
+        direction: dir ? dir[1] : undefined,
         inherits: specialization || undefined,
-        body: body.map(b => b[1]),
+        body,
         location: locationOf(location().start.offset),
       };
     }
+
+// M16 P1 补：官方 DefinitionBody 允许 `;` 空体（修 M15 已知限制「port def X; 解析不了」）
+PortDefBody
+  = OPEN _ members:(_ PortBodyMember)* CLOSE { return members.map(m => m[1]); }
+  / _ ";" { return []; }
 
 PortDefSpecialization
   = WS ":" WS inh:QualifiedNames { return inh; }

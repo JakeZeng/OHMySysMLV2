@@ -70,6 +70,8 @@ export interface TreeNode {
   exposeCount?: number;
   /** M15：未 resolve 的 expose 计数（标红） */
   exposeUnresolvedCount?: number;
+  /** M16 P2：视图视角模式下的归属包路径（如 `Vehicle / Views`；顶层裸视图 = `顶层`） */
+  pathLabel?: string;
   children: TreeNode[];
 }
 
@@ -86,6 +88,32 @@ export interface BuildTreeInput {
    * 由 usePackageElements hook 注入（懒加载）。
    */
   packageElements?: Record<string, ElementNodeInfo[]>;
+  /**
+   * M16 P2（Q2）：树组织模式。
+   *   - `package`（默认）：工程 → 包层级 → {子包, 元素, 视图, 视角}
+   *   - `view`：跨包「视图视角」——工程根下直接平铺全部视图与视角，
+   *     节点带 pathLabel 标注归属包路径（模型层仍按规范当普通包成员）
+   */
+  orgMode?: 'package' | 'view';
+}
+
+/** 包 id → 归属路径文本（`A / B`）；顶层返回 `顶层` */
+function buildPackagePaths(packages: PackageSummary[]): Map<string, string> {
+  const byId = new Map(packages.map((p) => [p.id, p]));
+  const paths = new Map<string, string>();
+  for (const p of packages) {
+    const chain: string[] = [];
+    let cur: PackageSummary | undefined = p;
+    const guard = new Set<string>();
+    while (cur && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      chain.unshift(cur.name);
+      const parentId = parentOf(cur.parentPackageId);
+      cur = parentId ? byId.get(parentId) : undefined;
+    }
+    paths.set(p.id, chain.join(' / '));
+  }
+  return paths;
 }
 
 /** 空 parentPackageId / packageId 归一为 ''（顶层） */
@@ -140,7 +168,13 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     views,
     viewpoints,
     packageElements,
+    orgMode,
   } = input;
+
+  const viewMode = orgMode === 'view';
+  const pkgPaths = viewMode ? buildPackagePaths(packages) : undefined;
+  const pathOf = (packageId?: string): string =>
+    (packageId && pkgPaths?.get(packageId)) || '顶层';
 
   const packageIds = new Set(packages.map((p) => p.id));
 
@@ -152,18 +186,21 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   };
 
   // 包节点：按 parentPackageId 分组；父不存在则归顶层
+  // M16 P2：视图视角模式下不渲染包层级（视图平铺到工程根，pathLabel 标注归属）
   const packageNodes = new Map<string, TreeNode>();
-  for (const p of packages) {
-    const parent = parentOf(p.parentPackageId);
-    packageNodes.set(p.id, {
-      encodedId: encodeNodeId('package', p.id),
-      kind: 'package',
-      id: p.id,
-      name: p.name,
-      children: [],
-    });
-    // 父不存在（含空串）时挂顶层
-    push(packageIds.has(parent) ? parent : '', packageNodes.get(p.id)!);
+  if (!viewMode) {
+    for (const p of packages) {
+      const parent = parentOf(p.parentPackageId);
+      packageNodes.set(p.id, {
+        encodedId: encodeNodeId('package', p.id),
+        kind: 'package',
+        id: p.id,
+        name: p.name,
+        children: [],
+      });
+      // 父不存在（含空串）时挂顶层
+      push(packageIds.has(parent) ? parent : '', packageNodes.get(p.id)!);
+    }
   }
 
   // 视图节点：按 packageId 分组
@@ -173,7 +210,7 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     const children = (v.innerElements ?? [])
       .filter((e) => e?.name)
       .map((e) => buildElementNode(v.id, 'view', e));
-    push(packageIds.has(parent) ? parent : '', {
+    push(viewMode || !packageIds.has(parent) ? '' : parent, {
       encodedId: encodeNodeId('view', v.id),
       kind: 'view',
       id: v.id,
@@ -189,6 +226,7 @@ export function buildTree(input: BuildTreeInput): TreeNode {
       satisfiesViewpointId: v.viewpointId,
       exposeCount: v.exposeCount,
       exposeUnresolvedCount: v.exposeUnresolvedCount,
+      pathLabel: viewMode ? pathOf(v.packageId) : undefined,
       children,
     });
   }
@@ -200,19 +238,20 @@ export function buildTree(input: BuildTreeInput): TreeNode {
       const children = (vp.innerElements ?? [])
         .filter((e) => e?.name)
         .map((e) => buildElementNode(vp.id, 'viewpoint', e));
-      push(packageIds.has(parent) ? parent : '', {
+      push(viewMode || !packageIds.has(parent) ? '' : parent, {
         encodedId: encodeNodeId('viewpoint', vp.id),
         kind: 'viewpoint',
         id: vp.id,
         name: vp.name,
         viewpointStakeholder: vp.stakeholder,
+        pathLabel: viewMode ? pathOf(vp.packageId) : undefined,
         children,
       });
     }
   }
 
   // M14/M15：元素节点：按 packageId 分组（挂在对应包下，递归嵌套）
-  if (packageElements) {
+  if (packageElements && !viewMode) {
     for (const [pkgId, elements] of Object.entries(packageElements)) {
       if (!packageIds.has(pkgId)) continue; // 跳过无效 package
       for (const el of elements) {
@@ -263,13 +302,15 @@ export function buildTree(input: BuildTreeInput): TreeNode {
     children: assemble('', visited),
   };
 
-  // 环中包未被访问 → 补救挂到根（不丢数据）
-  for (const p of packages) {
-    if (!visited.has(p.id)) {
-      visited.add(p.id);
-      const node = packageNodes.get(p.id)!;
-      node.children = assemble(p.id, visited);
-      root.children.push(node);
+  // 环中包未被访问 → 补救挂到根（不丢数据）；视图视角模式下无包节点
+  if (!viewMode) {
+    for (const p of packages) {
+      if (!visited.has(p.id)) {
+        visited.add(p.id);
+        const node = packageNodes.get(p.id)!;
+        node.children = assemble(p.id, visited);
+        root.children.push(node);
+      }
     }
   }
 

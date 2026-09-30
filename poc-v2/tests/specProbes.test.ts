@@ -88,6 +88,17 @@ package VehicleViews {
   });
 });
 
+describe('Spec probes - 官方 DefinitionBody 空体（M15 已知限制修复）', () => {
+  it('`port def X;` / `part def X;` / `view def X;` / `viewpoint def X;` 均可解析', () => {
+    expect(parse('package P { port def X; part def Y; }').errors).toEqual([]);
+    expect(parse('view def V;').errors).toEqual([]);
+    expect(parse('viewpoint def VP;').errors).toEqual([]);
+    const r = parse('package P { port def X; }');
+    const pd = r.model.packages[0].members.find((m) => m.kind === 'portDef') as any;
+    expect(pd.body).toEqual([]);
+  });
+});
+
 describe('Spec probes - Pilot training / validation / ViewTest', () => {
   it('training：内联 filter `expose vehicle::**[@Safety];` 与 `[not (@Safety)]`', () => {
     const r = parse(`view V : D {

@@ -32,17 +32,34 @@ interface ElementTreeCacheState {
   getCached: (packageId: string) => ElementNodeInfo[] | undefined;
 }
 
-/** 把单个 namespace member 转成元素节点（递归提取 part body 内的嵌套成员） */
-function toElementInfo(m: { name?: string; kind?: string; body?: { name?: string; kind?: string }[] }): ElementNodeInfo | null {
+interface MemberLike {
+  name?: string;
+  kind?: string;
+  body?: MemberLike[];
+  members?: MemberLike[];
+  isImplicitRoot?: boolean;
+}
+
+/** M16 P2：虚拟「模型根」节点名（Q6=A：AST 不动，只在树显示层分组） */
+export const IMPLICIT_ROOT_LABEL = '<模型根>';
+
+/**
+ * 把单个 namespace member 转成元素节点。
+ * M16 P2：改为**真递归**——body（def/usage 的 ownership 链）与 members
+ * （content 内嵌套 `package {}` 块）都逐层展开。
+ * view/viewpoint 成员跳过（它们由后端 View/Viewpoint 实体节点呈现，避免重复）。
+ */
+function toElementInfo(m: MemberLike): ElementNodeInfo | null {
   const name = m.name;
   if (!name) return null;
+  if (m.kind === 'view' || m.kind === 'viewpoint') return null;
   const info: ElementNodeInfo = { name, kind: m.kind ?? '' };
-  const body = m.body;
-  if (body && body.length > 0) {
+  const kids = [...(m.body ?? []), ...(m.members ?? [])];
+  if (kids.length > 0) {
     const children: ElementNodeInfo[] = [];
-    for (const b of body) {
-      if (!b.name) continue;
-      children.push({ name: b.name, kind: b.kind ?? '' });
+    for (const b of kids) {
+      const child = toElementInfo(b);
+      if (child) children.push(child);
     }
     if (children.length > 0) info.children = children;
   }
@@ -54,38 +71,84 @@ function toElementInfo(m: { name?: string; kind?: string; body?: { name?: string
  *
  * M15：part def / part 的 body 内 port / attribute 作为子元素递归上树，
  * 表达 SysML v2 ownership 链（`Pkg::Vehicle::powerPort`）。
+ *
+ * M16 P2（Q6/Q19）：
+ *   - content 只有一个命名包且无裸顶层成员 → 平铺该包成员（既有 UX 不变，
+ *     实体包节点即命名空间，不再多一层同名文本包）
+ *   - content 含多个命名包 / 命名包+裸成员混合 → 命名包成子树（kind 'package'），
+ *     裸顶层成员（解析器归入 isImplicitRoot 隐式根包）挂虚拟 `<模型根>` 分组
  */
-function extractElements(content: string): ElementNodeInfo[] {
+export function extractElements(content: string): ElementNodeInfo[] {
   if (!content?.trim()) return [];
   try {
     const pipeline = runPipeline(content);
     const model = pipeline.model;
+
+    const bareMembers: MemberLike[] = [];
+    const namedPkgs: MemberLike[] = [];
+    for (const pkg of (model.packages ?? []) as MemberLike[]) {
+      if (pkg.isImplicitRoot) bareMembers.push(...(pkg.members ?? []));
+      else namedPkgs.push(pkg);
+    }
+
     const out: ElementNodeInfo[] = [];
     const seen = new Set<string>();
-    for (const pkg of model.packages ?? []) {
-      for (const m of pkg.members ?? []) {
-        const info = toElementInfo(m as { name?: string; kind?: string; body?: { name?: string; kind?: string }[] });
-        if (!info || seen.has(info.name)) continue;
-        seen.add(info.name);
-        out.push(info);
-      }
-    }
-    // 顶层 stateMachines / activities 的子成员也提一下（M10 的扁平渲染）
+    const pushInfo = (info: ElementNodeInfo | null) => {
+      if (!info || seen.has(info.name)) return;
+      seen.add(info.name);
+      out.push(info);
+    };
+
+    // 顶层 stateMachines / activities 的子成员（M10 扁平渲染）——算裸成员
+    const flatBehavior: ElementNodeInfo[] = [];
     for (const sm of model.stateMachines ?? []) {
       for (const s of sm.states ?? []) {
-        if (!s.name || seen.has(s.name)) continue;
-        seen.add(s.name);
-        const kind =
-          s.isInitial ? 'initialState' : s.isFinal ? 'finalState' : 'state';
-        out.push({ name: s.name, kind });
+        if (!s.name) continue;
+        flatBehavior.push({
+          name: s.name,
+          kind: s.isInitial ? 'initialState' : s.isFinal ? 'finalState' : 'state',
+        });
       }
     }
     for (const act of model.activities ?? []) {
       for (const a of act.actions ?? []) {
-        if (!a.name || seen.has(a.name)) continue;
-        seen.add(a.name);
-        out.push({ name: a.name, kind: 'actionUsage' });
+        if (a.name) flatBehavior.push({ name: a.name, kind: 'actionUsage' });
       }
+    }
+
+    const bareInfos = bareMembers
+      .map((m) => toElementInfo(m))
+      .filter((x): x is ElementNodeInfo => !!x);
+    const hasBare = bareInfos.length > 0 || (namedPkgs.length === 0 && flatBehavior.length > 0);
+
+    if (namedPkgs.length === 1 && !hasBare) {
+      // 单命名包：平铺成员（历史行为）
+      for (const m of namedPkgs[0].members ?? []) pushInfo(toElementInfo(m));
+      for (const f of flatBehavior) pushInfo(f);
+      return out;
+    }
+
+    // 结构化模式：命名包成子树
+    for (const pkg of namedPkgs) {
+      pushInfo({
+        name: pkg.name ?? '',
+        kind: 'package',
+        children: (pkg.members ?? [])
+          .map((m) => toElementInfo(m))
+          .filter((x): x is ElementNodeInfo => !!x),
+      });
+    }
+    // 裸顶层成员 → 虚拟「模型根」（Q6=A：只在有命名包对照时才分组，
+    // 全裸 content 保持平铺，不给最常见场景加噪音层级）
+    const bareAll = [...bareInfos, ...flatBehavior];
+    if (namedPkgs.length > 0 && bareAll.length > 0) {
+      pushInfo({
+        name: IMPLICIT_ROOT_LABEL,
+        kind: 'implicitRoot',
+        children: bareAll,
+      });
+    } else {
+      for (const b of bareAll) pushInfo(b);
     }
     return out;
   } catch {

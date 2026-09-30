@@ -378,3 +378,47 @@ describe('buildTree with packageElements (M14)', () => {
     expect(el.children).toEqual([]);
   });
 });
+
+// M16 P2（Q2）：跨包「视图视角」组织模式
+describe('buildTree orgMode=view', () => {
+  const packages = [pkg('p1', 'Vehicle'), pkg('p2', 'Views', 'p1')];
+  const views = [
+    view('v1', '结构视图', 'p2'),
+    view('v2', '顶层视图', ''),
+  ];
+  const viewpoints = [viewpoint('vp1', '安全视角', 'p1')];
+
+  it('视图与视角平铺到工程根，不渲染包层级', () => {
+    const root = buildTree({
+      ...base,
+      packages,
+      views,
+      viewpoints,
+      orgMode: 'view',
+    });
+    expect(root.children.every((c) => c.kind !== 'package')).toBe(true);
+    expect(childNames(root)).toEqual(['结构视图', '顶层视图', '安全视角']);
+  });
+
+  it('pathLabel 标注归属包路径；无包归属标注「顶层」', () => {
+    const root = buildTree({
+      ...base,
+      packages,
+      views,
+      viewpoints,
+      orgMode: 'view',
+    });
+    const byName = new Map(root.children.map((c) => [c.name, c]));
+    expect(byName.get('结构视图')!.pathLabel).toBe('Vehicle / Views');
+    expect(byName.get('顶层视图')!.pathLabel).toBe('顶层');
+    expect(byName.get('安全视角')!.pathLabel).toBe('Vehicle');
+  });
+
+  it('package 模式下不产生 pathLabel（默认行为不变）', () => {
+    const root = buildTree({ ...base, packages, views, viewpoints });
+    const v = root.children
+      .flatMap((c) => c.children)
+      .find((n) => n.name === '结构视图');
+    expect(v?.pathLabel).toBeUndefined();
+  });
+});

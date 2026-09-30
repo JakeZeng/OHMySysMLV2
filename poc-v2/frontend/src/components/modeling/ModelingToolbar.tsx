@@ -21,6 +21,7 @@ import {
 import { Button } from '../ui/Button';
 import { useUIStore, type ModelingMode } from '../../stores/uiStore';
 import type { PipelineResult } from '../../lib/pipeline';
+import { ViewSwitcher } from './ViewSwitcher';
 
 export interface ModelingToolbarProps {
   name: string;
@@ -141,6 +142,9 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
       </div>
 
       <div className="mx-1 h-5 w-px bg-gray-200" />
+
+      {/* M16 P2（Q2）：跨包视图选择器 */}
+      <ViewSwitcher />
 
       <Button
         variant="ghost"
