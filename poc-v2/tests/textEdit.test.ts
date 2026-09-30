@@ -125,6 +125,80 @@ describe('Text Edit - deleteConnection', () => {
   });
 });
 
+describe('Text Edit - renameNode 语义化（M16 P0）', () => {
+  it('11. 注释中的同名字词不被误伤', () => {
+    const src = `package P {
+  /* Engine 是核心部件，Engine 文档 */
+  part def Engine {}
+  part e : Engine;
+}
+`;
+    const r = parse(src);
+    const id = findPartDefId(r.model, 'Engine');
+    const result = renameNode(src, r.model, id, 'Motor');
+    // 声明与 typeRef 引用被改
+    expect(result.text).toContain('part def Motor');
+    expect(result.text).toContain('part e : Motor');
+    // 注释中的 Engine 原样保留（旧全文正则会把它们一起改掉）
+    expect(result.text).toContain('/* Engine 是核心部件，Engine 文档 */');
+  });
+
+  it('12. 嵌套 body 内的 part usage typeRef 也被更新', () => {
+    const src = `package P {
+  part def Engine {}
+  part def Car {
+    part e : Engine;
+  }
+}
+`;
+    const r = parse(src);
+    const id = findPartDefId(r.model, 'Engine');
+    const result = renameNode(src, r.model, id, 'Motor');
+    expect(result.text).toContain('part e : Motor');
+    expect(result.text).not.toMatch(/:\s*Engine/);
+  });
+
+  it('13. 改名 port usage 更新 connect 端点的端口名', () => {
+    const r = parse(SOURCE_1);
+    // 找 carA 的 powerOut port usage id（在 Engine body 或 carA 上下文里）
+    let portId: string | undefined;
+    const walk = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node.kind === 'portUsage' && node.name === 'powerOut' && !portId) {
+        portId = `port:${node.id}`;
+      }
+      for (const k of ['members', 'body']) if (Array.isArray(node[k])) walk(node[k]);
+    };
+    walk(r.model.packages);
+    expect(portId).toBeDefined();
+    const result = renameNode(SOURCE_1, r.model, portId!, 'pwr');
+    expect(result.text).toContain('connect carA.pwr to carB.pwr');
+    expect(result.text).toContain('port pwr : Power');
+  });
+
+  it('14. 不同包里的同名无关声明互不影响（只改被引用处）', () => {
+    const src = `package A {
+  part def Shared {}
+  part a : Shared;
+}
+package B {
+  part def Local {}
+  part b : Local;
+}
+`;
+    const r = parse(src);
+    const idA = findPartDefId(r.model, 'Shared');
+    const result = renameNode(src, r.model, idA, 'Renamed');
+    expect(result.text).toContain('part def Renamed');
+    expect(result.text).toContain('part a : Renamed');
+    // B 包完全不动
+    expect(result.text).toContain('part def Local');
+    expect(result.text).toContain('part b : Local');
+    expect(result.text).toContain('package B');
+  });
+});
+
 describe('Text Edit - 往返一致性', () => {
   it('9. 改名后能重新 parse 通过', () => {
     const r = parse(SOURCE_1);

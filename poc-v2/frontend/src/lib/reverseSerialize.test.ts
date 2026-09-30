@@ -147,6 +147,48 @@ describe('reverseSerialize', () => {
     expect(r.text).toMatch(/constraint def MassLimit[\s\S]*attribute\s+mass\s*:/);
   });
 
+  // ─── M16 P0：offset 级 header 定位 ────────────────────────────────
+
+  it('header 跨行（`{` 在下一行）→ isAbstract 正确插入且不碰 body', () => {
+    const src = `package Demo {
+  part def Engine
+  {
+    attribute mass : Real;
+  }
+}`;
+    const model = parse(src).model;
+    const pd: any = (model.packages[0] as any).members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine');
+    const r = applyFieldEdit(src, model, `pd:${pd.id}`, { fieldKey: 'isAbstract', value: true });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('abstract part def Engine');
+    // body 与 `{` 所在行不受影响
+    expect(r.text).toContain('  {\n    attribute mass : Real;\n  }');
+  });
+
+  it('typeRef 已存在时替换而非追加第二个冒号', () => {
+    const src = `package Demo {
+  part def Sub : Base {
+  }
+}`;
+    const model = parse(src).model;
+    const pd: any = (model.packages[0] as any).members.find((m: any) => m.kind === 'partDef' && m.name === 'Sub');
+    const r = applyFieldEdit(src, model, `pd:${pd.id}`, { fieldKey: 'typeRef', value: 'NewBase' });
+    expect(r.text).toContain('part def Sub : NewBase');
+    expect(r.text).not.toContain(': NewBase :');
+  });
+
+  it('requirement text：无注释且 `;` 结尾 → 在 `;` 前插入 doc 注释', () => {
+    const src = `package Demo {
+  requirement def R2;
+}`;
+    const model = parse(src).model;
+    const req = model.requirements[0];
+    expect(req.name).toBe('R2');
+    const r = applyFieldEdit(src, model, `req:${req.id}`, { fieldKey: 'text', value: '描述B' });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('requirement def R2 /* 描述B */;');
+  });
+
   it('returns no-change when part def has no body', () => {
     const model = parsedModel();
     const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;

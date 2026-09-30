@@ -167,28 +167,55 @@ function findLineRange(text: string, lineNum: number): [number, number] {
   return [off, off + lineLen];
 }
 
+/**
+ * M16 P0：声明头范围 = 从 AST location.offset 起，到第一个 `{` / `;` / 换行之前。
+ * 替代旧的「整行」定位——声明头不再被行内其它内容（body 起始 `{`、尾随注释）污染，
+ * 多行 body 也不会被误当作 header 的一部分。
+ */
+function headerRange(text: string, offset: number): [number, number] {
+  let i = offset;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '{' || ch === ';' || ch === '\n') break;
+    i++;
+  }
+  return [offset, i];
+}
+
 function editPartDefField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
-  const [lineStart, lineEnd] = findLineRange(text, decl.location.line);
-  const header = text.slice(lineStart, lineEnd);
+  const [start, end] = headerRange(text, decl.location.offset);
+  const header = text.slice(start, end);
 
   if (edit.fieldKey === 'isAbstract') {
     const has = /\babstract\b/.test(header);
     if (edit.value && !has) {
-      // 在 `part def X` 前插入 `abstract`（语法要求：abstract part def X { ... }）
-      const replaced = header.replace(/(\bpart\s+def\s+\w+)/, 'abstract $1');
-      return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+      // 在 `part def` 关键字前插入 `abstract`（语法要求：abstract part def X { ... }）
+      const m = header.match(/\bpart\s+def\b/);
+      if (!m) return { text, changed: false };
+      const idx = m.index ?? 0;
+      const replaced = header.slice(0, idx) + 'abstract ' + header.slice(idx);
+      return replaceText(text, start, end - start, replaced);
     }
     if (!edit.value && has) {
       const replaced = header.replace(/\babstract\s+/, '');
-      return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+      return replaceText(text, start, end - start, replaced);
     }
   }
 
   if (edit.fieldKey === 'typeRef') {
-    const replaced = (edit.value as string).trim()
-      ? header.replace(/(\bpart def\s+\w+)/, `$1 : ${edit.value}`)
-      : header.replace(/(\bpart def\s+\w+)\s*:\s*\w+/, '$1');
-    return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+    const value = (edit.value as string).trim();
+    const tm = header.match(/:\s*[\w.:]+/);
+    let replaced: string;
+    if (value) {
+      replaced = tm
+        ? header.slice(0, tm.index ?? 0) + `: ${value}` + header.slice((tm.index ?? 0) + tm[0].length)
+        : header.replace(/(\bpart\s+def\s+'?[\w ]+'?)/, `$1 : ${value}`);
+    } else {
+      if (!tm) return { text, changed: false };
+      replaced = (header.slice(0, tm.index ?? 0) + header.slice((tm.index ?? 0) + tm[0].length))
+        .replace(/\s+$/, '');
+    }
+    return replaceText(text, start, end - start, replaced);
   }
 
   return { text, changed: false };
@@ -196,10 +223,16 @@ function editPartDefField(text: string, decl: DeclInfo, edit: FieldEdit): Revers
 
 function editPartUsageField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
   if (edit.fieldKey !== 'typeRef') return { text, changed: false };
-  const [lineStart, lineEnd] = findLineRange(text, decl.location.line);
-  const header = text.slice(lineStart, lineEnd);
-  const replaced = header.replace(/(:\s*)[\w.]+/, `$1${edit.value}`);
-  return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+  const [start, end] = headerRange(text, decl.location.offset);
+  const header = text.slice(start, end);
+  const value = String(edit.value ?? '').trim();
+  const tm = header.match(/:\s*[\w.:]+/);
+  const replaced = tm
+    ? header.slice(0, tm.index ?? 0) + `: ${value}` + header.slice((tm.index ?? 0) + tm[0].length)
+    : value
+      ? `${header.replace(/\s+$/, '')} : ${value}`
+      : header;
+  return replaceText(text, start, end - start, replaced);
 }
 
 function editPortDefField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
@@ -215,34 +248,47 @@ function editPortDefField(text: string, decl: DeclInfo, edit: FieldEdit): Revers
 }
 
 function editRequirementField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
-  const [lineStart, lineEnd] = findLineRange(text, decl.location.line);
-  const header = text.slice(lineStart, lineEnd);
+  // M16 P0：header 范围到 `;` 之前（requirement 单行声明含 reqId 括号与 doc 注释）
+  const [start, rawEnd] = headerRange(text, decl.location.offset);
+  // headerRange 停在 `;` 前；把尾随 `;` 纳入编辑范围，便于在 `;` 前插入注释
+  const end = text[rawEnd] === ';' ? rawEnd + 1 : rawEnd;
+  const header = text.slice(start, end);
 
   if (edit.fieldKey === 'reqId') {
     // `requirement R1` → `requirement def R1 (REQ-001)`
     const value = (edit.value as string).trim();
     let replaced: string;
     if (value) {
-      replaced = header.match(/\brequirement def\b/)
-        ? header.replace(/\(\s*[\w-]*\s*\)/, `(${value})`)
-        : header.replace(/\brequirement\s+(\w+)/, `requirement def $1 (${value})`);
+      if (/\(\s*[\w-]*\s*\)/.test(header)) {
+        replaced = header.replace(/\(\s*[\w-]*\s*\)/, `(${value})`);
+      } else if (header.match(/\brequirement def\b/)) {
+        replaced = header.replace(/(\brequirement\s+def\s+'?[\w ]+'?)/, `$1 (${value})`);
+      } else {
+        replaced = header.replace(/\brequirement\s+('?[\w ]+'?)/, `requirement def $1 (${value})`);
+      }
     } else {
-      replaced = header.replace(/\s*\(\s*[\w-]+\s*\)/, '').replace(/\bdef\s+(\w+)/, '$1');
+      replaced = header.replace(/\s*\(\s*[\w-]+\s*\)/, '').replace(/\bdef\s+('?[\w ]+'?)/, '$1');
     }
-    return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+    return replaceText(text, start, end - start, replaced);
   }
 
   if (edit.fieldKey === 'text') {
     const value = (edit.value as string).trim();
     let replaced: string;
     if (value) {
-      replaced = header.includes('/*')
-        ? header.replace(/\/\*[\s\S]*?\*\//, `/* ${value} */`)
-        : header.replace(/(\)\s*[;{]?)/, `$1 /* ${value} */`);
+      if (header.includes('/*')) {
+        replaced = header.replace(/\/\*[\s\S]*?\*\//, `/* ${value} */`);
+      } else if (header.trimEnd().endsWith(';')) {
+        // 在尾随 `;` 之前插入 doc 注释
+        const semiIdx = header.lastIndexOf(';');
+        replaced = header.slice(0, semiIdx).replace(/\s+$/, '') + ` /* ${value} */;`;
+      } else {
+        replaced = `${header.replace(/\s+$/, '')} /* ${value} */`;
+      }
     } else {
       replaced = header.replace(/\s*\/\*[\s\S]*?\*\//, '');
     }
-    return replaceText(text, lineStart, lineEnd - lineStart, replaced);
+    return replaceText(text, start, end - start, replaced);
   }
 
   return { text, changed: false };
@@ -258,22 +304,37 @@ function editConstraintBlockField(text: string, decl: DeclInfo, edit: FieldEdit)
   return replaceText(text, lineStart, lineEnd - lineStart, replaced);
 }
 
+/**
+ * M16 P0：state / action 通用——header 范围内插/删 `initial` / `final` 前缀。
+ * （旧实现用 state 的正则处理 action，对 `action A;` 是 no-op，这里一并修正。）
+ */
 function editStateField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
-  const [lineStart, lineEnd] = findLineRange(text, decl.location.line);
-  const header = text.slice(lineStart, lineEnd);
-  if (edit.fieldKey === 'isInitial') {
-    return replaceText(text, lineStart, lineEnd - lineStart,
-      edit.value ? header.replace(/\b(state\s+\w+)/, 'initial $1') : header.replace(/\binitial\s+/, ''));
-  }
-  if (edit.fieldKey === 'isFinal') {
-    return replaceText(text, lineStart, lineEnd - lineStart,
-      edit.value ? header.replace(/\b(state\s+\w+)/, 'final $1') : header.replace(/\bfinal\s+/, ''));
+  const [start, end] = headerRange(text, decl.location.offset);
+  const header = text.slice(start, end);
+  const keyword = decl.kind === 'actionDef' ? 'action' : 'state';
+  const kwRe = new RegExp(`\\b(${keyword}\\s+'?[\\w ]+'?)`);
+
+  if (edit.fieldKey === 'isInitial' || edit.fieldKey === 'isFinal') {
+    const marker = edit.fieldKey === 'isInitial' ? 'initial' : 'final';
+    const has = new RegExp(`\\b${marker}\\b`).test(header);
+    let replaced: string;
+    if (edit.value && !has) {
+      const m = header.match(kwRe);
+      if (!m) return { text, changed: false };
+      const idx = m.index ?? 0;
+      replaced = header.slice(0, idx) + `${marker} ` + header.slice(idx);
+    } else if (!edit.value && has) {
+      replaced = header.replace(new RegExp(`\\b${marker}\\s+`), '');
+    } else {
+      return { text, changed: false };
+    }
+    return replaceText(text, start, end - start, replaced);
   }
   return { text, changed: false };
 }
 
 function editActionField(text: string, decl: DeclInfo, edit: FieldEdit): ReverseResult {
-  // action 字段编辑与 state 相同模式
+  // action 字段编辑与 state 相同模式（keyword 按 decl.kind 分派）
   return editStateField(text, decl, edit);
 }
 
@@ -319,17 +380,40 @@ export function applyListEdit(
 
   const bodyText = text.slice(openBrace + 1, closeBrace);
 
+  // M16 P0：remove/update 优先用 AST 子成员的 location 锚定目标行，
+  // 不再全 body 正则扫描（嵌套块 / 同名成员不再有误伤风险）；
+  // AST 找不到（如解析降级）时回退旧正则路径。
+  const child = findBodyChild(decl, edit.kind, edit.item.oldName ?? edit.item.name);
+
   if (edit.op === 'add') {
-    const line = edit.kind === 'attribute'
-      ? `  attribute ${edit.item.name} : ${edit.item.typeRef};\n`
-      : `  port ${edit.item.name} : ${edit.item.typeRef};\n`;
-    // 插入位置：体末尾（`}` 之前）
-    const newText = text.slice(0, closeBrace) + line + text.slice(closeBrace);
+    const kw = edit.kind === 'attribute' ? 'attribute' : 'port';
+    // 与 textOps.insertBeforeClose 同策略：`}` 行缩进保持在 `}` 前，
+    // snippet 插到该缩进之前，避免吃掉闭合行的缩进
+    const lastNl = bodyText.lastIndexOf('\n');
+    const closingIndent = lastNl >= 0 ? bodyText.slice(lastNl + 1) : '';
+    const hasClosingIndent =
+      closingIndent.length > 0 && closingIndent.trim().length === 0;
+    const insertAt = hasClosingIndent ? closeBrace - closingIndent.length : closeBrace;
+
+    const bodyBeforeInsert = text.slice(openBrace + 1, insertAt);
+    const indent = bodyBeforeInsert.trim().length === 0 ? '  ' : detectBodyIndent(bodyBeforeInsert);
+    const line = `${indent}${kw} ${edit.item.name} : ${edit.item.typeRef};\n`;
+    const prefix =
+      bodyBeforeInsert.trim().length > 0 && !bodyBeforeInsert.endsWith('\n') ? '\n' : '';
+    const newText = text.slice(0, insertAt) + prefix + line + text.slice(insertAt);
     return { text: newText, changed: newText !== text };
   }
 
   if (edit.op === 'remove') {
-    // 找到匹配的行并删除（含换行）
+    if (child?.location) {
+      const [lineStart, lineEnd] = findLineRange(text, child.location.line);
+      let end = lineEnd;
+      if (text[end] === '\r') end++;
+      if (text[end] === '\n') end++;
+      const newText = text.slice(0, lineStart) + text.slice(end);
+      return { text: newText, changed: newText !== text };
+    }
+    // 回退：body 内正则匹配整行
     const re = edit.kind === 'attribute'
       ? new RegExp(`^[ \\t]*attribute\\s+${escapeRegex(edit.item.oldName ?? edit.item.name)}\\s*:.*\\n`, 'm')
       : new RegExp(`^[ \\t]*port\\s+${escapeRegex(edit.item.oldName ?? edit.item.name)}\\s*:.*\\n`, 'm');
@@ -342,11 +426,23 @@ export function applyListEdit(
   }
 
   if (edit.op === 'update') {
-    // 更新 name 或 typeRef
-    const re = edit.kind === 'attribute'
+    const tokenRe = edit.kind === 'attribute'
       ? new RegExp(`([ \\t]*attribute\\s+)${escapeRegex(edit.item.oldName ?? '')}\\s*:\\s*([\\w.]+)?`)
       : new RegExp(`([ \\t]*port\\s+)${escapeRegex(edit.item.oldName ?? '')}\\s*:\\s*([\\w.]+)?`);
-    const m = bodyText.match(re);
+    if (child?.location) {
+      // AST 锚定：只在该成员所在行内做 token 替换
+      const [lineStart, lineEnd] = findLineRange(text, child.location.line);
+      const lineText = text.slice(lineStart, lineEnd);
+      const m = lineText.match(tokenRe);
+      if (!m) return { text, changed: false };
+      const startInText = lineStart + (m.index ?? 0);
+      const endInText = startInText + m[0].length;
+      const replacement = `${m[1]}${edit.item.name} : ${edit.item.typeRef}`;
+      const newText = text.slice(0, startInText) + replacement + text.slice(endInText);
+      return { text: newText, changed: newText !== text };
+    }
+    // 回退：body 内正则
+    const m = bodyText.match(tokenRe);
     if (!m) return { text, changed: false };
     const startInText = openBrace + 1 + (m.index ?? 0);
     const endInText = startInText + m[0].length;
@@ -356,6 +452,26 @@ export function applyListEdit(
   }
 
   return { text, changed: false };
+}
+
+/** 从 part def 的 AST body 中按 kind + name 找子成员（attributeUsage / portUsage）。 */
+function findBodyChild(
+  decl: { body?: Array<{ kind: string; name?: string; location?: { line: number; column: number; offset: number } }> },
+  kind: 'attribute' | 'port',
+  name: string,
+): { kind: string; name?: string; location?: { line: number; column: number; offset: number } } | undefined {
+  const wantKind = kind === 'attribute' ? 'attributeUsage' : 'portUsage';
+  return (decl.body ?? []).find((c) => c.kind === wantKind && c.name === name);
+}
+
+/** 从 body 文本推断缩进（第一个非空行的 leading whitespace），空 body 返回默认 2 空格。 */
+function detectBodyIndent(body: string): string {
+  for (const line of body.split('\n')) {
+    if (line.trim().length === 0) continue;
+    const m = line.match(/^(\s*)/);
+    return m ? m[1] : '  ';
+  }
+  return '  ';
 }
 
 function escapeRegex(s: string): string {
@@ -383,6 +499,8 @@ function findBlockBodyRange(text: string, declOffset: number): [number, number] 
 
 interface DeclLocationInfo {
   location: { line: number; column: number; offset: number };
+  /** M16 P0：带上 AST body，供 remove/update 按子成员 location 锚定 */
+  body?: Array<{ kind: string; name?: string; location?: { line: number; column: number; offset: number } }>;
 }
 
 function findPartDefById(model: SysMLModel, id: string): DeclLocationInfo | undefined {
@@ -396,7 +514,10 @@ function findPartDefById(model: SysMLModel, id: string): DeclLocationInfo | unde
 function walkForPartDef(pkg: any, id: string): DeclLocationInfo | undefined {
   for (const m of pkg.members) {
     if (m.kind === 'partDef' && m.id === id) {
-      return { location: { line: m.location.line, column: m.location.column, offset: m.location.offset } };
+      return {
+        location: { line: m.location.line, column: m.location.column, offset: m.location.offset },
+        body: m.body,
+      };
     }
     if (m.kind === 'package') {
       const r = walkForPartDef(m, id);

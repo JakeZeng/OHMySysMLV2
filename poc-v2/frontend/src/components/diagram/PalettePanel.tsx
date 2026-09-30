@@ -28,7 +28,7 @@ import {
   type PaletteKind,
   type PaletteCategory,
 } from '../../lib/insertSnippet';
-import { insertSnippetIntoPackage } from '../../lib/textOps';
+import { insertSnippetScoped } from '../../lib/textOps';
 import { useModelStore } from '../../stores/modelStore';
 import { useToast } from '../ui/Toast';
 import { generateUniqueName } from '../../lib/naming';
@@ -51,6 +51,10 @@ export const PalettePanel: React.FC = () => {
   const content = useModelStore((s) => s.content);
   const setContent = useModelStore((s) => s.setContent);
   const nodes = useModelStore((s) => s.pipeline.nodes);
+  // M16 P0：统一插入路径——目标 = 当前打开的 scope（包/视图）
+  const entityKind = useModelStore((s) => s.entityKind);
+  const scopeName = useModelStore((s) => s.name);
+  const model = useModelStore((s) => s.pipeline.model);
   const { showToast } = useToast();
 
   /** 从画布节点提取现有名字（用于去重） */
@@ -79,7 +83,11 @@ export const PalettePanel: React.FC = () => {
     } else {
       snippet = item.generate(name);
     }
-    const newContent = insertSnippetIntoPackage(content, snippet);
+    const newContent = insertSnippetScoped(content, snippet, {
+      scopeKind: entityKind ?? 'package',
+      scopeName,
+      model,
+    });
     setContent(newContent);
     showToast({
       title: `已添加 ${item.label}`,

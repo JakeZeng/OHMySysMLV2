@@ -292,12 +292,23 @@ export function renameNode(
     },
   ];
 
-  // 2) 修改所有引用（仅 PartUsage / PartDef / PortDef 才会有 connect 引用；
-  //    port usage 一般不直接出现在 connect 端点，但若出现也要改）
-  if (decl.kind === 'partDef' || decl.kind === 'partUsage' || decl.kind === 'portDef') {
-    const refs = findReferencesToName(text, decl.name, nameOffset);
-    for (const r of refs) {
-      edits.push({ offset: r, length: decl.name.length, replacement: newName });
+  // 2) 修改所有引用 —— M16 P0：AST 作用域解析（替代全文 \bName\b 正则）。
+  //    只有真正在 AST 上引用了该声明的语句（connect 端点 / part usage typeRef /
+  //    port usage typeRef / trace 端点）才会在其语句范围内做名字替换，
+  //    注释、文档字符串、同名无关元素不再被误伤。
+  if (
+    decl.kind === 'partDef' ||
+    decl.kind === 'partUsage' ||
+    decl.kind === 'portDef' ||
+    decl.kind === 'portUsage'
+  ) {
+    const seen = new Set<number>([nameOffset]);
+    for (const [start, end] of collectReferenceSpans(model, decl, text)) {
+      for (const off of findNameOccurrencesInRange(text, decl.name, start, end)) {
+        if (seen.has(off)) continue;
+        seen.add(off);
+        edits.push({ offset: off, length: decl.name.length, replacement: newName });
+      }
     }
   }
 
@@ -329,24 +340,139 @@ function findIdentifierOffset(text: string, startOffset: number, name: string): 
 }
 
 /**
- * 在全文找到所有 `name` 标识符出现位置（用单词边界 + 排除 keyword 前缀），
- * 跳过 `startOffset`（那是声明本身）和紧跟在 `part`/`port` 后的（即声明自己）。
+ * M16 P0：从 AST 收集「真正引用了 decl 的语句」的文本范围（span 列表）。
+ *
+ * 引用判定（按 decl.kind）：
+ *   - partDef    → partUsage.typeRef === name（含嵌套 body 内的 part usage）
+ *   - portDef    → portUsage.typeRef / redefines === name
+ *   - partUsage  → connection 端点 partName === name
+ *   - portUsage  → connection 端点 portName === name
+ *   - 任意        → traceLink source/target === name
+ *
+ * 遍历范围：packages（递归 members/body）+ 顶层 connections/traceLinks
+ * + views/viewpoints 的 members。返回的 span 是 [start, end) 字符 offset，
+ * 名字替换只发生在 span 内部——这是「语义化 rename」与旧全文正则的本质区别。
  */
-function findReferencesToName(
+function collectReferenceSpans(
+  model: SysMLModel,
+  decl: EditableDecl,
+  text: string
+): Array<[number, number]> {
+  const name = decl.name;
+  const spans: Array<[number, number]> = [];
+  const seenSpan = new Set<string>();
+  const push = (start: number, end: number) => {
+    const key = `${start}:${end}`;
+    if (seenSpan.has(key)) return; // flatten 后同一节点可能出现在两处
+    seenSpan.add(key);
+    spans.push([start, end]);
+  };
+
+  const visit = (n: any) => {
+    if (!n || typeof n !== 'object' || !n.kind || !n.location) return;
+    const off = n.location.offset;
+    if (typeof off !== 'number') return;
+    switch (n.kind) {
+      case 'connection': {
+        const matchPart = decl.kind === 'partDef' || decl.kind === 'partUsage';
+        const matchPort = decl.kind === 'portUsage' || decl.kind === 'portDef';
+        if (
+          (matchPart && (n.source?.partName === name || n.target?.partName === name)) ||
+          (matchPort && (n.source?.portName === name || n.target?.portName === name))
+        ) {
+          push(off, findStatementEnd(text, off));
+        }
+        break;
+      }
+      case 'partUsage':
+        if (decl.kind === 'partDef' && n.typeRef === name) {
+          push(off, findHeaderEnd(text, off));
+        }
+        break;
+      case 'portUsage':
+        if (decl.kind === 'portDef' && (n.typeRef === name || n.redefines === name)) {
+          push(off, findLineEnd(text, off));
+        }
+        break;
+      case 'trace':
+        if (n.source === name || n.target === name) {
+          push(off, findLineEnd(text, off));
+        }
+        break;
+    }
+  };
+
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const c of node) walk(c);
+      return;
+    }
+    visit(node);
+    for (const key of ['members', 'body']) {
+      if (Array.isArray(node[key])) walk(node[key]);
+    }
+  };
+
+  walk(model.packages);
+  walk(model.connections);
+  walk(model.traceLinks);
+  walk(model.views);
+  walk(model.viewpoints);
+  return spans;
+}
+
+/** 语句范围：offset → 第一个 `;`（含）为止；遇到 `{` 或换行则停在它们之前。 */
+function findStatementEnd(text: string, offset: number): number {
+  let i = offset;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === ';') return i + 1;
+    if (ch === '{' || ch === '\n') return i;
+    i++;
+  }
+  return text.length;
+}
+
+/** 声明头范围：offset → 第一个 `{` / `;` / 换行之前（不含）。 */
+function findHeaderEnd(text: string, offset: number): number {
+  let i = offset;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '{' || ch === ';' || ch === '\n') return i;
+    i++;
+  }
+  return text.length;
+}
+
+/** 行范围：offset → 行尾（含换行符）。 */
+function findLineEnd(text: string, offset: number): number {
+  let i = offset;
+  while (i < text.length && text[i] !== '\n') i++;
+  return Math.min(i + 1, text.length);
+}
+
+/**
+ * 在 [start, end) 范围内找到所有 `name` 的出现位置（单词边界），
+ * 排除紧跟在声明类关键字（part/port/def/in/out/inout/abstract）之后的
+ * ——那是引用者自己的声明名，不是对 decl 的引用。
+ */
+function findNameOccurrencesInRange(
   text: string,
   name: string,
-  declNameOffset: number
+  start: number,
+  end: number
 ): number[] {
   const out: number[] = [];
   const re = new RegExp(`\\b${escapeRegex(name)}\\b`, 'g');
+  re.lastIndex = start;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null && m.index < end) {
     const off = m.index;
-    if (off === declNameOffset) continue;
-    // 排除 part/port 关键字之后紧跟的（那是声明本身或者嵌套声明）
-    const before = text.slice(Math.max(0, off - 8), off);
-    if (/\b(part|port|def)\s*$/.test(before)) continue;
+    const before = text.slice(Math.max(start, off - 12), off);
+    if (/\b(part|port|def|in|out|inout|abstract)\s+$/.test(before)) continue;
     out.push(off);
+    re.lastIndex = off + name.length;
   }
   return out;
 }

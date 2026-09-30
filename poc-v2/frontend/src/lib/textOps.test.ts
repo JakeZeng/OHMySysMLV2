@@ -6,7 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { insertSnippetIntoPackage, findPackageClose } from './textOps';
+import { insertSnippetIntoPackage, insertSnippetScoped, findPackageClose } from './textOps';
+import { parse } from '../../../parser/parser';
 
 describe('insertSnippetIntoPackage', () => {
   it('空 content → 包一层默认 package', () => {
@@ -118,6 +119,77 @@ describe('insertSnippetIntoPackage', () => {
     const out = insertSnippetIntoPackage(c, 'part def Vehicle;', 'Sample');
     // 模拟 parser：找 `part def` 字符串必须在 `}` 之前
     expect(out.indexOf('part def Vehicle')).toBeLessThan(out.lastIndexOf('}'));
+  });
+});
+
+describe('insertSnippetScoped（M16 P0 统一插入路径）', () => {
+  it('多包 content + scopeName → 插进指定包（而不是最后一个）', () => {
+    const c = 'package A {\n  part def A1;\n}\npackage B {\n  part def B1;\n}';
+    const out = insertSnippetScoped(c, 'part def New;', { scopeName: 'A' });
+    expect(out).toMatch(/package A \{\n  part def A1;\n  part def New;\n\}/);
+    expect(out).not.toMatch(/package B \{[\s\S]*part def New;/);
+  });
+
+  it('scopeName 命中嵌套子包 → 递归定位', () => {
+    const c = 'package Outer {\n  package Inner {\n    part def X;\n  }\n}';
+    const out = insertSnippetScoped(c, 'part def Deep;', { scopeName: 'Inner' });
+    expect(out).toMatch(/package Inner \{\n    part def X;\n    part def Deep;\n  \}/);
+  });
+
+  it('view scope → 插入视图 body（不再包一层 DemoModel）', () => {
+    const c = 'view V1 {\n}';
+    const out = insertSnippetScoped(c, 'part def Owned;', {
+      scopeKind: 'view',
+      scopeName: 'V1',
+    });
+    expect(out).not.toContain('DemoModel');
+    expect(out.indexOf('part def Owned')).toBeLessThan(out.lastIndexOf('}'));
+    expect(parse(out).errors).toEqual([]);
+  });
+
+  it('view usage scope → 插入 usage body', () => {
+    const c = 'view def D {\n}\nview V : D {\n}';
+    const out = insertSnippetScoped(c, 'part def Owned;', {
+      scopeKind: 'view',
+      scopeName: 'V',
+    });
+    expect(out).toContain('part def Owned;');
+    // 必须落在 V 的 body 内（D 的 body 仍为空）
+    const vIdx = out.indexOf('view V');
+    expect(out.indexOf('part def Owned')).toBeGreaterThan(vIdx);
+    expect(parse(out).errors).toEqual([]);
+  });
+
+  it('view scope 未命中名字但只有一个视图 → 命中唯一视图', () => {
+    const c = 'view Only {\n}';
+    const out = insertSnippetScoped(c, 'part def X;', { scopeKind: 'view' });
+    expect(out.indexOf('part def X')).toBeLessThan(out.lastIndexOf('}'));
+    expect(out).not.toContain('DemoModel');
+  });
+
+  it('空 content → 用 scopeName/defaultPkgName 包一层', () => {
+    const out = insertSnippetScoped('', 'part def X;', { scopeName: 'MyScope' });
+    expect(out).toBe('package MyScope {\npart def X;\n}\n');
+  });
+
+  it('单包 content 未给 scopeName → 命中唯一顶层包', () => {
+    const c = 'package Solo {\n  part def A;\n}';
+    const out = insertSnippetScoped(c, 'part def B;');
+    expect(out).toMatch(/part def A;\n  part def B;\n\}/);
+  });
+
+  it('解析失败的 content → 回退正则路径仍可插入', () => {
+    const c = 'package P {\n  part def @@@broken;\n}';
+    const out = insertSnippetScoped(c, 'part def New;', { scopeName: 'P' });
+    expect(out).toContain('part def New;');
+    expect(out.indexOf('part def New;')).toBeLessThan(out.lastIndexOf('}'));
+  });
+
+  it('传入已解析 model 时不重复 parse，结果一致', () => {
+    const c = 'package A {\n}\npackage B {\n  part def B1;\n}';
+    const model = parse(c).model;
+    const out = insertSnippetScoped(c, 'part def X;', { scopeName: 'B', model });
+    expect(out).toMatch(/package B \{\n  part def B1;\n  part def X;\n\}/);
   });
 });
 

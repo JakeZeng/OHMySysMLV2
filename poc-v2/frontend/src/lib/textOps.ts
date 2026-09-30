@@ -6,6 +6,9 @@
  */
 
 import type { SysMLModel } from '@ast/model';
+// 相对路径而非 @parser 别名：本模块被根目录 vitest（tests/viewClauses.test.ts）
+// 间接加载，根配置不解析 frontend 的 vite 别名。
+import { parse } from '../../../parser/parser';
 
 /**
  * 找到某 package 的 body 起始偏移处对应的闭合 `}` 位置（返回 `}` 的索引）。
@@ -29,23 +32,196 @@ export function findPackageClose(text: string, pkgOffset: number): number {
 /**
  * 把 snippet 追加到内容中：优先插入最后一个 package 的 body 末尾；
  * 内容为空或没有 package 时包一层默认 package。
+ *
+ * @deprecated M16 P0：请改用 `insertSnippetScoped`（按当前打开的 scope 定位目标，
+ * 而不是「最后一个包」）。本函数保留为 thin wrapper，行为已与 scoped 版统一。
  */
 export function insertSnippet(
   content: string,
   model: SysMLModel,
   snippet: string,
 ): string {
-  if (content.trim().length === 0) {
-    return `package DemoModel {\n${snippet}\n}\n`;
+  return insertSnippetScoped(content, snippet, { model });
+}
+
+// ─── M16 P0：统一插入路径 ─────────────────────────────────────────────
+
+export interface SnippetScope {
+  /** 当前打开会话的实体类型（package / view）；缺省按 package 处理 */
+  scopeKind?: 'package' | 'view';
+  /** 当前打开会话的实体名（= 目标包名 / 视图名） */
+  scopeName?: string;
+  /** 已解析的 AST（缺省时内部 parse；解析失败回退正则路径） */
+  model?: SysMLModel;
+  /** 内容为空 / 无包时兜底创建的包名 */
+  defaultPkgName?: string;
+}
+
+/**
+ * insertSnippetScoped — M16 P0 统一插入函数。
+ *
+ * Palette 点击 / 画布拖拽 / 树右键创建三条路径共用，目标 body =
+ * **当前打开的 scope**（包会话 → 该包；视图会话 → 该视图 body），
+ * 用 AST location + 花括号配对精确定位闭合 `}`（替代「最后一个包」与
+ * 「按名正则匹配」两套分歧逻辑）。
+ *
+ * 行为：
+ *   - 空 content → 包一层 `package <defaultPkgName>`
+ *   - scope 目标有 body → 插到闭合 `}` 前（沿用缩进探测 / 换行补齐）
+ *   - AST 定位失败（解析错误 / 目标不存在 / 无 body）→ 回退正则版 insertSnippetIntoPackage
+ *
+ * 注：P1 语法对齐后 body 可能变为可选（官方 ViewBody 可省），届时再补
+ * 「`;` 展开成块」分支（findBodyOpen 已能识别 semi）。
+ */
+export function insertSnippetScoped(
+  content: string,
+  snippet: string,
+  scope: SnippetScope = {},
+): string {
+  const trimmedSnippet = (snippet ?? '').trim();
+  const trimmed = content ?? '';
+  const defaultPkg = scope.defaultPkgName ?? scope.scopeName ?? 'DemoModel';
+
+  if (trimmedSnippet.length === 0) return content;
+  if (trimmed.trim().length === 0) {
+    return `package ${defaultPkg} {\n${trimmedSnippet}\n}\n`;
   }
-  const lastPkg = model.packages[model.packages.length - 1];
-  if (!lastPkg) {
-    return `package DemoModel {\n${snippet}\n}\n` + content;
+
+  let model = scope.model;
+  if (!model || (!model.packages.length && !model.views.length && !model.viewpoints.length)) {
+    const r = parse(trimmed);
+    if (r.errors.length === 0) model = r.model;
   }
-  const closeOffset = findPackageClose(content, lastPkg.location.offset);
-  return (
-    content.slice(0, closeOffset) + snippet + '\n' + content.slice(closeOffset)
-  );
+
+  const target = model ? findInsertTarget(model, scope) : undefined;
+  if (!target) {
+    return insertSnippetIntoPackage(trimmed, snippet, defaultPkg);
+  }
+
+  const loc = (target as { location?: { offset: number } }).location;
+  if (!loc || typeof loc.offset !== 'number') {
+    return insertSnippetIntoPackage(trimmed, snippet, defaultPkg);
+  }
+
+  const bodyOpen = findBodyOpen(trimmed, loc.offset);
+  if (!bodyOpen || bodyOpen.semi !== undefined) {
+    // 找不到 body，或声明以 `;` 结尾（无 body）→ 交给正则路径兜底
+    return insertSnippetIntoPackage(trimmed, snippet, defaultPkg);
+  }
+
+  const closeOffset = findPackageClose(trimmed, loc.offset);
+  if (closeOffset <= bodyOpen.open || closeOffset >= trimmed.length) {
+    return insertSnippetIntoPackage(trimmed, snippet, defaultPkg);
+  }
+  return insertBeforeClose(trimmed, bodyOpen.open, closeOffset, trimmedSnippet);
+}
+
+/** 在 AST 中找插入目标：view scope → 视图/视角；否则 → 包（按名递归 / 唯一 / 最后一个）。 */
+function findInsertTarget(
+  model: SysMLModel,
+  scope: SnippetScope,
+): { location?: { offset: number } } | undefined {
+  if (scope.scopeKind === 'view') {
+    const views: Array<{ name: string; location?: { offset: number } }> = [
+      ...((model.views ?? []) as unknown as Array<{ name: string; location?: { offset: number } }>),
+      ...((model.viewpoints ?? []) as unknown as Array<{ name: string; location?: { offset: number } }>),
+    ];
+    if (scope.scopeName) {
+      const byName = views.find((v) => v.name === scope.scopeName);
+      if (byName) return byName;
+    }
+    if (views.length === 1) return views[0];
+    if (views.length > 1) return views[views.length - 1];
+    // 视图会话但 content 里只有包（异常态）→ 落到包逻辑
+  }
+
+  const pkgs = model.packages ?? [];
+  if (scope.scopeName) {
+    const byName = findPackageByName(pkgs, scope.scopeName);
+    if (byName) return byName;
+  }
+  if (pkgs.length >= 1) return pkgs[pkgs.length - 1];
+  return undefined;
+}
+
+function findPackageByName(
+  pkgs: Array<{ name: string; members?: unknown[]; location?: { offset: number } }>,
+  name: string,
+): { name: string; members?: unknown[]; location?: { offset: number } } | undefined {
+  for (const p of pkgs) {
+    if (p.name === name) return p;
+  }
+  for (const p of pkgs) {
+    const nested = ((p.members ?? []) as Array<{ kind: string }>).filter(
+      (m) => m.kind === 'package',
+    ) as unknown as Array<{ name: string; members?: unknown[]; location?: { offset: number } }>;
+    const found = findPackageByName(nested, name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * 从 decl offset 起找 body 的 `{`：
+ *   - 先遇到 `{` → { open }
+ *   - 先遇到 `;` → { semi }（无 body 声明）
+ *   - 都没有 → null
+ */
+function findBodyOpen(
+  text: string,
+  offset: number,
+): { open: number; semi?: undefined } | { semi: number; open?: undefined } | null {
+  let i = offset;
+  while (i < text.length) {
+    if (text[i] === '{') return { open: i };
+    if (text[i] === ';') return { semi: i };
+    i++;
+  }
+  return null;
+}
+
+/**
+ * 把 snippet 插到 `[openBrace, closeBrace)` body 的闭合 `}` 之前：
+ * 沿用 body 内缩进、自动补换行、保证文件末尾换行。
+ * （从 insertSnippetIntoPackage 抽出，两条路径共享同一实现。）
+ *
+ * M16 P0 修正：闭合 `}` 所在行有缩进时（嵌套包常见），插入点必须在该缩进
+ * **之前**——旧实现直接插在 `}` 前，会把 `}` 的行缩进粘到 snippet 行首、
+ * 并把 `}` 顶到第 0 列。
+ */
+function insertBeforeClose(
+  content: string,
+  openBrace: number,
+  closeOffset: number,
+  snippet: string,
+): string {
+  const bodyBeforeClose = content.slice(openBrace + 1, closeOffset);
+  const bodyWasEmpty = bodyBeforeClose.trim().length === 0;
+
+  // `}` 行的缩进 = body 末尾的纯空白段（最后一个换行之后）
+  const lastNl = bodyBeforeClose.lastIndexOf('\n');
+  const closingIndent = lastNl >= 0 ? bodyBeforeClose.slice(lastNl + 1) : '';
+  const hasClosingIndent =
+    closingIndent.length > 0 && closingIndent.trim().length === 0;
+  const insertAt = hasClosingIndent
+    ? closeOffset - closingIndent.length
+    : closeOffset;
+
+  const bodyBeforeInsert = content.slice(openBrace + 1, insertAt);
+  const needsNewline =
+    bodyBeforeInsert.trim().length > 0 && !bodyBeforeInsert.endsWith('\n');
+  const indent = bodyWasEmpty ? '' : detectIndent(bodyBeforeInsert);
+  const indentedSnippet = indentSnippet(snippet.trim(), indent);
+  const prefix = needsNewline ? '\n' : '';
+
+  let result =
+    content.slice(0, insertAt) +
+    prefix +
+    indentedSnippet +
+    '\n' +
+    content.slice(insertAt);
+  if (!result.endsWith('\n')) result += '\n';
+  return result;
 }
 
 /**
@@ -111,29 +287,8 @@ export function insertSnippetIntoPackage(
   const openOffset = chosen.index! + chosen[0].length - 1;
   const closeOffset = findPackageClose(trimmed, chosen.index!);
 
-  // body 内容（开括号和闭括号之间）
-  const bodyBeforeClose = trimmed.slice(openOffset + 1, closeOffset);
-  const trimmedBody = bodyBeforeClose.replace(/\s+$/, '').replace(/^\s+/, '');
-  const bodyWasEmpty = trimmedBody.length === 0;
-  const bodyAlreadyEndsWithNewline = /\n\s*$/.test(bodyBeforeClose);
-
-  // 检测 body 内缩进（空 body → 0 缩进）
-  const indent = bodyWasEmpty ? '' : detectIndent(bodyBeforeClose);
-  const indentedSnippet = indentSnippet(trimmedSnippet, indent);
-
-  // body 不为空且末尾没有换行 → 补一个换行
-  const prefix = !bodyWasEmpty && !bodyAlreadyEndsWithNewline ? '\n' : '';
-
-  let result =
-    trimmed.slice(0, closeOffset) +
-    prefix +
-    indentedSnippet +
-    '\n' +
-    trimmed.slice(closeOffset);
-
-  // 确保文件末尾有换行
-  if (!result.endsWith('\n')) result += '\n';
-  return result;
+  // M16 P0：与 insertSnippetScoped 共享同一插入实现（缩进探测 / 换行补齐）
+  return insertBeforeClose(trimmed, openOffset, closeOffset, trimmedSnippet);
 }
 
 /**

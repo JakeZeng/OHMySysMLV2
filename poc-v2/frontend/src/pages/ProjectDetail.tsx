@@ -47,7 +47,7 @@ import { useElementTreeCacheStore } from '../stores/elementTreeCacheStore';
 import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { generateUniqueName } from '../lib/naming';
-import { insertSnippetIntoPackage, extractDefinition } from '../lib/textOps';
+import { insertSnippetScoped, extractDefinition } from '../lib/textOps';
 import type { TreeAction, TreeEntityKind, ElementRef } from '../components/tree/types';
 
 const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
@@ -581,13 +581,13 @@ export const ProjectDetail: React.FC = () => {
           item.kind === 'partUsage'
             ? `part ${name} : Part;`
             : item.generate(name);
-        // M14.1：把 snippet 插入到 pkg 最后一个 package 的 body 内
+        // M14.1 → M16 P0：统一插入路径——AST 定位目标包（= pkg.name）的 body
         const baseContent = pkg.content ?? '';
-        const newContent = insertSnippetIntoPackage(
-          baseContent,
-          snippet.trim() + '\n',
-          pkg.name,
-        );
+        const newContent = insertSnippetScoped(baseContent, snippet.trim() + '\n', {
+          scopeKind: 'package',
+          scopeName: pkg.name,
+          defaultPkgName: pkg.name,
+        });
         await packageApi.update(parentPackageId, {
           name: pkg.name,
           parentPackageId: pkg.parentPackageId,
@@ -676,13 +676,13 @@ export const ProjectDetail: React.FC = () => {
         // 2. 从 owner content 中移除 def
         await updateOwner(extracted.remaining);
 
-        // 3. 追加到所属包 body
+        // 3. 追加到所属包 body（M16 P0：统一插入路径，AST 定位目标包）
         const pkg = await packageApi.get(ownerPackageId);
-        const newPkgContent = insertSnippetIntoPackage(
-          pkg.content ?? '',
-          extracted.text + '\n',
-          pkg.name,
-        );
+        const newPkgContent = insertSnippetScoped(pkg.content ?? '', extracted.text + '\n', {
+          scopeKind: 'package',
+          scopeName: pkg.name,
+          defaultPkgName: pkg.name,
+        });
         await packageApi.update(ownerPackageId, {
           name: pkg.name,
           parentPackageId: pkg.parentPackageId,

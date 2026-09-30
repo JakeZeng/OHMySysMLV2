@@ -23,7 +23,7 @@ import {
   runPipeline as runPipelinePure,
   type PipelineResult,
 } from '../lib/pipeline';
-import { insertSnippet, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
+import { insertSnippetScoped, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
@@ -525,18 +525,25 @@ export const useModelStore = create<ModelState>((set, get) => ({
   /**
    * 拖拽 PaletteItem 到画布某坐标时调用：
    *   1. 生成 snippet
-   *   2. 插入到最后一个 package 的 body 末尾
+   *   2. M16 P0：插入到**当前打开 scope**（包/视图）的 body 末尾（统一插入路径）
    *   3. setContent 触发 pipeline
    *   4. 锁定新节点到落点
+   *
+   * M16 P0 修复：findNewNodeId 必须用 runPipeline 之后的**新** model——
+   * 旧实现用编辑前的 pipeline.model 找新名字，永远找不到，拖拽落点失效。
    */
   createNodeFromPalette(snippet, name, dropXY) {
-    const { content, pipeline } = get();
-    const newContent = insertSnippet(content, pipeline.model, snippet);
+    const { content, pipeline, entityKind, name: scopeName } = get();
+    const newContent = insertSnippetScoped(content, snippet, {
+      scopeKind: entityKind ?? 'package',
+      scopeName,
+      model: pipeline.model,
+    });
 
     set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
 
-    const id = findNewNodeId(pipeline.model, name);
+    const id = findNewNodeId(get().pipeline.model, name);
     if (id && dropXY) {
       get().setNodePosition(id, dropXY.x, dropXY.y);
     }
@@ -552,7 +559,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
    *   - 其他 → 生成 `connect A to B;`
    */
   addConnection(sourceId, targetId) {
-    const { content, pipeline } = get();
+    const { content, pipeline, entityKind, name: scopeName } = get();
     const srcShort = shortNameFromNodeId(pipeline.model, sourceId);
     const tgtShort = shortNameFromNodeId(pipeline.model, targetId);
     if (!srcShort || !tgtShort) {
@@ -567,7 +574,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
       srcKind === 'stateDef' && tgtKind === 'stateDef'
         ? `  transition ${srcShort} to ${tgtShort};\n` // 状态机内部用 2 空格缩进
         : `connect ${srcShort} to ${tgtShort};`;
-    const newContent = insertSnippet(content, pipeline.model, snippet);
+    // M16 P0：统一插入路径（目标 = 当前打开 scope）
+    const newContent = insertSnippetScoped(content, snippet, {
+      scopeKind: entityKind ?? 'package',
+      scopeName,
+      model: pipeline.model,
+    });
     set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
     return { ok: true };
