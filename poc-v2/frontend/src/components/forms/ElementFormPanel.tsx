@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle, Plus, Minus } from 'lucide-react';
+import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle, Plus, Minus, Pencil } from 'lucide-react';
 import type { Node } from '@xyflow/react';
 import type { SysMLModel } from '../../../../ast/model';
 import { useModelStore } from '../../stores/modelStore';
@@ -131,6 +131,19 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
     if (result.changed) setContent(result.text);
   };
 
+  // M16 P5/Q4：接线 reverseSerialize 已有但一直未接的 `update` op（行内改名/改类型）
+  const handleListUpdate = (sectionKey: SectionKey, old: ListItem, next: ListItem) => {
+    if (readOnly || !isFromModel) return;
+    const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
+    const result = applyListEdit(
+      useModelStore.getState().content,
+      pipeline.model,
+      String(selectedNode.id),
+      { kind, op: 'update', item: { ...next, oldName: old.name } }
+    );
+    if (result.changed) setContent(result.text);
+  };
+
   const handleDelete = () => {
     if (!isFromModel) return;
     if (window.confirm(`确认删除 "${String(data.label ?? '')}"？引用它的元素也会被一并清理。`)) {
@@ -203,6 +216,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
                 }
                 onAdd={(item) => handleListAdd(section.key, item)}
                 onRemove={(item) => handleListRemove(section.key, item)}
+                onUpdate={(old, next) => handleListUpdate(section.key, old, next)}
                 disabled={readOnly || !isFromModel}
               />
             ) : (
@@ -436,12 +450,16 @@ interface RepeatableListProps {
   listItems: ListItem[];
   onAdd: (item: ListItem) => void;
   onRemove: (item: ListItem) => void;
+  /** M16 P5/Q4：行内编辑回调（接线 reverseSerialize 的 update op） */
+  onUpdate: (oldItem: ListItem, nextItem: ListItem) => void;
   disabled: boolean;
 }
 
-const RepeatableList: React.FC<RepeatableListProps> = ({ section, listItems, onAdd, onRemove, disabled }) => {
+const RepeatableList: React.FC<RepeatableListProps> = ({ section, listItems, onAdd, onRemove, onUpdate, disabled }) => {
   const [name, setName] = React.useState('');
   const [typeRef, setTypeRef] = React.useState('');
+  /** M16 P5：正在行内编辑的行（下标 + 草稿）；null = 无编辑 */
+  const [editing, setEditing] = React.useState<{ idx: number; name: string; typeRef: string } | null>(null);
 
   const fields = section.repeatableFields ?? [];
   const nameField = fields.find((f) => f.key === 'name');
@@ -456,6 +474,15 @@ const RepeatableList: React.FC<RepeatableListProps> = ({ section, listItems, onA
     setTypeRef('');
   };
 
+  const commitEdit = () => {
+    if (!editing) return;
+    const old = listItems[editing.idx];
+    if (old && editing.name.trim() && editing.typeRef.trim()) {
+      onUpdate(old, { name: editing.name.trim(), typeRef: editing.typeRef.trim() });
+    }
+    setEditing(null);
+  };
+
   return (
     <div className="space-y-1.5" data-testid={`form-list-${section.key}`}>
       {listItems.length === 0 ? (
@@ -467,21 +494,62 @@ const RepeatableList: React.FC<RepeatableListProps> = ({ section, listItems, onA
             className="flex items-center gap-1 rounded border border-gray-100 bg-gray-50 px-1.5 py-1 dark:border-gray-700 dark:bg-gray-900"
             data-testid={`form-list-item-${section.key}-${idx}`}
           >
-            <span className="flex-1 truncate font-mono text-[11px] text-gray-700 dark:text-gray-200">
-              {item.name}
-              <span className="text-gray-400"> : </span>
-              <span className="text-blue-600 dark:text-blue-300">{item.typeRef}</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => onRemove(item)}
-              disabled={disabled}
-              className="rounded p-0.5 text-red-500 hover:bg-red-50 disabled:opacity-30 dark:hover:bg-red-900/30"
-              data-testid={`form-list-remove-${section.key}-${idx}`}
-              title="删除"
-            >
-              <Minus className="h-3 w-3" />
-            </button>
+            {editing?.idx === idx ? (
+              <>
+                <input
+                  value={editing.name}
+                  autoFocus
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(null); }}
+                  className="h-5 w-16 rounded border border-gray-200 bg-white px-1 font-mono text-[11px] focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800"
+                  data-testid={`form-list-edit-name-${section.key}-${idx}`}
+                />
+                <input
+                  value={editing.typeRef}
+                  onChange={(e) => setEditing({ ...editing, typeRef: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(null); }}
+                  className="h-5 w-16 rounded border border-gray-200 bg-white px-1 font-mono text-[11px] focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800"
+                  data-testid={`form-list-edit-type-${section.key}-${idx}`}
+                />
+                <button
+                  type="button"
+                  onClick={commitEdit}
+                  disabled={disabled}
+                  className="rounded px-1 text-[10px] text-brand-600 hover:bg-brand-50 disabled:opacity-30 dark:text-brand-300 dark:hover:bg-brand-900/30"
+                  data-testid={`form-list-commit-${section.key}-${idx}`}
+                >
+                  ✓
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="flex-1 truncate font-mono text-[11px] text-gray-700 dark:text-gray-200">
+                  {item.name}
+                  <span className="text-gray-400"> : </span>
+                  <span className="text-blue-600 dark:text-blue-300">{item.typeRef}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setEditing({ idx, name: item.name, typeRef: item.typeRef })}
+                  disabled={disabled}
+                  className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 disabled:opacity-30 dark:hover:bg-gray-700"
+                  data-testid={`form-list-edit-${section.key}-${idx}`}
+                  title="编辑（M16 P5 接线 update op）"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemove(item)}
+                  disabled={disabled}
+                  className="rounded p-0.5 text-red-500 hover:bg-red-50 disabled:opacity-30 dark:hover:bg-red-900/30"
+                  data-testid={`form-list-remove-${section.key}-${idx}`}
+                  title="删除"
+                >
+                  <Minus className="h-3 w-3" />
+                </button>
+              </>
+            )}
           </div>
         ))
       )}

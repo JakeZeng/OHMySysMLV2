@@ -218,6 +218,34 @@ function editPartDefField(text: string, decl: DeclInfo, edit: FieldEdit): Revers
     return replaceText(text, start, end - start, replaced);
   }
 
+  // M16 P5/Q4：description → 官方 doc member（body 内 `doc /* … */;`）。
+  // 旧实现是 no-op（schema 声称"在 } 前插注释块"但从未落地）。
+  if (edit.fieldKey === 'description') {
+    const bodyRange = findBlockBodyRange(text, decl.location.offset);
+    if (!bodyRange) return { text, changed: false }; // 空体（`;`）暂不支持插 doc
+    const [openBrace, closeBrace] = bodyRange;
+    const bodyText = text.slice(openBrace + 1, closeBrace);
+    const docRe = /^[ \t]*doc\b[^;]*;[ \t]*\r?\n?/m;
+    const existing = docRe.exec(bodyText);
+    const value = String(edit.value ?? '').replace(/\*\//g, '* /').trim(); // 防注释逃逸
+    if (existing) {
+      if (!value) {
+        // 删除已有 doc 行
+        const s = openBrace + 1 + (existing.index ?? 0);
+        return replaceText(text, s, existing[0].length, '');
+      }
+      const indent = (existing[0].match(/^[ \t]*/) ?? [''])[0];
+      const replacement = `${indent}doc /* ${value} */;\n`;
+      const s = openBrace + 1 + (existing.index ?? 0);
+      return replaceText(text, s, existing[0].length, replacement);
+    }
+    if (!value) return { text, changed: false };
+    // 插入新 doc 到 body 开头（沿用 body 缩进或默认 2 空格）
+    const indent = bodyText.trim().length === 0 ? '  ' : detectBodyIndent(bodyText);
+    const insertion = `\n${indent}doc /* ${value} */;`;
+    return replaceText(text, openBrace + 1, 0, insertion);
+  }
+
   return { text, changed: false };
 }
 

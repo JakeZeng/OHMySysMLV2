@@ -55,9 +55,11 @@ describe('menuItemsFor', () => {
     ]);
   });
 
-  it('element offers goto-canvas / rename / delete', () => {
+  it('element offers goto-canvas / expose-to-view / rename / delete', () => {
+    // M16 P5/Q12：新增 expose 目标视图入口（expose 只能写入 ViewUsage）
     expect(ids('element')).toEqual([
       'element-goto-canvas',
+      'element-expose-to-view',
       'element-rename',
       'element-delete',
     ]);

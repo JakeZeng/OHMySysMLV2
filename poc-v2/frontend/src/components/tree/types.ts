@@ -51,6 +51,12 @@ export type TreeAction =
     }
   /** M15：把 view-private 元素提升到所属包（§7.26 owned → public） */
   | { type: 'promote-element'; ref: ElementRef }
+  /**
+   * M16 P5/Q12：把公共元素 expose 到某个 ViewUsage。
+   * 宿主弹「视图选择器」→ 选目标 view（必须是 usage）→ 生成
+   * `expose <Pkg>::<El>;` 写入该 view body（官方约束：expose 只能在 ViewUsage 内）。
+   */
+  | { type: 'expose-to-view'; ref: ElementRef }
   /** 重命名实体（宿主弹输入框，用 currentName 预填）—— package / view / viewpoint */
   | {
       type: 'rename';

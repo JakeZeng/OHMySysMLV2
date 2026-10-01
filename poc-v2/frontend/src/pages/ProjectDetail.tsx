@@ -28,6 +28,7 @@ import { useAuthStore } from '../stores/authStore';
 import { usePackages } from '../hooks/usePackages';
 import { useViews } from '../hooks/useViews';
 import { useViewpoints } from '../hooks/useViewpoints';
+import type { ViewSummary } from '../types/view';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
 import { viewpointApi } from '../services/viewpointApi';
@@ -36,6 +37,7 @@ import { VisibilityBadge } from '../components/VisibilityBadge';
 import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
 import { ProjectSettingsModal } from '../components/modals/ProjectSettingsModal';
 import { ElementTypeChooserModal } from '../components/modals/ElementTypeChooserModal';
+import { ExposeViewPickerModal } from '../components/modals/ExposeViewPickerModal';
 import { PALETTE_ITEMS, type PaletteKind } from '../lib/insertSnippet';
 import { ProjectTree } from '../components/tree/ProjectTree';
 import { ResizableSplit } from '../components/layout/ResizableSplit';
@@ -48,6 +50,7 @@ import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { generateUniqueName } from '../lib/naming';
 import { insertSnippetScoped, extractDefinition } from '../lib/textOps';
+import { renameElementByName, deleteElementByName } from '../../../transform/textEdit';
 import type { TreeAction, TreeEntityKind, ElementRef } from '../components/tree/types';
 
 const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
@@ -294,6 +297,74 @@ export const ProjectDetail: React.FC = () => {
   const [deleting, setDeleting] = React.useState(false);
   // M14：树右键"新建元素"——记录待创建的目标 packageId
   const [createElementFor, setCreateElementFor] = React.useState<string | null>(null);
+  // M16 P5/Q12：树右键「Expose 到视图…」——待 expose 的元素
+  const [exposeToViewFor, setExposeToViewFor] = React.useState<ElementRef | null>(null);
+
+  /**
+   * M16 P5/Q12：把公共元素 expose 进目标 ViewUsage。
+   * 官方硬约束（§8.2.2.26）：expose 只能出现在 ViewUsage 体内——
+   * picker 已过滤 usage，此处再做一次防御。
+   * expose 路径 = `<所属包名>::<元素名>`（引用暴露，元素归属不变）。
+   */
+  const handleExposeToView = React.useCallback(
+    async (ref: ElementRef, view: ViewSummary) => {
+      setExposeToViewFor(null);
+      if (ref.ownerKind !== 'package') {
+        showToast({
+          title: '只能 expose 包内公共元素',
+          description: '视图私有元素请先用「提升到包」再 expose。',
+          variant: 'default',
+        });
+        return;
+      }
+      if (view.kind !== 'usage') {
+        showToast({
+          title: 'expose 只能写入 ViewUsage',
+          description: '官方约束（§7.26）：view def 体内不允许 expose。',
+          variant: 'default',
+        });
+        return;
+      }
+      try {
+        const pkg = packages.find((p) => p.id === ref.ownerId);
+        const pkgName = pkg?.name;
+        if (!pkgName) throw new Error('未找到元素所属包');
+        const full = await viewApi.get(view.id);
+        const clause = `expose ${pkgName}::${ref.elementName};`;
+        // 复用统一插入路径（AST offset 级，目标 = 该 view body）
+        const nextContent = insertSnippetScoped(full.content ?? '', clause, {
+          scopeKind: 'view',
+          scopeName: full.name,
+        });
+        if (nextContent === (full.content ?? '')) {
+          throw new Error('未找到 view body 插入点');
+        }
+        await viewApi.update(view.id, {
+          name: full.name,
+          packageId: full.packageId,
+          description: full.description,
+          content: nextContent,
+          colorTag: full.colorTag,
+          renderingCategory: full.renderingCategory,
+          metadata: full.metadata,
+          version: full.version,
+        });
+        await refreshViews();
+        showToast({
+          title: `已 expose 到「${view.name}」`,
+          description: `${clause}（元素归属不变，§7.26 引用暴露）`,
+          variant: 'success',
+        });
+      } catch (e) {
+        showToast({
+          title: 'expose 失败',
+          description: (e as Error).message,
+          variant: 'error',
+        });
+      }
+    },
+    [packages, refreshViews, showToast],
+  );
 
   const handleDeleteProject = React.useCallback(async () => {
     if (!current) return;
@@ -741,18 +812,91 @@ export const ProjectDetail: React.FC = () => {
               variant: 'success',
             });
           } else if (action.action === 'rename') {
-            showToast({
-              title: '元素重命名',
-              description: `${action.ref.elementName}（暂未实现，可通过画布节点 F2 重命名）`,
-              variant: 'default',
-            });
+            // M16 P5/Q16：树右键重命名 —— AST offset 级编辑 + 引用语义更新
+            void (async () => {
+              const next = window.prompt('重命名为', action.ref.elementName);
+              if (next === null) return;
+              const trimmed = next.trim();
+              if (!trimmed || trimmed === action.ref.elementName) return;
+              try {
+                const ownerId = action.ref.ownerId;
+                if (action.ref.ownerKind === 'view') {
+                  const v = await viewApi.get(ownerId);
+                  const edited = renameElementByName(
+                    v.content ?? '', action.ref.elementKind ?? 'partDef',
+                    action.ref.elementName, trimmed,
+                  );
+                  if (edited.text === (v.content ?? '')) throw new Error('未找到元素声明');
+                  await viewApi.update(ownerId, {
+                    name: v.name, packageId: v.packageId, description: v.description,
+                    content: edited.text, colorTag: v.colorTag,
+                    renderingCategory: v.renderingCategory, metadata: v.metadata,
+                    version: v.version,
+                  });
+                } else {
+                  const pkg = await packageApi.get(ownerId);
+                  const edited = renameElementByName(
+                    pkg.content ?? '', action.ref.elementKind ?? 'partDef',
+                    action.ref.elementName, trimmed,
+                  );
+                  if (edited.text === (pkg.content ?? '')) throw new Error('未找到元素声明');
+                  await packageApi.update(ownerId, {
+                    name: pkg.name, parentPackageId: pkg.parentPackageId,
+                    description: pkg.description, content: edited.text,
+                    metadata: pkg.metadata, version: pkg.version,
+                  });
+                }
+                useElementTreeCacheStore.getState().invalidate(ownerId);
+                await refreshPackages();
+                await refreshViews();
+                showToast({ title: `已重命名为「${trimmed}」`, variant: 'success' });
+              } catch (e) {
+                showToast({ title: '重命名失败', description: (e as Error).message, variant: 'error' });
+              }
+            })();
           } else if (action.action === 'delete') {
-            showToast({
-              title: '元素删除',
-              description: `${action.ref.elementName}（暂未实现，可通过画布节点 Del 删除）`,
-              variant: 'default',
-            });
+            // M16 P5/Q16：树右键删除 —— 整段声明 + connect 级联清理
+            void (async () => {
+              if (!window.confirm(`确认删除元素「${action.ref.elementName}」？（会级联清理相关 connect）`)) return;
+              try {
+                const ownerId = action.ref.ownerId;
+                if (action.ref.ownerKind === 'view') {
+                  const v = await viewApi.get(ownerId);
+                  const edited = deleteElementByName(
+                    v.content ?? '', action.ref.elementKind ?? 'partDef', action.ref.elementName,
+                  );
+                  if (edited.text === (v.content ?? '')) throw new Error('未找到元素声明');
+                  await viewApi.update(ownerId, {
+                    name: v.name, packageId: v.packageId, description: v.description,
+                    content: edited.text, colorTag: v.colorTag,
+                    renderingCategory: v.renderingCategory, metadata: v.metadata,
+                    version: v.version,
+                  });
+                } else {
+                  const pkg = await packageApi.get(ownerId);
+                  const edited = deleteElementByName(
+                    pkg.content ?? '', action.ref.elementKind ?? 'partDef', action.ref.elementName,
+                  );
+                  if (edited.text === (pkg.content ?? '')) throw new Error('未找到元素声明');
+                  await packageApi.update(ownerId, {
+                    name: pkg.name, parentPackageId: pkg.parentPackageId,
+                    description: pkg.description, content: edited.text,
+                    metadata: pkg.metadata, version: pkg.version,
+                  });
+                }
+                useElementTreeCacheStore.getState().invalidate(ownerId);
+                await refreshPackages();
+                await refreshViews();
+                showToast({ title: `已删除「${action.ref.elementName}」`, variant: 'success' });
+              } catch (e) {
+                showToast({ title: '删除失败', description: (e as Error).message, variant: 'error' });
+              }
+            })();
           }
+          break;
+        case 'expose-to-view':
+          // M16 P5/Q12：弹视图选择器（仅列 ViewUsage——官方约束）
+          setExposeToViewFor(action.ref);
           break;
         case 'promote-element':
           void handlePromoteElement(action.ref);
@@ -959,6 +1103,15 @@ export const ProjectDetail: React.FC = () => {
           }
         }}
       />
+      {/* M16 P5/Q12：树右键「Expose 到视图…」目标选择器（仅 ViewUsage） */}
+      {exposeToViewFor && (
+        <ExposeViewPickerModal
+          views={views}
+          elementName={exposeToViewFor.elementName}
+          onSelect={(v) => void handleExposeToView(exposeToViewFor, v)}
+          onClose={() => setExposeToViewFor(null)}
+        />
+      )}
       <Modal
         open={showDeleteConfirm}
         onOpenChange={setShowDeleteConfirm}

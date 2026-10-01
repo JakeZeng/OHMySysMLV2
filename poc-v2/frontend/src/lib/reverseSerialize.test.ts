@@ -189,6 +189,72 @@ describe('reverseSerialize', () => {
     expect(r.text).toContain('requirement def R2 /* 描述B */;');
   });
 
+  // ─── M16 P5/Q4：description（官方 doc member）+ update op ─────────────
+
+  it('description：空 body → 插入 doc 语句', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyFieldEdit(SIMPLE_MODEL, model, pdId, { fieldKey: 'description', value: '核心动力部件' });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('doc /* 核心动力部件 */;');
+    expect(parse(r.text).ok).toBe(true);
+  });
+
+  it('description：已有 doc → 替换', () => {
+    const src = `package Demo {
+  part def Motor {
+    doc /* 旧描述 */;
+    attribute rpm : Real;
+  }
+}`;
+    const model = parse(src).model;
+    const pdId = `pd:${(model.packages[0] as any).members.find((m: any) => m.kind === 'partDef' && m.name === 'Motor')!.id}`;
+    const replaced = applyFieldEdit(src, model, pdId, { fieldKey: 'description', value: '新描述' });
+    expect(replaced.changed).toBe(true);
+    expect(replaced.text).toContain('doc /* 新描述 */;');
+    expect(replaced.text).not.toContain('旧描述');
+    expect(replaced.text).toContain('attribute rpm : Real;');
+    expect(parse(replaced.text).ok).toBe(true);
+  });
+
+  it('description：空值 → 删除已有 doc', () => {
+    const src = `package Demo {
+  part def Motor {
+    doc /* 旧描述 */;
+    attribute rpm : Real;
+  }
+}`;
+    const model = parse(src).model;
+    const pdId = `pd:${(model.packages[0] as any).members.find((m: any) => m.kind === 'partDef' && m.name === 'Motor')!.id}`;
+    const cleared = applyFieldEdit(src, model, pdId, { fieldKey: 'description', value: '' });
+    expect(cleared.changed).toBe(true);
+    expect(cleared.text).not.toContain('doc /*');
+    expect(cleared.text).toContain('attribute rpm : Real;');
+  });
+
+  it('description：注释体含 */ 被中和（防注释逃逸）', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyFieldEdit(SIMPLE_MODEL, model, pdId, { fieldKey: 'description', value: 'bad */ inject' });
+    expect(r.text).toContain('bad * / inject');
+    expect(parse(r.text).ok).toBe(true);
+  });
+
+  it('list update op：行内改名 + 改 typeRef（M16 P5 接线，AST 锚定不误伤同名成员）', () => {
+    const model = parsedModel();
+    const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;
+    const r = applyListEdit(SIMPLE_MODEL, model, pdId, {
+      kind: 'attribute',
+      op: 'update',
+      item: { oldName: 'mass', name: 'weight', typeRef: 'Integer' },
+    });
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('attribute weight : Integer;');
+    // AST 锚定：constraint def MassLimit 里的同名 mass 不受影响
+    expect(r.text).toMatch(/constraint def MassLimit \{[\s\S]*attribute mass : Real;/);
+    expect(parse(r.text).ok).toBe(true);
+  });
+
   it('returns no-change when part def has no body', () => {
     const model = parsedModel();
     const pdId = `pd:${model.packages[0].members.find((m: any) => m.kind === 'partDef' && m.name === 'Engine')!.id}`;

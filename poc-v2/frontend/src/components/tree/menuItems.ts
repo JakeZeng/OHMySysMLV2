@@ -20,6 +20,7 @@ import {
   Crosshair,
   Compass,
   ArrowUpToLine,
+  ScanEye,
 } from 'lucide-react';
 import type { ContextMenuItem } from './ContextMenu';
 import type { TreeNodeKind } from '../../stores/treeStore';
@@ -120,6 +121,13 @@ export function menuItemsFor(
           icon: icon(Crosshair),
         },
         {
+          // M16 P5/Q12：官方约束 expose 只能出现在 ViewUsage 体内——
+          // 菜单生成 expose 子句时目标由用户在视图选择器里选（usage 会被提示）
+          id: 'element-expose-to-view',
+          label: 'Expose 到视图…',
+          icon: icon(ScanEye),
+        },
+        {
           id: 'element-rename',
           label: '重命名',
           icon: icon(Pencil),
@@ -196,6 +204,13 @@ export function actionFor(
     case 'element-goto-canvas':
       if (target.kind === 'element' && elementRef) {
         return { type: 'element-action', action: 'goto-canvas', ref: elementRef };
+      }
+      return null;
+
+    case 'element-expose-to-view':
+      // M16 P5/Q12：树右键 → 视图选择器 → 生成 expose 子句写入目标 view body
+      if (target.kind === 'element' && elementRef) {
+        return { type: 'expose-to-view', ref: elementRef };
       }
       return null;
 

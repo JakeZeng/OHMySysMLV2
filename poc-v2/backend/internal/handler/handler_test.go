@@ -138,6 +138,14 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *repository.SQLiteRepository) {
 		viewpoints.DELETE("/:id", h.DeleteViewpoint)
 	}
 
+	// M16 P5/Q10：画布布局持久化（独立 endpoint，不 bump version）
+	layouts := v1.Group("/layouts")
+	layouts.Use(middleware.AuthRequired())
+	{
+		layouts.GET("/:kind/:id", h.GetLayout)
+		layouts.PUT("/:kind/:id", h.SaveLayout)
+	}
+
 	// AI endpoints（受保护）
 	aiGroup := v1.Group("/ai")
 	aiGroup.Use(middleware.AuthRequired())

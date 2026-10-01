@@ -246,6 +246,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_viewpoints_scope_name
 CREATE INDEX IF NOT EXISTS idx_viewpoints_project ON viewpoints(project_id);
 CREATE INDEX IF NOT EXISTS idx_viewpoints_package ON viewpoints(package_id);
 CREATE INDEX IF NOT EXISTS idx_viewpoints_updated ON viewpoints(updated_at DESC);
+
+-- M16 P5/Q10：画布布局持久化（独立表；见 migrations/007_layout.up.sql）
+CREATE TABLE IF NOT EXISTS entity_layouts (
+    entity_kind TEXT    NOT NULL,
+    entity_id   TEXT    NOT NULL,
+    layout      TEXT    NOT NULL,
+    updated_at  TIMESTAMP NOT NULL,
+    PRIMARY KEY (entity_kind, entity_id)
+);
 `
 	if _, err := r.db.Exec(ddl); err != nil {
 		return fmt.Errorf("初始化 schema 失败: %w", err)
@@ -979,6 +988,34 @@ func (r *SQLiteRepository) DeletePackage(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ─── Entity layouts（M16 P5/Q10：画布布局后端持久化，独立表 + 独立 endpoint） ───
+
+// SaveLayout 保存实体（package / view）的画布布局 JSON。
+// 不 bump version、不触发乐观锁——layout 是呈现辅助，不是语义内容。
+func (r *SQLiteRepository) SaveLayout(ctx context.Context, entityKind, entityID, layout string) error {
+	if entityKind != "package" && entityKind != "view" {
+		return fmt.Errorf("未知的 layout 实体类型: %s", entityKind)
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO entity_layouts (entity_kind, entity_id, layout, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(entity_kind, entity_id) DO UPDATE SET layout = excluded.layout, updated_at = excluded.updated_at`,
+		entityKind, entityID, layout, time.Now().UTC())
+	return err
+}
+
+// GetLayout 读取实体布局 JSON；不存在返回空串（前端回落 ELK 自动布局）。
+func (r *SQLiteRepository) GetLayout(ctx context.Context, entityKind, entityID string) (string, error) {
+	var layout string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT layout FROM entity_layouts WHERE entity_kind = ? AND entity_id = ?`,
+		entityKind, entityID).Scan(&layout)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return layout, err
 }
 
 // ─── Views (M12 一等 SysML v2 ViewDefinition，M15 升级含 kind / renderKind / viewpoint 等) ───

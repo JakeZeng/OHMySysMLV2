@@ -600,6 +600,7 @@ PartBodyMember
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  / DocStatement
   / EnumDef
   / CommentBlock
 
@@ -635,6 +636,7 @@ PortBodyMember
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  / DocStatement
 
 // ─── Part Usage ────────────────────────────────────────────────────────
 

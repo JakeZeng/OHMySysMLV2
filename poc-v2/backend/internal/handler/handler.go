@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1393,6 +1394,90 @@ func (h *Handler) DeleteViewpoint(c *gin.Context) {
 	writeAudit(c, h.repo, model.AuditActionDelete, model.AuditTargetViewpoint, id,
 		`{"name":"`+escapeJSON(vp.Name)+`","project":"`+vp.ProjectID+`"}`)
 	c.JSON(http.StatusOK, gin.H{"data": nil})
+}
+
+// ─── M16 P5/Q10：画布布局持久化（kind = package | view；不 bump version） ───
+
+// LayoutPosition 单节点坐标。
+type LayoutPosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// layoutPayload 布局请求体：nodeId → 坐标。
+type layoutPayload struct {
+	Nodes map[string]LayoutPosition `json:"nodes"`
+}
+
+// SaveLayout PUT /layouts/:kind/:id
+//
+// 权限：layout 随实体权限走（写实体要求 write）。
+// 不 bump version——layout 是呈现辅助（Q10=A），保存失败前端静默降级 localStorage。
+func (h *Handler) SaveLayout(c *gin.Context) {
+	kind := c.Param("kind")
+	if kind != "package" && kind != "view" {
+		badRequest(c, "未知的布局实体类型", nil)
+		return
+	}
+	id := c.Param("id")
+	if kind == "package" {
+		if _, _, _, err := loadAccessiblePackage(c, h.repo, id, PermWrite); err != nil {
+			return
+		}
+	} else {
+		if _, _, _, err := loadAccessibleView(c, h.repo, id, PermWrite); err != nil {
+			return
+		}
+	}
+	var req layoutPayload
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请求参数无效", err.Error())
+		return
+	}
+	if req.Nodes == nil {
+		req.Nodes = map[string]LayoutPosition{}
+	}
+	b, err := json.Marshal(req.Nodes)
+	if err != nil {
+		badRequest(c, "布局序列化失败", err.Error())
+		return
+	}
+	if err := h.repo.SaveLayout(c, kind, id, string(b)); err != nil {
+		serverError(c, "保存布局失败", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
+}
+
+// GetLayout GET /layouts/:kind/:id
+//
+// 返回 {nodes: {...}}；不存在时 nodes 为空对象（前端回落 ELK 自动布局）。
+func (h *Handler) GetLayout(c *gin.Context) {
+	kind := c.Param("kind")
+	if kind != "package" && kind != "view" {
+		badRequest(c, "未知的布局实体类型", nil)
+		return
+	}
+	id := c.Param("id")
+	if kind == "package" {
+		if _, _, _, err := loadAccessiblePackage(c, h.repo, id, PermRead); err != nil {
+			return
+		}
+	} else {
+		if _, _, _, err := loadAccessibleView(c, h.repo, id, PermRead); err != nil {
+			return
+		}
+	}
+	raw, err := h.repo.GetLayout(c, kind, id)
+	if err != nil {
+		serverError(c, "读取布局失败", err)
+		return
+	}
+	nodes := map[string]LayoutPosition{}
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &nodes)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"nodes": nodes}})
 }
 
 // isUniqueViolation 判定 SQLite 唯一约束冲突。

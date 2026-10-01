@@ -9,9 +9,9 @@
 | P0 | 回写基建升级 —— AST offset 级编辑 + 统一插入路径 | ✅ | a027f89 |
 | P1 | 语法官方对齐 —— 视图进包 + 方言移除 + 顶层扩宽（§7.26 / §8.2.2.26） | ✅ | af727c2 |
 | P2 | 虚拟模型根 + 树「视图视角」+ 画布视图选择器 | ✅ | d745a68 |
-| P3 | 双端全量表达式引擎（TS + Go + 共享一致性 fixture） | ✅ | _本节提交_ |
-| P4 | 合成视图画布 + 项目标准库 + render 表单化 | ⏳ | — |
-| P5 | layout 后端化 + 表单扩展 + 树编辑 + 收尾 | ⏳ | — |
+| P3 | 双端全量表达式引擎（TS + Go + 共享一致性 fixture） | ✅ | ff1d74b |
+| P4 | 合成视图画布 + computeExposed 后端 + render 表单化 | ✅ | 92fc675 |
+| P5 | layout 后端化 + 表单扩展 + 树编辑 + 收尾 | ✅ | _本节提交_ |
 
 ---
 
@@ -65,4 +65,61 @@ poc-v2/parser/sysml.pegjs           FilterStatement 从「枚举算子 + QName�
 | P0 | 根 187 / 前端 218 | a027f89 |
 | P1 | 根 210 / 前端 219 | af727c2 |
 | P2 | 根 211 / 前端 229 | d745a68 |
-| P3 | 根 266 / 前端 229 / Go expr | _本节_ |
+| P3 | 根 266 / 前端 229 / Go expr | ff1d74b |
+| P4 | 根 269 / 前端 229 / Go 全套 | 92fc675 |
+| P5 | 根 276 / 前端 234 / Go 全套 | _本节_ |
+
+---
+
+## P5 阶段详情：layout 后端化 + 表单扩展 + 树编辑
+
+### 交付范围（4 项）
+
+**Q10：画布布局后端持久化**
+- 独立表 `entity_layouts(entity_kind, entity_id, layout, updated_at)` + 独立端点
+  `GET/PUT /api/v1/layouts/:kind/:id`（kind ∈ `package | view`）
+- 关键约束：**不 bump version、不触发协同 409**。布局是呈现辅助，不是语义内容——
+  文本 `content` 仍是唯一语义真源，因此布局走独立读写路径，完全绕开
+  `packages`/`views` 的乐观锁与 collab 版本链
+- 权限随实体走：写要求 `PermWrite`，读要求 `PermRead`（复用 `loadAccessiblePackage/View`）
+- 前端：`layoutApi` fire-and-forget（失败静默回落 localStorage → ELK）；
+  `layoutStore.mergeServerScope` 合并后端布局；拖动停止 800ms 防抖推送
+
+**Q4：description → 官方 doc member**
+- `reverseSerialize` 补齐 `description` 字段的落地实现（此前 schema 声称支持、实际是 no-op）：
+  在 body 内写/改/删 `doc /* … */;`，值做 `*/` 转义防注释逃逸
+- 语法侧：`DocStatement` 加入 `PartBodyMember` / `PortBodyMember`
+
+**Q12：expose 到视图**
+- 树右键「Expose 到视图…」→ `ExposeViewPickerModal` → 生成
+  `expose <Pkg>::<El>;` 写入目标 view body（复用 P0 统一插入路径）
+- 官方硬约束（§8.2.2.26 元模型 `Expose.java`）：expose 只能出现在 **ViewUsage** 体内。
+  picker 只列 usage，宿主 `handleExposeToView` 二次防御 + toast 说明
+
+**Q16：元素级 rename / delete**
+- `textEdit.ts` 新增 `renameElementByName` / `deleteElementByName`（按名定位，
+  因树节点 id 形如 `elem:<ownerId>:<name>`、AST 层面无独立 id）
+
+### 本阶段修复的两个删除缺陷
+
+`deleteElementByName` 初版有两处会产生**损坏用户模型文本**的问题，均已修复并补回归测试：
+
+1. **重叠编辑连带删行**：删除 `part usage` 时，级联正则会命中元素自身的声明行，
+   与主编辑区间重叠。`applyEdits` 按 offset 降序逐条作用于已缩短的文本，
+   第二次编辑的 offset 落空偏移，**连带删掉下一行无关声明**。
+   修复：丢弃与声明本体重叠的级联项。
+2. **有 body 的 def 只删声明行**：留下孤儿成员 + 失衡花括号，产出无法再解析的文本。
+   修复：声明行含 `{` 时改用 `findBlockRange` 删到配对的 `}`（与其他删除函数一致）。
+
+### 顺带清理
+`model.Package` / `model.View` 曾加过 `Layout` 字段，但布局实际存在独立表
+（`packages`/`views` 无 `layout` 列），无任何代码读取——已移除，避免误导。
+
+### 测试
+- `cd poc-v2 && npm test` → 276/276（新增 2 条删除回归）
+- `cd poc-v2/frontend && npm test` → 234/234；`npm run typecheck` 干净
+- `cd poc-v2/backend && go test ./...` → 全套 ok，含 4 条新 layout 测试
+  （`TestLayout_SaveAndGet` / `_ViewKind` / `_RejectsUnknownKind` / `_AnonymousDenied`）
+
+> Go 工具链在仓库内：`poc-v2/backend/.tools/go/bin/go.exe`（不在系统 PATH，
+> 直接 `go test` 会报 command not found）。

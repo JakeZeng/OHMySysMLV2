@@ -28,6 +28,21 @@ import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
 import { ApiError } from '../services/api';
+import { layoutApi, type LayoutEntityKind } from '../services/layoutApi';
+
+/** M16 P5/Q10：拖动停止 800ms 后把当前 scope 的布局推到后端 */
+let layoutFlushTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleLayoutFlush(): void {
+  if (layoutFlushTimer) clearTimeout(layoutFlushTimer);
+  layoutFlushTimer = setTimeout(() => {
+    const s = useModelStore.getState();
+    const { entityKind, entityId, scopeId } = s;
+    if (!entityKind || !entityId || !scopeId) return;
+    const nodes = useLayoutStore.getState().getScope(scopeId);
+    if (Object.keys(nodes).length === 0) return;
+    void layoutApi.save(entityKind as LayoutEntityKind, entityId, nodes);
+  }, 800);
+}
 
 /** 当前内容会话对应的实体类型 */
 export type ContentEntityKind = 'package' | 'view';
@@ -224,6 +239,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await packageApi.get(packageId);
       useLayoutStore.getState().setProject(rec.projectId);
+      // M16 P5/Q10：并行拉取后端布局（fire-and-forget，失败回落 ELK/localStorage）
+      layoutApi.fetch('package', packageId).then((l) => {
+        useLayoutStore.getState().mergeServerScope(packageId, l.nodes);
+      }).catch(() => {});
       const initialContent = rec.content ?? '';
       set({
         entityKind: 'package',
@@ -254,6 +273,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await viewApi.get(viewId);
       useLayoutStore.getState().setProject(rec.projectId);
+      // M16 P5/Q10：并行拉取后端布局（fire-and-forget，失败回落 ELK/localStorage）
+      layoutApi.fetch('view', viewId).then((l) => {
+        useLayoutStore.getState().mergeServerScope(viewId, l.nodes);
+      }).catch(() => {});
       const initialContent = rec.content ?? '';
       set({
         entityKind: 'view',
@@ -518,6 +541,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
       String(n.id) === nodeId ? { ...n, position: { x, y } } : n
     );
     set({ pipeline: { ...pipeline, nodes } });
+    // M16 P5/Q10：拖动后防抖 800ms 推送到后端（fire-and-forget；离线时 localStorage 兜底）
+    scheduleLayoutFlush();
   },
 
   // ─── M11: 拖拽创建节点 ─────────────────────────────────────────────

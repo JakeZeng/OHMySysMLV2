@@ -62,6 +62,11 @@ interface LayoutState {
     x: number,
     y: number,
   ) => void;
+  /**
+   * M16 P5/Q10：合并后端 layout（后端为准；覆盖同 scope 现有位置）。
+   * loadPackage/loadView 拿到 rec.layout 后调用；localStorage 同步更新。
+   */
+  mergeServerScope: (scopeId: string, nodes: Record<string, NodePosition>) => void;
   /** 清空某 scope（如重新自动布局） */
   clearScope: (scopeId: string) => void;
   /** 清空（路由离开） */
@@ -100,6 +105,26 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         ...forProject,
         [scopeId]: { ...forScope, [nodeId]: { x, y } },
       },
+    };
+    saveLayout(projectId, next);
+    set({ layout: next });
+  },
+
+  mergeServerScope(scopeId, nodes) {
+    const { projectId, layout } = get();
+    if (!projectId || !nodes || typeof nodes !== 'object') return;
+    // 过滤无效条目
+    const clean: Record<string, NodePosition> = {};
+    for (const [k, v] of Object.entries(nodes)) {
+      if (k && v && typeof v.x === 'number' && typeof v.y === 'number') {
+        clean[k] = { x: v.x, y: v.y };
+      }
+    }
+    if (Object.keys(clean).length === 0) return;
+    const forProject = layout[projectId] ?? {};
+    const next: LayoutMap = {
+      ...layout,
+      [projectId]: { ...forProject, [scopeId]: { ...(forProject[scopeId] ?? {}), ...clean } },
     };
     saveLayout(projectId, next);
     set({ layout: next });

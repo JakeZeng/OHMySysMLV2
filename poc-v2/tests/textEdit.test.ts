@@ -7,7 +7,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
-import { renameNode, deleteNode, deleteConnection } from '../transform/textEdit';
+import {
+  renameNode,
+  deleteNode,
+  deleteConnection,
+  renameElementByName,
+  deleteElementByName,
+} from '../transform/textEdit';
 
 const SOURCE_1 = `package Vehicle {
   part def Engine {
@@ -215,5 +221,94 @@ describe('Text Edit - 往返一致性', () => {
     const result = deleteNode(SOURCE_1, r.model, id);
     const r2 = parse(result.text);
     expect(r2.ok).toBe(true);
+  });
+});
+
+// M16 P5/Q16：元素级 rename / delete（树右键使用，按名定位）
+describe('Text Edit - 元素级 rename/delete', () => {
+  it('15. renameElementByName：声明 + 同名 typeRef 引用同步', () => {
+    const src = `package P {
+  part def Engine {}
+  part def Car {}
+  part e : Engine;
+  connect e to e.part ded;
+}`;
+    const r = renameElementByName(src, 'partDef', 'Engine', 'Motor');
+    expect(r.text).toContain('part def Motor');
+    expect(r.text).toContain('part e : Motor');
+    expect(r.text).not.toContain('Engine');
+  });
+
+  it('16. renameElementByName：无效名字抛错', () => {
+    const src = `package P { part def X {} }`;
+    expect(() => renameElementByName(src, 'partDef', 'X', '1invalid')).toThrow();
+    expect(() => renameElementByName(src, 'partDef', 'X', 'has-dash')).toThrow();
+  });
+
+  it('17. deleteElementByName：删除整段声明 + 级联删 connect（端点引用 partDef 名）+ 同名 usage', () => {
+    const src = `package P {
+  part def X {}
+  part def Y {}
+  part x : X;
+  connect X to Y;
+  connect X to X;
+}`;
+    const r = deleteElementByName(src, 'partDef', 'X');
+    expect(r.text).not.toContain('part def X');
+    expect(r.text).not.toContain('connect X');
+    // Y 与 part usage x (依赖 X) 保留或随清理，Y 自己保留
+    expect(r.text).toContain('part def Y');
+  });
+
+  it('18. 找不到元素时返回原文本不动', () => {
+    const src = `package P { part def X {} }`;
+    const r = renameElementByName(src, 'partDef', 'Nope', 'Other');
+    expect(r.text).toBe(src);
+    const d = deleteElementByName(src, 'partDef', 'Nope');
+    expect(d.text).toBe(src);
+  });
+
+  it('19. rename 后能重新 parse 通过', () => {
+    const src = `package P {
+  part def Engine {}
+  part e : Engine
+}`;
+    const r = renameElementByName(src, 'partDef', 'Engine', 'Motor');
+    const r2 = parse(r.text);
+    expect(r2.ok).toBe(true);
+    expect(r2.errors).toEqual([]);
+  });
+
+  // 回归：删除 part usage 时，级联正则会命中「自身声明行」，
+  // 与主编辑重叠 → applyEdits 降序应用后偏移二次落空，连带删掉下一行。
+  it('20. deleteElementByName：删 part usage 不会连带删掉相邻行', () => {
+    const src = `package P {
+  part def X {}
+  part def Y {}
+  part x : X;
+  part y : Y;
+}`;
+    const r = deleteElementByName(src, 'partUsage', 'x');
+    expect(r.text).not.toContain('part x :');
+    expect(r.text).toContain('part y : Y;');
+    const r2 = parse(r.text);
+    expect(r2.ok).toBe(true);
+  });
+
+  // 回归：只按整行删会在有 body 时留下孤儿成员 + 失衡花括号。
+  it('21. deleteElementByName：删带 body 的 def 连 body 一起删，且结果可 parse', () => {
+    const src = `package P {
+  part def A {
+    part sub;
+  }
+  part def B {}
+}`;
+    const r = deleteElementByName(src, 'partDef', 'A');
+    expect(r.text).not.toContain('part def A');
+    expect(r.text).not.toContain('part sub;');
+    expect(r.text).toContain('part def B');
+    const r2 = parse(r.text);
+    expect(r2.ok).toBe(true);
+    expect(r2.errors).toEqual([]);
   });
 });

@@ -693,3 +693,95 @@ export function applyEdits(text: string, edits: TextEdit[]): EditResult {
   }
   return { text: out, edits: edits };
 }
+
+// ─── M16 P5/Q16：元素级 rename / delete（树右键使用，按名定位） ───────────
+//
+// 场景：树元素节点的 encodedId 是 `elem:<ownerId>:<name>`，在 AST 层面没有单独的 id
+// （part def / part usage 在 part body 里没有被 flatten 到顶层 partDefs/partUsages）。
+// 走按名定位：扫文本找到 `<keyword> <name>` 的声明行，重命名 / 删除。
+const ELEMENT_KIND_KEYWORDS: Record<string, string> = {
+  partDef: 'part def',
+  partUsage: 'part',
+  portDef: 'port def',
+  portUsage: 'port',
+  attribute: 'attribute',
+  requirement: 'requirement',
+  constraint: 'constraint',
+  state: 'state',
+  action: 'action',
+};
+
+/** 在 text 中定位 element-kind + name 的声明起始 offset；找不到返回 -1 */
+function findElementOffset(text: string, kind: string, name: string): number {
+  const kw = ELEMENT_KIND_KEYWORDS[kind];
+  if (!kw) return -1;
+  const re = new RegExp(`^(\\s*)(?:${escapeRegex(kw)}\\s+)${escapeRegex(name)}\\b`, 'm');
+  const m = re.exec(text);
+  return m ? m.index + m[1].length : -1;
+}
+
+/** 重命名元素的 name token（声明 + 全文引用同步） */
+export function renameElementByName(
+  text: string,
+  kind: string,
+  oldName: string,
+  newName: string,
+): EditResult {
+  if (!/^[A-Za-z_][\w]*$/.test(newName)) {
+    throw new Error(`Invalid identifier: "${newName}"`);
+  }
+  const offset = findElementOffset(text, kind, oldName);
+  if (offset < 0) return { text, edits: [] };
+  let i = offset + ELEMENT_KIND_KEYWORDS[kind].length;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  if (text.slice(i, i + oldName.length) !== oldName) return { text, edits: [] };
+  const edits: TextEdit[] = [
+    { offset: i, length: oldName.length, replacement: newName },
+  ];
+  // 级联：跳过声明位置自身；过滤另一处同名声明（避免误改）
+  const declOffset = i;
+  const re = new RegExp(`\\b${escapeRegex(oldName)}\\b`, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index === declOffset) continue;
+    const before = text.slice(Math.max(0, m.index - 8), m.index);
+    if (/\b(part|port|def|attribute|requirement|constraint|state|action)\s*$/.test(before)) continue;
+    edits.push({ offset: m.index, length: oldName.length, replacement: newName });
+  }
+  return applyEdits(text, edits);
+}
+
+/** 删除元素的整段声明（含 body 多行块），并级联删 connect / 同名 partUsage */
+export function deleteElementByName(text: string, kind: string, name: string): EditResult {
+  const offset = findElementOffset(text, kind, name);
+  if (offset < 0) return { text, edits: [] };
+
+  // 声明本体：若声明行开了 `{`，按块删到配对的 `}`；否则整行删。
+  // 只按整行删会在有 body 时留下孤儿成员 + 失衡花括号（产出无法再解析的文本）。
+  const lineRange = findLineRange(text, offsetToLine(text, offset));
+  const declLine = text.slice(lineRange[0], lineRange[1]);
+  const primary: [number, number] = declLine.includes('{')
+    ? [lineRange[0], findBlockRange(text, offset)[1]]
+    : lineRange;
+
+  const edits: TextEdit[] = [
+    { offset: primary[0], length: primary[1] - primary[0], replacement: '' },
+  ];
+
+  // 级联：删除 connect 行（任意端点引用了 name）
+  const connRe = new RegExp(`^[ \\t]*connect\\b[^;]*\\b${escapeRegex(name)}\\b[^;]*;\\s*$`, 'gm');
+  let m: RegExpExecArray | null;
+  const cascade: Array<[number, number]> = [];
+  while ((m = connRe.exec(text)) !== null) cascade.push([m.index, m.index + m[0].length]);
+  // 级联：删除同名 partUsage 行
+  const usageRe = new RegExp(`^(\\s*)part\\s+${escapeRegex(name)}\\b[^;]*;\\s*$`, 'gm');
+  while ((m = usageRe.exec(text)) !== null) cascade.push([m.index, m.index + m[0].length]);
+
+  // 丢弃与声明本体重叠的级联项：applyEdits 按 offset 降序逐条作用于已缩短的文本，
+  // 重叠编辑会二次偏移落点、连带删掉无关行（part usage 会命中自身声明行）。
+  const overlapsPrimary = ([s, e]: [number, number]) => s < primary[1] && primary[0] < e;
+  for (const [s, e] of cascade.filter((r) => !overlapsPrimary(r)).sort((a, b) => b[0] - a[0])) {
+    edits.push({ offset: s, length: e - s, replacement: '' });
+  }
+  return applyEdits(text, edits);
+}
