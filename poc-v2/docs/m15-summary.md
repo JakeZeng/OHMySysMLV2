@@ -96,6 +96,11 @@ view LocalHelperView { … }                            // ViewUsage 省略定�
 **不进** `model.packages`。body 内 `stateMachine` / `activity` / `requirement` 照样参与
 `flattenNestedMembers` 扁平化（可视化依赖顶层数组）。
 
+> ⚠️ **M17 勘误**：本节「独立于 `package` 的顶层 Namespace 类别」措辞与 M17 原则声明不一致。
+> M17 Q13 推荐「**承载 Namespace 语义，本身不引入命名空间**」（官方 §7.26 语义）。
+> 详见 `m17-summary.md` §10。M17 实施期切片 D 完成后会改本节措辞，M17 讨论稿（2026-10-01）
+> 先行加注保留历史。
+
 `view Name { … }`（省略 `: Def`）也是合法 ViewUsage —— 语法的 `type?` 可选，
 对应 `viewDefinitionId` 为空、`declKind = 'shorthand'`。两种写法在树上都是 ViewUsage。
 
