@@ -20,9 +20,9 @@
 ## 复跑
 
 ```bash
-# 前置：后端 :8080，前端 :5173（注意不是 3000）
-BASE_URL=http://localhost:5173 \
-  npx playwright test e2e/m16-p5-screenshots --reporter=line
+# 前置：后端 :8080，前端 :3000（项目 vite.config.ts 的 port）
+# 若 3000 被旧 sysmlv2-frontend Docker 容器占着，先 docker stop sysmlv2-frontend
+npx playwright test e2e/m16-p5-screenshots --reporter=line
 ```
 
 ## 揪出的真 bug（已修复，详见 m16-summary §143-164）

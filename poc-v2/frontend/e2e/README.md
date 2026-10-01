@@ -14,9 +14,9 @@
 2. **前端运行**：
    ```bash
    cd poc-v2/frontend
-   npm run dev                    # Vite 默认 http://localhost:5173
+   npm run dev                    # vite.config.ts 的 port: 3000
    ```
-   > ⚠️ **端口是 5173（Vite 默认），不是 3000。** `localhost:3000` 仍被早期 Docker 镜像占着，新前端一律走 5173。spec 用 `BASE_URL` 环境变量，所以 5173 时需要 `BASE_URL=http://localhost:5173`。
+   > 若 3000 被占（典型情况：旧的 `sysmlv2-frontend` Docker 容器仍在跑），先 `docker stop sysmlv2-frontend` 释放端口，**不要**改用 5173（项目端口约定是 3000）。
 
 3. **安装 Playwright 浏览器**（仅首次）：
    ```bash
@@ -40,7 +40,7 @@ npx playwright test smoke.spec.ts
 npx playwright test -g "1. 首页"
 
 # 截图归档 + 走真实 UI 路径（m16-p5-screenshots）
-BASE_URL=http://localhost:5173 npx playwright test m16-p5-screenshots --reporter=line
+npx playwright test m16-p5-screenshots --reporter=line
 ```
 
 ## spec 清单
@@ -59,4 +59,4 @@ BASE_URL=http://localhost:5173 npx playwright test m16-p5-screenshots --reporter
 
 - SQLite 单连接，并发写时偶发 EAGAIN；`workers: 1` + `fullyParallel: false` 规避。
 - 每个 spec 自己登录（M1 起就是无状态 token），session 独立。
-- BASE_URL 默认值在 `playwright.config.ts`；端口冲突时务必显式 export `BASE_URL`。
+- BASE_URL 默认值在 `playwright.config.ts`；端口冲突（3000 被占）时务必先 `docker stop sysmlv2-frontend`，不要改用其它端口。

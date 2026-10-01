@@ -9,7 +9,7 @@
 
 ## 🎯 验证标准
 
-1. **打开前端** `http://localhost:5173`（Vite 默认；旧 Docker 镜像占着 3000，**不要用 3000**），左侧 Monaco 编辑器 + 右侧 React Flow 画布
+1. **打开前端** `http://localhost:3000`（项目 vite.config.ts 约定），左侧 Monaco 编辑器 + 右侧 React Flow 画布
 2. **编辑 SysML v2 代码 → 画布实时更新**（带 ELK.js 自动布局 + 手动拖动，布局走独立后端持久化）
 3. **语法错误时显示红色波浪线 + 错误面板**（行号列号精准）
 4. **点击「保存」** → 调 `POST /api/v1/projects/:id/packages` 持久化到 SQLite
@@ -160,9 +160,9 @@ cd poc-v2/frontend && npm run typecheck
 cd poc-v2/backend && ./.tools/go/bin/go.exe test ./...
 # 预期：全套 PASS
 
-# 端到端（先启后端 + 前端在 5173）
+# 端到端（先启后端 + 前端在 3000；3000 被占时 docker stop sysmlv2-frontend）
 cd poc-v2/frontend
-BASE_URL=http://localhost:5173 npx playwright test
+npx playwright test
 ```
 
 ### 4. 启后端
@@ -186,12 +186,12 @@ npm run dev
 预期日志：
 ```
   VITE v6.x  ready in xxx ms
-  ➜  Local:   http://localhost:5173/
+  ➜  Local:   http://localhost:3000/
 ```
 
-> ⚠️ **不是 3000**。Vite 默认 5173；早期 Docker 镜像占着 3000，**别用 3000**。
+> 若 3000 被旧的 `sysmlv2-frontend` Docker 容器占着，先 `docker stop sysmlv2-frontend` 释放。**不要换端口** —— 项目约定就是 3000。
 
-打开 `http://localhost:5173` 应看到：
+打开 `http://localhost:3000` 应看到：
 - 左侧 Monaco 编辑器（带 SysML v2 关键字高亮）
 - 中部 React Flow 画布（实时显示节点/边，5 列布局：导航 | 树 | 编辑器 | 画布 | 表单）
 - 顶部 toolbar（保存、错误计数、视图选择器、AI 助手入口）
@@ -267,7 +267,7 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 - **链式 connect**：`a.b.c.d` 第一段会校验，后面段纯文本路径
 - **后端 validate 较轻量**：只做括号配对 + 关键字存在性 + 表达式试解析；真正的语义解析由前端
 - **SQLite 单连接**（`SetMaxOpenConns(1)`）：多写并发受限，M2+ 计划切到 PostgreSQL 16 + JSONB
-- **Vite 默认端口 5173**：旧 Docker 镜像占着 3000，新前端一律走 5173
+- **前端端口固定 3000**（vite.config.ts）。若被 Docker 占用：`docker stop sysmlv2-frontend`，**不要改端口**
 - **Go 工具链位置**：在 `poc-v2/backend/.tools/go/bin/go.exe`，不在系统 PATH；裸 `go` 命令会失败
 
 ---
@@ -280,5 +280,5 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 | 前端 `import '@parser/parser'` 失败 | `frontend/vite.config.ts` 的 `resolve.alias` |
 | 后端 `go mod tidy` 失败 | Go ≥ 1.23；CGO 报错说明走错驱动，本项目用 `modernc.org/sqlite`（纯 Go） |
 | 数据库锁死 / EAGAIN | SQLite 单连接；考虑 PostgreSQL（参考 `prd_sysmlv2.md`） |
-| E2E 连不上前端 | `BASE_URL=http://localhost:5173`；5173 ≠ 3000 |
+| E2E 连不上前端 | `docker stop sysmlv2-frontend`（项目端口是 3000，不要换） |
 | 裸 `go` 命令找不到 | 工具链在 `poc-v2/backend/.tools/go/bin/`，用 `./.tools/go/bin/go.exe` |

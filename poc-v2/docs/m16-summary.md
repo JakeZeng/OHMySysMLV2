@@ -167,9 +167,9 @@ poc-v2/parser/sysml.pegjs           FilterStatement 从「枚举算子 + QName�
 
 ### 环境侧踩坑（非产品 bug，但会误导自测）
 
-- **`localhost:3000` 被一个 Docker 化的旧前端占着**：E2E 默认 `baseURL` 是 3000，
+- **`localhost:3000` 被旧 `sysmlv2-frontend` Docker 容器占着**：E2E 默认 `baseURL` 是 3000，
   打的是旧镜像 → 新增的「Expose 到视图…」菜单项根本不存在，整个 P5 看起来全挂。
-  自测必须 `BASE_URL=http://localhost:5173 npx playwright test ...` 打本地 dev server。
+  解决：`docker stop sysmlv2-frontend`（**不要**换端口 —— 项目 vite.config.ts 约定 3000）。
 - **工具栏溢出**：`ModelingToolbar` 在 1280 宽下挤成两行，末尾按钮被裁掉点不到
   （`toggle-mode-text` 报 "intercepts pointer events"）。根节点加 `flex-wrap` +
   `[&>*]:shrink-0`，本套件 viewport 设为 1680×900。
@@ -184,11 +184,11 @@ poc-v2/parser/sysml.pegjs           FilterStatement 从「枚举算子 + QName�
 # 后端（限流器保持开启，仅抬高配额）
 cd poc-v2/backend; $env:RATE_LIMIT_RPM="600"; & .\.tools\go\bin\go.exe run cmd/server/main.go
 
-# 前端 dev server（注意别打 3000）
-cd poc-v2/frontend; npx vite --port 5173 --strictPort
+# 前端 dev server（项目端口 3000；若被旧 Docker 容器占着先 docker stop sysmlv2-frontend）
+cd poc-v2/frontend; npm run dev
 
 # 自测 + 截图
-cd poc-v2/frontend; $env:BASE_URL='http://localhost:5173'; npx playwright test e2e/m16-p5-screenshots.spec.ts --reporter=line
+cd poc-v2/frontend; npx playwright test e2e/m16-p5-screenshots.spec.ts --reporter=line
 ```
 
 ### 截图清单（`poc-v2/docs/screenshots/m16-p5/`）

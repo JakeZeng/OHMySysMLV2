@@ -18,12 +18,12 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 
 # 或分别启
 cd poc-v2/backend && go run cmd/server/main.go   # :8080
-cd poc-v2/frontend && npm run dev                # http://localhost:5173
+cd poc-v2/frontend && npm run dev                # http://localhost:3000
 ```
 
-> **⚠️ 前端端口是 5173（Vite 默认）**，不是 3000。`localhost:3000` 被早期 Docker 镜像占着，新前端请走 5173。
->
 > **⚠️ Go 工具链在 `poc-v2/backend/.tools/go/bin/go.exe`**，不在系统 PATH 上；裸 `go` 命令会失败，请用相对路径或先把 `.tools/go/bin` 加到 PATH。
+>
+> **⚠️ 3000 被占怎么办**：若旧的 `sysmlv2-frontend` Docker 容器仍在跑会占 3000，先 `docker stop sysmlv2-frontend` 释放。**不要**换端口 —— 项目 vite.config.ts 约定是 3000。
 
 ## 📂 项目结构
 
