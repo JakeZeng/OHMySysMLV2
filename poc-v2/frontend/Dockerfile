@@ -43,13 +43,15 @@ COPY parser/      ../parser/
 COPY validator/   ../validator/
 COPY transform/   ../transform/
 COPY ast/         ../ast/
+# expr/ 也被 validator.ts 通过 '../expr' 引用，必须复制到 /build/expr/ 才能被模块解析链找到
+COPY expr/        ../expr/
 
 # elkjs 不在 frontend/package.json 里（只在根 poc-v2/package.json 里），
 # 但 transform/layoutEngine.ts 直接 import 'elkjs/lib/elk.bundled.js'。
 # 解决：在每个可能解析 elkjs 的源目录里放一份 node_modules 符号链接，
 # 让 Node 的 node_modules 向上查找能找到包。
 # 局限：elkjs 自己也依赖一些包；用 npm install --prefix 完整克隆：
-RUN for d in parser validator transform ast; do \
+RUN for d in parser validator transform ast expr; do \
       mkdir -p /${d}/node_modules && \
       cp -r /build/node_modules/. /${d}/node_modules/ 2>/dev/null || \
         ln -s /build/node_modules /${d}/node_modules; \
