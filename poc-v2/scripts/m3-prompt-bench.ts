@@ -256,7 +256,10 @@ async function runBaseline(promptPath: string, samplesPath: string, outputPath: 
  */
 function parseYAML(content: string): any {
   // 简化：M3 v0.1 直接读 system 字段（其他字段是 placeholder）
-  const lines = content.split('\n');
+  // Windows CRLF: split on '\r?\n' so top-level keys like `version: 1.0` are read;
+  // JS regex `$` 在不带 m flag 时 `\r` 也算 end-of-string，但 `.` 不吞 `\r`，导致
+  // `^(\w+):\s*(.*)$` 在 `version: 1.0\r` 上不匹配，整个顶层标量全部丢失。
+  const lines = content.split(/\r?\n/);
   const result: any = { few_shots: [] };
   let currentSection = '';
   let currentShot: any = null;
