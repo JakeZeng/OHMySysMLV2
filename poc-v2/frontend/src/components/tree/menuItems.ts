@@ -34,11 +34,14 @@ const icon = (C: React.ComponentType<{ className?: string }>) =>
  *
  * - `elementOwnerKind`：element 节点按归属区分公共元素 vs view-private
  * - `viewKind`：view 节点区分 ViewDefinition（可派生实例）vs ViewUsage（不可）
+ * - `isRootPackage`：M16 — 当 target 是"项目自动建的根 Package"（树根）时为 true，
+ *   此时隐藏"移动到顶级"（根包不能再往上移）和"删除"（防止误删根包）
  */
 export function menuItemsFor(
   kind: TreeNodeKind,
   elementOwnerKind: 'package' | 'view' | 'viewpoint' = 'package',
   viewKind: 'definition' | 'usage' = 'definition',
+  isRootPackage: boolean = false,
 ): ContextMenuItem[] {
   switch (kind) {
     case 'project':
@@ -57,8 +60,23 @@ export function menuItemsFor(
           icon: icon(Square),
           separatorBefore: true,
         },
+        // M16：根 Package 没有"移动到顶级"语义
+        ...(!isRootPackage
+          ? [
+              {
+                id: 'move-to-top',
+                label: '移动到顶级',
+                icon: icon(ArrowUpToLine),
+                separatorBefore: true,
+                hint: '拖拽',
+              },
+            ]
+          : []),
         { id: 'rename', label: '重命名', icon: icon(Pencil), separatorBefore: true, hint: 'F2' },
-        { id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' },
+        // M16：根 Package 不允许删除（否则项目丢失默认工作区）
+        ...(!isRootPackage
+          ? [{ id: 'delete', label: '删除', icon: icon(Trash2), danger: true, hint: 'Del' }]
+          : []),
       ];
 
     case 'view':
@@ -200,6 +218,13 @@ export function actionFor(
         type: 'create-element-trigger',
         parentPackageId: target.kind === 'package' ? target.id : '',
       };
+
+    case 'move-to-top':
+      // M16：右键包节点 → 移到顶级（拖拽也可实现）
+      if (target.kind === 'package') {
+        return { type: 'move-package', id: target.id, parentPackageId: null };
+      }
+      return null;
 
     case 'element-goto-canvas':
       if (target.kind === 'element' && elementRef) {

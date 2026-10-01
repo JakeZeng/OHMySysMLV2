@@ -23,7 +23,9 @@
 # backend healthcheck to wget）。
 
 # ---- builder ----
-FROM golang:1.23-alpine AS builder
+# 与 go.mod 中 go 1.27.1 / toolchain go1.27.1 对齐；显式选 1.27-alpine
+# 避免 GOTOOLCHAIN=auto 在 build 时下载额外 toolchain（首次构建慢）。
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /src
 

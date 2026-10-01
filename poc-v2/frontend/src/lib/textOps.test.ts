@@ -1,12 +1,21 @@
 /**
  * M14.1 — insertSnippetIntoPackage 行为契约
+ * M16  — canNest + insertSnippetIntoElement 行为契约
  *
  * 关键不变量：snippet 必须在某个 package 的 `{ ... }` 内部，
  * 而不是被追加到 content 末尾的 `}` 之外。
  */
 
 import { describe, expect, it } from 'vitest';
-import { insertSnippetIntoPackage, insertSnippetScoped, findPackageClose } from './textOps';
+// 合并自 origin/next/dev：两边各自新增的导出都要保留
+import {
+  insertSnippetIntoPackage,
+  insertSnippetScoped,
+  findPackageClose,
+  insertSnippetIntoElement,
+  nodeKindHasBody,
+  canNestIntoBody,
+} from './textOps';
 import { parse } from '../../../parser/parser';
 
 describe('insertSnippetIntoPackage', () => {
@@ -221,5 +230,117 @@ describe('findPackageClose', () => {
     const text = 'package A { ';
     const aIdx = text.indexOf('package A');
     expect(findPackageClose(text, aIdx)).toBe(text.length);
+  });
+});
+
+// ─── M16: canNest + insertSnippetIntoElement ────────────────────────
+
+describe('canNestIntoBody / nodeKindHasBody', () => {
+  // M16 修订：能否嵌套取决于「目标节点」（画布上 hover 的 react-flow node），
+  // 而不是被拖的 palette 元素。目标节点是 def（有 body）→ 任何元素都可嵌套；
+  // 目标是 usage（无 body）→ 全部拒绝。
+
+  it('def 类节点 → hasBody=true', () => {
+    expect(nodeKindHasBody('sysmlPartDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlPortDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlActionDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlRequirementDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlEnumDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlConstraintDef')).toBe(true);
+    expect(nodeKindHasBody('sysmlStateDef')).toBe(true); // stateDef 有 body
+    expect(nodeKindHasBody('sysmlConnectionDef')).toBe(true);
+  });
+
+  it('usage 类节点 → hasBody=false', () => {
+    expect(nodeKindHasBody('sysmlPartUsage')).toBe(false);
+    expect(nodeKindHasBody('sysmlPortUsage')).toBe(false);
+    expect(nodeKindHasBody('sysmlAttributeUsage')).toBe(false);
+    expect(nodeKindHasBody('sysmlReferenceUsage')).toBe(false);
+    expect(nodeKindHasBody('sysmlTransition')).toBe(false);
+    expect(nodeKindHasBody('sysmlInitialState')).toBe(false);
+    expect(nodeKindHasBody('sysmlFinalState')).toBe(false);
+    // 注意：sysmlState 也是 usage 类（状态机中的状态），无 body
+    expect(nodeKindHasBody('sysmlState')).toBe(false);
+  });
+
+  it('canNestIntoBody 与 hasBody 等价（任何 palette 元素都可嵌到 def body）', () => {
+    expect(canNestIntoBody('sysmlPartDef')).toBe(true);
+    expect(canNestIntoBody('sysmlPartUsage')).toBe(false);
+    // 关键回归点：usage 拖到 def 也能嵌套（之前误判为 false）
+    // 用例化：拖 'partUsage' 到 'sysmlPartDef' → 应允许
+    // canNestIntoBody 只看目标，目标 = sysmlPartDef → true（任何 palette 都可）
+    expect(canNestIntoBody('sysmlPartDef')).toBe(true);
+  });
+
+  it('undefined / 空 nodeType → false', () => {
+    expect(nodeKindHasBody(undefined)).toBe(false);
+    expect(nodeKindHasBody('')).toBe(false);
+    expect(canNestIntoBody(undefined)).toBe(false);
+  });
+});
+
+describe('insertSnippetIntoElement', () => {
+  it('空 snippet → 原 content', () => {
+    const c = 'part def X { }';
+    const r = insertSnippetIntoElement(c, 'X', '   ');
+    expect(r.content).toBe(c);
+    expect(r.ok).toBe(true);
+  });
+
+  it('嵌到 part def X 的 body 末尾', () => {
+    const c = 'package P {\n  part def X {\n  }\n}\n';
+    const r = insertSnippetIntoElement(c, 'X', 'part def NewChild;');
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain('part def NewChild;');
+    // 必须嵌在 X 的 `}` 之前，package 的 `}` 之后
+    const xOpen = r.content.indexOf('part def X {');
+    const xClose = r.content.indexOf('}', xOpen);
+    expect(r.content.indexOf('part def NewChild')).toBeLessThan(xClose);
+    // 但必须在 package 的 `}` 之内（package close 在 x close 之后）
+    expect(r.content.indexOf('part def NewChild')).toBeLessThan(r.content.lastIndexOf('}'));
+  });
+
+  it('嵌到 port def（关键字非 part）', () => {
+    const c = 'package P {\n  port def P {\n  }\n}\n';
+    const r = insertSnippetIntoElement(c, 'P', 'out attribute val : Real;');
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain('out attribute val : Real;');
+  });
+
+  it('嵌到 requirement def（含 subject/docstring 等特殊字段也不影响）', () => {
+    const c = 'package P {\n  requirement def Req {\n    /* doc */\n  }\n}\n';
+    const r = insertSnippetIntoElement(c, 'Req', 'requirement def SubReq;');
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain('requirement def SubReq;');
+  });
+
+  it('找不到 def → ok=false + reason', () => {
+    const c = 'package P {\n  part def X {}\n}\n';
+    const r = insertSnippetIntoElement(c, 'NoSuch', 'part def New;');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('找不到 def 元素');
+    expect(r.content).toBe(c);
+  });
+
+  it('def 后跟 `;` 单行定义 → 无 body 不能嵌套', () => {
+    const c = 'package P {\n  part def Inline;\n}\n';
+    const r = insertSnippetIntoElement(c, 'Inline', 'part def Child;');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('没有 body');
+  });
+
+  it('snippet 多行 → 每行加缩进', () => {
+    const c = 'package P {\n  part def X {\n  }\n}\n';
+    const r = insertSnippetIntoElement(c, 'X', 'part def A;\npart def B;');
+    expect(r.ok).toBe(true);
+    // A 和 B 都应在 def X 的 body 内
+    const xClose = r.content.indexOf('}', r.content.indexOf('part def X {'));
+    expect(r.content.indexOf('part def A')).toBeLessThan(xClose);
+    expect(r.content.indexOf('part def B')).toBeLessThan(xClose);
+    // 两行缩进一致（与 def 内已有内容对齐 = 2 空格，与 `}` 同列）
+    const aLine = r.content.split('\n').find((l) => l.includes('part def A'))!;
+    const bLine = r.content.split('\n').find((l) => l.includes('part def B') && !l.includes('A'))!;
+    expect(aLine).toBe('  part def A;');
+    expect(bLine).toBe('  part def B;');
   });
 });

@@ -11,6 +11,43 @@ import type { SysMLModel } from '@ast/model';
 import { parse } from '../../../parser/parser';
 
 /**
+ * M16：判定拖放目标节点（画布上的 react-flow node）的类型，看它能否"接收嵌套成员"。
+ *
+ * SysML v2 规范：
+ *   - def 类（含 body 的元素，如 `part def X { ... }`）— 可作为嵌套目标，
+ *     body 内可放任何 def / usage（嵌套成员）
+ *   - usage 类（无 body 的元素，如 `part x : T;`、`attribute a;`）— 不能嵌套
+ *
+ * 因此能否嵌套取决于 **目标节点**，而不是被拖的 element kind。
+ *
+ * nodeType 命名约定（与 modelToFlow.ts / DiagramCanvas.tsx 同步）：
+ *   def 类：'sysmlPartDef' / 'sysmlPortDef' / 'sysmlItemDef' / 'sysmlAttributeDef' /
+ *          'sysmlInterfaceDef' / 'sysmlOccurrenceDef' / 'sysmlConnectionDef' /
+ *          'sysmlActionDef' / 'sysmlStateDef' / 'sysmlCalcDef' /
+ *          'sysmlRequirementDef' / 'sysmlConstraintDef' / 'sysmlUseCaseDef' /
+ *          'sysmlAnalysisCaseDef' / 'sysmlVerificationCaseDef' / 'sysmlEnumDef'
+ *   usage 类：'sysmlPartUsage' / 'sysmlPortUsage' / 'sysmlAttributeUsage' /
+ *            'sysmlReferenceUsage' / 'sysmlItemUsage' / 'sysmlTransition' /
+ *            'sysmlInitialState' / 'sysmlFinalState' / 'sysmlState'
+ */
+export function nodeKindHasBody(nodeType: string | undefined): boolean {
+  if (!nodeType) return false;
+  // 规则：nodeType 以 'sysml' 开头、以 'Def' 结尾（含 actionDef 等 *Def）
+  // 但要排除 'state'（用法节点，无 body）和 'Transition'（无 body）
+  if (!nodeType.startsWith('sysml')) return false;
+  // usage 类显式排除（不含 'Usage' 后缀的常见误判）
+  const usageOnlyKinds = ['sysmlState', 'sysmlTransition', 'sysmlInitialState', 'sysmlFinalState'];
+  if (usageOnlyKinds.includes(nodeType)) return false;
+  return /Def$/.test(nodeType);
+}
+
+/** M16：判定某 palette 元素是否能嵌套（嵌到目标 def body 内）。 */
+export function canNestIntoBody(nodeType: string | undefined): boolean {
+  // 只要目标节点有 body（def 类），任何 palette 元素都能嵌套
+  return nodeKindHasBody(nodeType);
+}
+
+/**
  * 找到某 package 的 body 起始偏移处对应的闭合 `}` 位置（返回 `}` 的索引）。
  * 用于把 snippet 插到最后一个 package 内部末尾。
  */
@@ -352,11 +389,15 @@ function findBraceClose(text: string, openIdx: number): number {
   return i - 1;
 }
 
-/** 从 body 文本中推断缩进（取第一个非空行的 leading whitespace）。 */
+/**
+ * 从 body 文本中推断缩进（取第一个含非空白字符行的 leading whitespace）。
+ * 边界：body 只含空行/纯空白 → 返回 ''，调用方按需 fallback 默认缩进。
+ */
 function detectIndent(body: string): string {
   const lines = body.split('\n');
   for (const line of lines) {
-    if (line.trim().length === 0) continue;
+    // 含非空白字符的行才是有效缩进参考
+    if (!/\S/.test(line)) continue;
     const match = line.match(/^(\s*)/);
     return match ? match[1] : '';
   }
@@ -370,6 +411,83 @@ function indentSnippet(snippet: string, indent: string): string {
     .split('\n')
     .map((line) => (line.length > 0 ? indent + line : line))
     .join('\n');
+}
+
+/**
+ * M16：把 snippet 插入名为 elementName 的 def 元素 body 末尾（`}` 之前）。
+ *
+ * 用法：拖入到 def 节点上 → 把 snippet 嵌到该 def 内部（作为成员）。
+ * 与 `insertSnippetIntoPackage` 的区别：
+ *   - 后者定位 `package X { ... }` body 末尾
+ *   - 本函数定位 `xxx def Y { ... }` body 末尾（`xxx def` 任一关键字）
+ *
+ * 返回 { content, ok, reason }：
+ *   - ok=true  → 成功插入
+ *   - ok=false → 找不到名为 elementName 的 def（reason 给出提示）
+ *
+ * indent 比 def body 多一层（即与 def 内已有内容对齐）。
+ */
+export function insertSnippetIntoElement(
+  content: string,
+  elementName: string,
+  snippet: string,
+): { content: string; ok: boolean; reason?: string } {
+  const trimmedSnippet = snippet.trim();
+  if (trimmedSnippet.length === 0) return { content, ok: true };
+
+  // 找 `xxx def <name>` 的位置（关键字任选）
+  const escaped = elementName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const defHeaderRe = new RegExp(
+    `\\b(?:part|port|item|attribute|interface|occurrence|connection|action|state|calc|requirement|constraint|useCase|analysisCase|verificationCase|enum)\\s+def\\s+${escaped}\\b`,
+  );
+  const headerMatch = defHeaderRe.exec(content);
+  if (!headerMatch) {
+    return { content, ok: false, reason: `找不到 def 元素 "${elementName}"` };
+  }
+
+  // 跳到关键字后第一个 `{` 或 `;`
+  let i = headerMatch.index + headerMatch[0].length;
+  while (i < content.length && content[i] !== '{' && content[i] !== ';') i++;
+  if (i >= content.length) {
+    return { content, ok: false, reason: `def "${elementName}" 后缺少 { 或 ;` };
+  }
+
+  // 单行 `... def X;` 不含 body → 不能嵌套
+  if (content[i] === ';') {
+    return { content, ok: false, reason: `def "${elementName}" 没有 body，无法嵌套成员` };
+  }
+
+  // body 闭合 `}` 位置
+  const closeOffset = findBraceClose(content, i);
+
+  // body 内已有内容，提取缩进基准
+  const bodyBeforeClose = content.slice(i + 1, closeOffset);
+  let baseIndent = detectIndent(bodyBeforeClose);
+  // 空 body（既无内容也无空白缩进）→ 用 2 空格默认缩进（与编辑器习惯一致）
+  if (baseIndent === '' && bodyBeforeClose.length > 0) {
+    baseIndent = '  ';
+  }
+  // 新内容与 def 内已有内容对齐（同 baseIndent）
+  const indentedSnippet = indentSnippet(trimmedSnippet, baseIndent);
+  // 拼接点应紧贴 `}` 之前；先把 closeOffset 前的尾随空白去掉，避免与 snippet 自身的缩进叠加
+  const trimEnd = closeOffset - (closeOffset - bodyBeforeClose.length - (i + 1) - 0);
+  // 简化：用 bodyBeforeClose 实际长度确定 trimEnd
+  const actualClose = i + 1 + bodyBeforeClose.length; // = closeOffset
+  // 把 closeOffset 前的尾随空白（缩进/换行）裁掉
+  let insertAt = closeOffset;
+  while (insertAt > i + 1 && /\s/.test(content[insertAt - 1])) insertAt--;
+  // 保留一行换行（如果原本是 body 内已有内容结尾）以维持可读性
+  const hasTrailingNewline = content[insertAt - 1] === '\n';
+  const sep = hasTrailingNewline ? '' : '\n';
+
+  const result =
+    content.slice(0, insertAt) +
+    sep +
+    indentedSnippet +
+    '\n' +
+    content.slice(closeOffset);
+
+  return { content: result, ok: true };
 }
 
 /** 从 model 中按 name 找最新声明的节点 id（用于拖拽后聚焦新节点） */

@@ -22,6 +22,7 @@ import { useModelStore } from '../../stores/modelStore';
 import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { generateUniqueName } from '../../lib/naming';
+import { canNestIntoBody, nodeKindHasBody, insertSnippetIntoElement } from '../../lib/textOps';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
@@ -162,10 +163,63 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
   });
 
   const handlePaletteDrop = React.useCallback(
-    (kind: string, dropXY: { x: number; y: number }) => {
+    (
+      kind: string,
+      dropXY: { x: number; y: number },
+      hoveredNodeId: string | null,
+    ) => {
       const item = PALETTE_ITEMS.find((p) => p.kind === kind);
       if (!item) return;
       const name = generateUniqueName(item.defaultName, existingNodeNames);
+
+      // M16：拖到节点上的分支
+      if (hoveredNodeId) {
+        // 1. 反查目标节点类型（nodeType 含 body 信息的标识）
+        const hoveredNode = adapter.pipeline.nodes.find(
+          (n) => String(n.id) === hoveredNodeId,
+        );
+        const hoveredNodeType = (hoveredNode?.data as { nodeType?: string } | undefined)?.nodeType;
+        // 2. 判定目标节点是否能接收嵌套：def 类（含 body）可，usage 类不可
+        if (!canNestIntoBody(hoveredNodeType)) {
+          // usage 节点无 body → 拒绝（任意 palette 元素都不能嵌进去）
+          showToast({
+            title: '该元素不支持嵌套成员',
+            description: hoveredNodeType
+              ? `${hoveredNodeType} 是 usage 节点（无 body）；请拖到 def 节点或画布空白处`
+              : '目标节点无 body；请拖到 def 节点或画布空白处',
+            variant: 'error',
+          });
+          return;
+        }
+        // 3. 从 hovered nodeId 反查元素 name（按 label）
+        const elementName = String(
+          (hoveredNode?.data as { label?: string } | undefined)?.label ?? '',
+        );
+        if (!elementName) {
+          showToast({
+            title: '找不到目标元素名',
+            description: `hovered nodeId=${hoveredNodeId} 无法解析`,
+            variant: 'error',
+          });
+          return;
+        }
+        // 4. 嵌到目标 def body（任何 palette 元素都能嵌，包括 usage 类）
+        const snippet = item.generate(name);
+        const result = insertSnippetIntoElement(adapter.content, elementName, snippet);
+        if (!result.ok) {
+          showToast({ title: '嵌套失败', description: result.reason, variant: 'error' });
+          return;
+        }
+        adapter.setContent(result.content);
+        showToast({
+          title: `已添加到 ${elementName}`,
+          description: `${item.label} "${name}" 已嵌套`,
+          variant: 'success',
+        });
+        return;
+      }
+
+      // 落到画布空白处 → 沿用原逻辑（package body 末尾）
       let snippet: string;
       if (item.kind === 'partUsage') {
         const typeRef = latestPartDefName || 'Part';

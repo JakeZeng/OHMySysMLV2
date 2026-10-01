@@ -98,3 +98,19 @@
   outline: 2px solid #722ed1;
   outline-offset: 2px;
 }
+
+/* M16: Palette 拖拽落点视觉反馈
+   - 拖到 def 节点上（可嵌套）→ 绿框
+   - 拖到 usage 节点上（不可嵌套）→ 红框 */
+.rf-palette-drop-ok {
+  outline: 3px solid #52c41a !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(82, 196, 26, 0.25);
+  cursor: copy;
+}
+.rf-palette-drop-bad {
+  outline: 3px solid #f5222d !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(245, 34, 45, 0.25);
+  cursor: not-allowed;
+}

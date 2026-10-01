@@ -4,7 +4,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
 
 ## Setup commands
 
-- Prereqs: Node.js 22.x, npm 11.x, Go 1.23+
+- Prereqs: Node.js 22.x, npm 11.x, Go 1.27.1
 - Install root TS deps: `cd poc-v2 && npm install`
 - Install frontend deps: `cd poc-v2/frontend && npm install`
 - Generate parser: `cd poc-v2 && npm run parser:build` (writes `poc-v2/parser/parser.generated.ts`; run before first test/build)

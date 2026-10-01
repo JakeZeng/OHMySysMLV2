@@ -906,11 +906,44 @@ func (h *Handler) UpdatePackage(c *gin.Context) {
 	}
 
 	p.Name = req.Name
-	p.ParentPackageID = req.ParentPackageID
 	p.Description = req.Description
 	p.Content = req.Content
 	if req.Metadata != nil {
 		p.Metadata = req.Metadata
+	}
+
+	// 变更父包前校验：父包必须存在、属于同项目、不能形成环。
+	if req.ParentPackageID != p.ParentPackageID {
+		if req.ParentPackageID != "" {
+			parent, err := h.repo.GetPackage(c, req.ParentPackageID)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					badRequest(c, "父包不存在", nil)
+					return
+				}
+				serverError(c, "校验父包失败", err)
+				return
+			}
+			if parent.ProjectID != p.ProjectID {
+				badRequest(c, "父包必须属于同一项目", nil)
+				return
+			}
+			// 环检测：父包不能是自身或自身的后代
+			if req.ParentPackageID == p.ID {
+				badRequest(c, "不能将包设置为自身的父包", nil)
+				return
+			}
+			isDesc, err := h.repo.IsPackageDescendant(c, p.ID, req.ParentPackageID)
+			if err != nil {
+				serverError(c, "校验包嵌套关系失败", err)
+				return
+			}
+			if isDesc {
+				badRequest(c, "不能将包移动到其后代包下（会形成环）", nil)
+				return
+			}
+		}
+		p.ParentPackageID = req.ParentPackageID
 	}
 	// 乐观锁：把 DB 读到的最新版本用 req.Version（客户端持有的版本）覆盖
 	// M13：force=true 时跳过 WHERE version=? 校验（直接覆盖）

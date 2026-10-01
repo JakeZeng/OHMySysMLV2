@@ -91,7 +91,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.23.x
+          go-version: 1.27.1
           cache: true
           cache-dependency-path: poc-v2/backend/go.sum
 
@@ -169,7 +169,7 @@ jobs:
       - name: Setup Go (for backend)
         uses: actions/setup-go@v5
         with:
-          go-version: 1.23.x
+          go-version: 1.27.1
 
       - name: Build backend
         working-directory: poc-v2/backend

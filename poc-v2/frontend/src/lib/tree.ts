@@ -151,6 +151,12 @@ function buildElementNode(
 /**
  * 构建工程树。
  *
+ * 树根策略（M16 用户澄清版）：
+ *   - 树根始终是合成的 'project' 节点（项目实体）
+ *   - 'project' 节点本身就是 SysML 命名空间根（即"特殊的根包节点"），
+ *     无需另外建一个与项目同名的 Package
+ *   - 用户在画布上新增 def/usage 时落到 project 节点下（即顶级 Package 节点）
+ *
  * 容错策略：
  * - 父包不存在的包 → 挂到工程根（不丢数据）
  * - packageId 不存在的视图 → 挂到工程根
@@ -188,6 +194,9 @@ export function buildTree(input: BuildTreeInput): TreeNode {
   // 包节点：按 parentPackageId 分组；父不存在则归顶层
   // M16 P2：视图视角模式下不渲染包层级（视图平铺到工程根，pathLabel 标注归属）
   const packageNodes = new Map<string, TreeNode>();
+  // 合并自 origin/next/dev：那边只是把同一段循环去掉了 viewMode 判断，设计相同
+  // （树根始终是合成的 project 节点）。保留本方的 viewMode 门控 —— 视图视角下
+  // 不渲染包层级（M16 P2），是那边的代码没有的能力。
   if (!viewMode) {
     for (const p of packages) {
       const parent = parentOf(p.parentPackageId);
@@ -198,7 +207,7 @@ export function buildTree(input: BuildTreeInput): TreeNode {
         name: p.name,
         children: [],
       });
-      // 父不存在（含空串）时挂顶层
+      // 父不存在（含空串）时挂顶层（工程根）
       push(packageIds.has(parent) ? parent : '', packageNodes.get(p.id)!);
     }
   }
