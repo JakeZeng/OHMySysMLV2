@@ -40,12 +40,18 @@ M15 把视图拆成 SysML v2 §7.26 三件套(`ViewDefinition` / `ViewUsage` / `
 配套 `views-ownership.inv.test.ts`,把「同输入必同输出」冻结下来,后续重构靠测试兜底。
 
 ```typescript
+// Pre-dev 步骤 2(2026-10-02 摸底)对齐:AST 端 id 均为 string,
+// 切片 A 落地用 elementsById 索引反查真实元素判分。
 type OwnershipKind =
-  | { kind: 'owned';     element: Element; view: ViewUsage }
-  | { kind: 'referenced'; ref: Reference;  target: Element;  view: ViewUsage }
-  | { kind: 'exposed';   view: ViewUsage;  member: Element };
+  | { kind: 'owned';     elementId: string; viewId: string }
+  | { kind: 'referenced'; refId: string;    targetId: string;  viewId: string }
+  | { kind: 'exposed';   viewId: string;    memberId: string };
 
-function classifyOwnership(el: Element, ctx: OwnershipContext): OwnershipKind {
+function classifyOwnership(
+  elementId: string,
+  ctx: OwnershipContext,
+  elementsById: Map<string, Element>,
+): OwnershipKind {
   // 单一入口,Q6 + Q9 落地
 }
 ```
@@ -75,29 +81,32 @@ Hook 只做「按 id 拿到视图相关元素 + 它的能力接口实现集合�
 type DeleteDecision =
   | { action: 'cascade' }                                       // 级联
   | { action: 'disconnect' }                                    // 断关系,元素保留
-  | { action: 'orphan';    payload: Element }                    // 孤儿池(预留,M17 不实现)
+  | { action: 'orphan';    payloadId: string }                   // 孤儿池(预留,M17 不实现)
   | { action: 'prompt';    choices: DeleteAction[] };            // 弹窗(Q10 升级路径)
 
-function decideOnViewDelete(target: Element): DeleteDecision {
-  const o = classifyOwnership(target, { from: 'view' });
+function decideOnViewDelete(
+  targetId: string,
+  elementsById: Map<string, Element>,
+): DeleteDecision {
+  const o = classifyOwnership(targetId, { from: 'view' }, elementsById);
 
   switch (o.kind) {
     case 'owned': {
       // Q10:被别处引用 → 升级 prompt;否则只断关系
-      const externalRefs = countReferencesOutside(o.element, except: o.view);
+      const externalRefs = countReferencesOutside(o.elementId, except: o.viewId);
       return externalRefs > 0
         ? { action: 'prompt', choices: ['cascade', 'orphan', 'disconnect'] }
         : { action: 'disconnect' };
     }
     case 'referenced': {
       // Q11:数据层断关系;UI 层 ⚠️;validator 层 error
-      markDangling(o.ref);                                       // UI 警示
+      markDangling(o.refId);                                     // UI 警示
       reportValidatorError(/* dangling ref */);                  // 错误面板(走 M2 jump-to-error)
       return { action: 'disconnect' };
     }
     case 'exposed': {
       // Q12:与 Q10 对称——看被暴露元素被多少视图 owns
-      const ownScope = countOwnedByViews(o.member);
+      const ownScope = countOwnedByViews(o.memberId);
       return ownScope === 1
         ? { action: 'cascade' }      // 仅当前视图 owns → 级联
         : { action: 'disconnect' };  // 多视图 owns → 只断 expose
@@ -121,9 +130,9 @@ function decideOnViewDelete(target: Element): DeleteDecision {
 // ─── Q13: 弱 namespace 分类 ───────────────────────────────
 type NamespaceScope =
   | { scope: 'global' }
-  | { scope: 'view'; view: ViewUsage };          // C: 弱 namespace
+  | { scope: 'view'; viewId: string };          // C: 弱 namespace
 
-function classifyNamespaceOf(element: Element): NamespaceScope {
+function classifyNamespaceOf(elementId: string): NamespaceScope {
   // 单一入口;Q13 落地
 }
 
@@ -134,11 +143,12 @@ type NameView = {
   scope: NamespaceScope;    // 给 UI 决定是否显式展示 secondary
 };
 
-function renderElementName(element: Element, ctx: RenderCtx): NameView {
-  const scope = classifyNamespaceOf(element);
+function renderElementName(elementId: string, ctx: RenderCtx): NameView {
+  const scope = classifyNamespaceOf(elementId);
+  const el = ctx.elementsById.get(elementId);
   return {
-    primary: element.shortName,
-    secondary: computeQualifiedName(element),
+    primary: el?.name ?? elementId,
+    secondary: computeQualifiedName(elementId, ctx),
     scope,
   };
 }
@@ -149,15 +159,15 @@ function validateNameUniqueness(name: string, scope: NamespaceScope): Validation
     case 'global':
       return checkGlobalUnique(name);                                  // 现有逻辑
     case 'view':
-      return checkWithinViewUnique(name, scope.view);                  // 视图内局部查重
+      return checkWithinViewUnique(name, scope.viewId);                  // 视图内局部查重
     // 跨视图同名 → 各自 scope 内查,互不影响
   }
 }
 
 // ─── Q16: rename 总级联 ─────────────────────────────────
-async function applyRename(el: Element, newName: string): Promise<void> {
-  await modelApi.rename(el, newName);                                  // 模型层改名(M11 已有)
-  broadcast({ type: 'element-renamed', elementId: el.id, newName });   // 复用 M13 协作广播
+async function applyRename(elementId: string, newName: string): Promise<void> {
+  await modelApi.rename(elementId, newName);                                  // 模型层改名(M11 已有)
+  broadcast({ type: 'element-renamed', elementId, newName });   // 复用 M13 协作广播
   // 不需要逐视图推送——React 端 useViewElement 重渲染即可
 }
 
@@ -287,7 +297,7 @@ type OwnershipContext =
   | { from: 'view' }
   | { from: 'lock' };                          // F5 新增(Q27 单一入口贯穿)
 
-function classifyOwnership(el: Element, ctx: OwnershipContext): OwnershipKind {
+function classifyOwnership(elementId: string, ctx: OwnershipContext, elementsById: Map<string, Element>): OwnershipKind {
   // 现有实现不变;lock 上下文走同一份判分,语义跟 view 一致
 }
 
@@ -302,23 +312,24 @@ function lockKindFor(o: OwnershipKind): LockKind | null {
 
 // ─── Q26-C: 自动锁 + 手动锁入口 ─────────────────────────────
 async function withViewLock<T>(
-  view: ViewUsage,
+  viewId: string,
   op: 'rename' | 'delete' | 'batch',
   fn: () => Promise<T>,
+  elementsById: Map<string, Element>,         // F5:lock 上下文也要走索引
 ): Promise<T> {
   // 短操作按 ownership 自动锁(Q26 自动路径);长操作走 view 粗粒度锁(手动)
   const kind = op === 'batch'
     ? 'view'
-    : lockKindFor(classifyOwnership(target, { from: 'lock' }));
-  await lockService.acquire(kind, view.id);    // M13 lock API,kind 枚举已扩
+    : lockKindFor(classifyOwnership(targetId, { from: 'lock' }, elementsById));
+  await lockService.acquire(kind, viewId);    // M13 lock API,kind 枚举已扩
   try { return await fn(); }
-  finally { await lockService.release(kind, view.id); }
+  finally { await lockService.release(kind, viewId); }
 }
 
 // UI 手动锁入口(协作菜单右键)
-function manualLock(target: ViewElement | ViewUsage): void {
-  const kind = classifyOwnership(target, { from: 'lock' });
-  lockService.acquire(kind, viewId(target));
+function manualLock(targetId: string, elementsById: Map<string, Element>): void {
+  const kind = classifyOwnership(targetId, { from: 'lock' }, elementsById);
+  lockService.acquire(kind, targetId);
 }
 ```
 
