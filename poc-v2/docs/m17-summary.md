@@ -479,4 +479,5 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 | Pre-dev 步骤 2 类型签名对齐 | 切片 A 启动前 |
 | Pre-dev 步骤 3 Schema 兼容性审查(2026-10-02) | **完成**;发现 JSON view 通路未贯通(M15/M16 遗留),切片 B 扩工 +4–5 天 |
 | Pre-dev 步骤 4 Invariant test fixture 设计(2026-10-02) | **完成**;12 个 fixture F1–F12 + 不变式保证已写入 §8.3 |
+| **M17 启动决策**(2026-10-02 用户拍板) | ① **worktree 隔离**(`m17/view-modeling` 分支) ② **切片逐个 commit** ③ **B / D 单独 PR review** ④ **切片 B 完成时全量回归**(`npm test` + `frontend npm test` + `go test ./...` + `k6 perf`) + **拍 baseline 截图** |
 | 切片 G 拆 G1/G2(摸底修正 2026-10-02) | 已写入 §8.2 |
