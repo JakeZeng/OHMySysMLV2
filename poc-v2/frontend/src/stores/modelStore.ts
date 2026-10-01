@@ -239,10 +239,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await packageApi.get(packageId);
       useLayoutStore.getState().setProject(rec.projectId);
-      // M16 P5/Q10：并行拉取后端布局（fire-and-forget，失败回落 ELK/localStorage）
-      layoutApi.fetch('package', packageId).then((l) => {
-        useLayoutStore.getState().mergeServerScope(packageId, l.nodes);
-      }).catch(() => {});
       const initialContent = rec.content ?? '';
       set({
         entityKind: 'package',
@@ -261,6 +257,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
         dirty: false,
       });
       useCollabStore.getState().setBaseContent(rec.version, initialContent);
+      // M16 P5/Q10：**必须等布局落地再跑 pipeline**。
+      // 之前是 fire-and-forget，与下面的 runPipeline 竞态 —— 布局回来时节点坐标已经算完，
+      // 于是刷新后拖动过的位置全部跳回 ELK 默认布局（P5 的核心验收点直接失效）。
+      await layoutApi
+        .fetch('package', packageId)
+        .then((l) => {
+          useLayoutStore.getState().mergeServerScope(packageId, l.nodes);
+        })
+        .catch(() => {
+          /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
+        });
       get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
@@ -273,10 +280,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await viewApi.get(viewId);
       useLayoutStore.getState().setProject(rec.projectId);
-      // M16 P5/Q10：并行拉取后端布局（fire-and-forget，失败回落 ELK/localStorage）
-      layoutApi.fetch('view', viewId).then((l) => {
-        useLayoutStore.getState().mergeServerScope(viewId, l.nodes);
-      }).catch(() => {});
       const initialContent = rec.content ?? '';
       set({
         entityKind: 'view',
@@ -296,6 +299,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
         dirty: false,
       });
       useCollabStore.getState().setBaseContent(rec.version, initialContent);
+      // M16 P5/Q10：**必须等布局落地再跑 pipeline**。
+      // 之前是 fire-and-forget，与下面的 runPipeline 竞态 —— 布局回来时节点坐标已经算完，
+      // 于是刷新后拖动过的位置全部跳回 ELK 默认布局（P5 的核心验收点直接失效）。
+      await layoutApi
+        .fetch('view', viewId)
+        .then((l) => {
+          useLayoutStore.getState().mergeServerScope(viewId, l.nodes);
+        })
+        .catch(() => {
+          /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
+        });
       get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });

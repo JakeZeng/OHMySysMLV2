@@ -371,6 +371,66 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   const wrapperRef = useRef<HTMLDivElement>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = React.useState<string | null>(null);
+  /**
+   * 画布选中态（完全受控的 nodes 需要自己承接 select 变化，见 handleNodesChange）。
+   * 没有它：点击节点选中不了 → 右栏 ElementFormPanel 永远打不开。
+   *
+   * 为什么还要额外记一份「身份」：解析器用**全局计数器**生成节点 id
+   * （sysml.pegjs 的 nextId），任何一次文本编辑都会让整棵树的 id 整体平移
+   * （实测 `pd:partDef_3` → `pd:partDef_16`）。只按 id 匹配的话，用户在表单里
+   * 每敲一个字选中态就丢了 → 右栏元素表单当场关闭，编辑结果还来不及保存。
+   * 所以 id 失效时退回「同类型 + 同名」匹配，把选中态迁移到新 id 上。
+   */
+  const [selectedNodeIds, setSelectedNodeIds] = React.useState<Set<string>>(new Set());
+  /**
+   * selectedNodeIds 的同步镜像：React Flow 的 onNodesChange 与 onSelectionChange
+   * 在同一 tick 内先后触发，state 还没提交，只能读 ref。
+   * value：节点 id → 节点身份（type + label）
+   */
+  const selectedRef = React.useRef<Map<string, { type?: string; label?: string }>>(new Map());
+
+  /** 在给定节点池里解析「用户以为选中的那个节点」：先按 id，再按身份兜底 */
+  const resolveSelected = React.useCallback((pool: Node[]): Node | null => {
+    for (const [id, identity] of selectedRef.current) {
+      const byId = pool.find((n) => String(n.id) === id);
+      if (byId) return byId;
+      const byIdentity = pool.find(
+        (n) =>
+          String(n.type ?? '') === String(identity.type ?? '') &&
+          String((n.data as { label?: string } | undefined)?.label ?? '') ===
+            String(identity.label ?? ''),
+      );
+      if (byIdentity) return byIdentity;
+    }
+    return null;
+  }, []);
+
+  // 节点集合换血（文本编辑 / 切包 / 切视图 / 删除）时重定位选中态
+  React.useEffect(() => {
+    if (selectedRef.current.size === 0) return;
+    const nextRef = new Map<string, { type?: string; label?: string }>();
+    for (const [id, identity] of selectedRef.current) {
+      if (nodes.some((n) => String(n.id) === id)) {
+        nextRef.set(id, identity);
+        continue;
+      }
+      const migrated = nodes.find(
+        (n) =>
+          String(n.type ?? '') === String(identity.type ?? '') &&
+          String((n.data as { label?: string } | undefined)?.label ?? '') ===
+            String(identity.label ?? ''),
+      );
+      if (migrated) nextRef.set(String(migrated.id), identity);
+    }
+    if (
+      nextRef.size === selectedRef.current.size &&
+      [...nextRef.keys()].every((k) => selectedRef.current.has(k))
+    ) {
+      return;
+    }
+    selectedRef.current = nextRef;
+    setSelectedNodeIds(new Set(nextRef.keys()));
+  }, [nodes]);
 
   const scheduleClear = useCallback(() => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -439,18 +499,47 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
 
   const stableNodes = useMemo(() => {
     const hlSet = new Set(highlightNodeIds ?? []);
+    /**
+     * M16 P5 自测修复：**必须把 React Flow 内部量到的尺寸（`node.measured`）带回去**。
+     *
+     * 原因：nodes 完全受控，只要交出去的对象换了个引用，adoptUserNodes 就按
+     * `userNode.measured` 重建内部节点（尺寸只认 userNode 上的 `measured`），
+     * 而 ours 里的 pipeline 节点从来没有这个字段 —— 于是尺寸被清空，
+     * NodeWrapper 判定 `hasDimensions === false`，给节点加 `visibility: hidden`。
+     * 触发路径：拖一下节点 → 选中态变 → 本 memo 重算 → 整张画布瞬间变空白。
+     * ResizeObserver 只在尺寸**变化**时回调，尺寸没变就不会重新量，
+     * 所以节点会一直隐身（截图表现：拖完只剩一张空画布）。
+     *
+     * 修法：每轮重算时从 React Flow 实例读回上一轮的 measured 并原样带上。
+     */
+    const prevMeasured = new Map<string, { width: number; height: number }>();
+    const inst = rfInstanceRef.current;
+    if (inst) {
+      for (const n of nodes) {
+        // getNodes() 返回的是「我们交进去的 user nodes」（不含 measured），
+        // 尺寸只在内部节点上 —— 必须走 getInternalNode。
+        const m = inst.getInternalNode(String(n.id))?.measured;
+        if (typeof m?.width === 'number' && typeof m?.height === 'number') {
+          prevMeasured.set(String(n.id), { width: m.width, height: m.height });
+        }
+      }
+    }
     return nodes.map((n) => {
       const idStr = String(n.id);
       const cls: string[] = [];
       if (idStr === highlightedNodeId) cls.push('rf-node-highlight');
       if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
+      const own = (n as { measured?: { width: number; height: number } }).measured;
+      const measured = own ?? prevMeasured.get(idStr);
       return {
         ...n,
         id: idStr,
+        selected: selectedNodeIds.has(idStr),
         className: cls.length > 0 ? cls.join(' ') : undefined,
+        ...(measured ? { measured } : {}),
       };
     });
-  }, [nodes, highlightedNodeId, highlightNodeIds]);
+  }, [nodes, highlightedNodeId, highlightNodeIds, selectedNodeIds]);
   const stableEdges = useMemo(
     () => edges.map((e) => ({ ...e, id: String(e.id) })),
     [edges]
@@ -474,15 +563,37 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
       for (const c of changes) {
-        if (c.type === 'position' && c.dragging === false && c.position && onNodePositionChange) {
+        // 位置变化必须**每次都回写**（含 dragging === true 的中间态），
+        // 不能只在拖动结束时写：nodes 完全受控，拖动过程中 React Flow 只发 change，
+        // 父组件不回写就没有人更新坐标。先前只认 `dragging === false`，
+        // 拖动过程里节点纹丝不动，只有松手那一帧才跳到终点。
+        if (c.type === 'position' && c.position && onNodePositionChange) {
           onNodePositionChange(String(c.id), c.position.x, c.position.y);
         }
         if (c.type === 'remove' && onNodeDelete) {
           onNodeDelete(String(c.id));
         }
+        // 选中态：nodes 是完全受控的（来自 store），必须把 select 变化回写到本地状态
+        // 再合回 stableNodes，否则点击节点选中不了 → onSelectionChange 收到 null →
+        // 右栏 ElementFormPanel（元素属性表单）永远打不开。
+        if (c.type === 'select') {
+          const idStr = String(c.id);
+          const hit = stableNodes.find((n) => String(n.id) === idStr);
+          const nextRef = new Map(selectedRef.current);
+          if (c.selected) {
+            nextRef.set(idStr, {
+              type: hit?.type,
+              label: (hit?.data as { label?: string } | undefined)?.label,
+            });
+          } else {
+            nextRef.delete(idStr);
+          }
+          selectedRef.current = nextRef;
+          setSelectedNodeIds(new Set(nextRef.keys()));
+        }
       }
     },
-    [onNodePositionChange, onNodeDelete]
+    [onNodePositionChange, onNodeDelete, stableNodes]
   );
 
   const handleEdgesChange = useCallback(
@@ -525,11 +636,14 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   }, []);
 
   const handleSelectionChange = useCallback(
-    ({ nodes: selNodes }: { nodes: Node[]; edges: Edge[] }) => {
+    () => {
       if (!onSelectionChange) return;
-      onSelectionChange(selNodes[0] ?? null);
+      // 不用 React Flow 传上来的 selNodes：它只认「渲染时带 selected 的节点」，
+      // 而文本编辑会让整棵树的 id 平移（见 selectedRef 注释），那一刻它必然是空的。
+      // 自己按身份解析，才能在编辑过程中保住右栏表单。
+      onSelectionChange(resolveSelected(stableNodes));
     },
-    [onSelectionChange]
+    [onSelectionChange, resolveSelected, stableNodes]
   );
 
   // ─── M11: 拖拽支持 ─────────────────────────────────────────────────

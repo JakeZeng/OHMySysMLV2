@@ -123,3 +123,91 @@ poc-v2/parser/sysml.pegjs           FilterStatement 从「枚举算子 + QName�
 
 > Go 工具链在仓库内：`poc-v2/backend/.tools/go/bin/go.exe`（不在系统 PATH，
 > 直接 `go test` 会报 command not found）。
+
+---
+
+## P5 阶段详情（下）：浏览器自测 + 截图归档
+
+`poc-v2/frontend/e2e/m16-p5-screenshots.spec.ts` —— 5 个 Playwright 用例走**真实 UI 路径**
+（不是只打 API），逐条验证 P5 的四项交付，并归档 12 张截图到
+`poc-v2/docs/screenshots/m16-p5/`。
+
+| 用例 | 验证项 | 关键断言 |
+|------|--------|----------|
+| 01-03 | Q12 expose 到视图 | 右键有「Expose 到视图…」→ picker **只列 ViewUsage**（ViewDefinition 不出现，§7.26）→ view body 里真的出现 `expose VehicleModel::Vehicle;` → 打开视图显示 `1 resolved` |
+| 04-05 | Q4 description → doc | 表单填描述 → 保存 → content 命中 `doc /* … */;` → 文本模式编辑器里肉眼可见 |
+| 06 | Q4 成员行内改名 | `attribute mass : Real` → `MassValue` 落库 |
+| 07-08 | Q16 rename / delete | `Engine`→`Powertrain` **声明与引用同步**；删除后相邻声明完好（两个历史缺陷的回归） |
+| 09-10 | Q10 布局持久化 | 拖动 → 刷新 → 模型坐标一致；且拖动过程中节点不消失 |
+
+### 自测揪出并修复的三个真 bug
+
+1. **拖一下节点，整张画布变空白**（`DiagramCanvas.tsx`）
+   React Flow 在 `hasDimensions === false` 时给节点加 `visibility: hidden`。我们完全受控
+   `nodes`，`stableNodes` memo 一旦重算就换掉所有对象引用，`adoptUserNodes` 按
+   `userNode.measured` 重建内部节点——而 pipeline 节点从来没有这个字段，尺寸被清空。
+   触发路径：拖动 → 选中态变 → memo 重算 → 全批节点隐身。ResizeObserver 只在尺寸**变化**
+   时回调，尺寸没变就不会重量，于是节点一直隐身（`boundingBox` 还在，只有截图看得出来）。
+   修复：每轮重算时用 `instance.getInternalNode(id).measured` 把尺寸带回去
+   （注意 `getNodes()` 返回的是 user nodes，不含 `measured`，必须走 `getInternalNode`）。
+   顺带修正：`handleNodesChange` 的 position 分支原先只在 `dragging === false` 时回写，
+   拖动过程中不回写；受控模式下必须每次都写。
+
+2. **布局恢复与 pipeline 竞态**（`modelStore.ts`）
+   `loadPackage` / `loadView` 原来是 fire-and-forget 拉布局再 `runPipeline`，
+   布局常后到 → 首帧按默认布局画，随后又被覆盖。改成 **await 布局落地再跑 pipeline**。
+
+3. **画布选中态完全失效 / 编辑即丢失**（`DiagramCanvas.tsx`）
+   - 完全受控模式下 `select` 变化没人回写，点节点选不中 → 右栏 `ElementFormPanel` 永远打不开；
+   - 解析器用**全局计数器**生成节点 id（`sysml.pegjs` 的 `nextId`），任何一次文本编辑
+     让整棵树 id 整体平移（实测 `pd:partDef_3` → `pd:partDef_16`），只按 id 匹配则每敲一个字
+     选中态就丢。改为在 id 失效时退回「同类型 + 同名」匹配迁移选中态。
+
+### 环境侧踩坑（非产品 bug，但会误导自测）
+
+- **`localhost:3000` 被一个 Docker 化的旧前端占着**：E2E 默认 `baseURL` 是 3000，
+  打的是旧镜像 → 新增的「Expose 到视图…」菜单项根本不存在，整个 P5 看起来全挂。
+  自测必须 `BASE_URL=http://localhost:5173 npx playwright test ...` 打本地 dev server。
+- **工具栏溢出**：`ModelingToolbar` 在 1280 宽下挤成两行，末尾按钮被裁掉点不到
+  （`toggle-mode-text` 报 "intercepts pointer events"）。根节点加 `flex-wrap` +
+  `[&>*]:shrink-0`，本套件 viewport 设为 1680×900。
+- **包内无视图 ⇒ 树里永远没有展开箭头**：包内元素靠懒加载，而 toggle 按钮
+  `disabled={!hasChildren}` 要等元素加载后才有 → 死锁。seed 里给每个包挂一个视图打破循环。
+- **本地 E2E 的限流**：用后端自带的 `RATE_LIMIT_RPM`（本次 600）抬高配额，
+  **限流器仍然开着**（未使用任何旁路开关）。
+
+### 运行方式
+
+```powershell
+# 后端（限流器保持开启，仅抬高配额）
+cd poc-v2/backend; $env:RATE_LIMIT_RPM="600"; & .\.tools\go\bin\go.exe run cmd/server/main.go
+
+# 前端 dev server（注意别打 3000）
+cd poc-v2/frontend; npx vite --port 5173 --strictPort
+
+# 自测 + 截图
+cd poc-v2/frontend; $env:BASE_URL='http://localhost:5173'; npx playwright test e2e/m16-p5-screenshots.spec.ts --reporter=line
+```
+
+### 截图清单（`poc-v2/docs/screenshots/m16-p5/`）
+
+| 文件 | 内容 |
+|------|------|
+| `01-element-context-menu.png` | 元素右键菜单（含「Expose 到视图…」） |
+| `02-expose-view-picker.png` | 视图选择器 + §7.26 约束说明（只列 ViewUsage） |
+| `03-expose-applied-in-view.png` | expose 写入后视图内 `1 resolved` |
+| `04-element-form-description.png` | 元素表单填「描述」 |
+| `05-doc-member-written.png` | 回写后的 SysML 文本含 `doc /* … */;` |
+| `06-inline-attribute-edit.png` | 成员行内编辑中 |
+| `06b-attribute-type-updated.png` | 提交后：`mass : MassValue` |
+| `07-element-renamed.png` | 重命名后（树 + toast） |
+| `07b-rename-synced-in-text.png` | 改名同步进源文本（声明 + 引用），与 doc/类型改动同屏 |
+| `08-element-deleted.png` | 删除后（相邻声明未受影响） |
+| `09-layout-after-drag.png` | 拖动后的画布 |
+| `10-layout-after-reload.png` | 刷新后坐标保持（后端持久化生效） |
+
+### 回归护栏
+
+`expectAllNodesVisible()`：断言画布上**所有**节点 `visibility !== hidden`。
+针对 bug #1 —— `boundingBox` 与 `toBeVisible()` 都测不出来（元素仍在 DOM、仍有盒子），
+只有 computed style / 截图能看出画布被清空。

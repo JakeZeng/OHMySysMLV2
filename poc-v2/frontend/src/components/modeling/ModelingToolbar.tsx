@@ -72,7 +72,7 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
 
   return (
     <div
-      className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2"
+      className="flex flex-wrap items-center gap-2 border-b border-gray-200 [&>*]:shrink-0 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2"
       data-testid="modeling-toolbar"
     >
       {/* 名称 */}
