@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 describe('M3 Prompt Baseline Bench', () => {
   const promptPath = path.resolve(__dirname, '../prompts/v1.0.yaml');
   const samplesPath = path.resolve(__dirname, '../samples/30-nl-descriptions.jsonl');
-  const outputPath = path.resolve(__dirname, '../reports/v1.0-baseline.md');
+  const outputPath = path.resolve(__dirname, '../reports/v1.0-baseline.generated.md');
 
   beforeAll(() => {
     // 清理旧报告

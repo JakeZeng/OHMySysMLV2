@@ -21,11 +21,11 @@
  *   09-layout-after-drag.png        — 拖动后的画布
  *   10-layout-after-reload.png      — 刷新后坐标保持（后端持久化生效）
  *
- * 启动前提：后端 :8080、前端 :3000（或用 BASE_URL 覆盖）。
+ * 启动前提：后端 :8080、前端 :5173（或用 BASE_URL 覆盖；3000 常被旧 Docker 前端占着，不要用）。
  * 本套件共用一个 bootstrap（限流 60 req/min/IP，避免每 test 重复注册）。
  *
  * 运行：
- *   BASE_URL=http://localhost:3001 npx playwright test e2e/m16-p5-screenshots --reporter=line
+ *   BASE_URL=http://localhost:5173 npx playwright test e2e/m16-p5-screenshots --reporter=line
  */
 
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
