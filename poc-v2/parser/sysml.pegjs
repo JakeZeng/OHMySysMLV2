@@ -359,27 +359,12 @@ RenderStatement
   / "render" WS ref:QName mult:Multiplicity? _ ";"
     { return { kind: 'render', renderingRef: ref, multiplicity: mult || undefined, renderKind: deriveRenderKind(ref) }; }
 
-// `filter @SysML::PartUsage;` / `filter not @SysML::ConnectionUsage;`
-// / `filter istype SysML::PartUsage;` / `filter hastype X;`
+// M16 P3：filter 接受官方**完整表达式语言**（ElementFilterMember = 'filter'
+// OwnedExpression ';'），捕获原文文本，由 expr 引擎（poc-v2/expr / internal/expr）
+// 解析与求值——不再在语法层枚举算子。
 FilterStatement
-  = "filter" WS neg:FilterNot? op:FilterOperator? qn:QName _ ";"
-    {
-      return {
-        kind: 'filter',
-        path: qn,
-        negated: !!neg,
-        operator: op || undefined,
-        text: (neg ? 'not ' : '') + (op || '') + qn,
-      };
-    }
-
-FilterNot
-  = "not" WS { return true; }
-
-FilterOperator
-  = "@" { return '@'; }
-  / "istype" WS { return 'istype '; }
-  / "hastype" WS { return 'hastype '; }
+  = "filter" WS text:$(!";" .)+ ";"
+    { return { kind: 'filter', text: text.trim() }; }
 
 // `satisfy 'vehicle structure perspective';` —— 标准位置：body 内。
 // 官方还有声明式变体（附录 A）：`satisfy requirement sv : SafetyViewpoint;`
@@ -510,25 +495,32 @@ QualifiedNames
 
 // M16 P1：视图/视角是普通包成员（官方所有完整示例都把 view 写在包内）
 PackageMember
-  = Package
-  / ImportStatement
-  / AliasStatement
-  / ViewDecl
-  / ViewpointDecl
-  / PartDef
-  / PortDef
-  / PartUsage
-  / PortUsage
-  / Attribute
-  / StateMachine
-  / Activity
-  / RequirementDef
-  / ConstraintBlockDef
-  / TraceStatement
-  / EnumDef
-  / DocStatement
-  / CommentBlock
-  / ConnectStatement
+  = m:(
+      Package
+    / ImportStatement
+    / AliasStatement
+    / ViewDecl
+    / ViewpointDecl
+    / PartDef
+    / PortDef
+    / PartUsage
+    / PortUsage
+    / Attribute
+    / StateMachine
+    / Activity
+    / RequirementDef
+    / ConstraintBlockDef
+    / TraceStatement
+    / EnumDef
+    / DocStatement
+    / CommentBlock
+    / ConnectStatement
+    )
+    { return m; }
+
+// M16 P3 暂留（P5+ 文本扫描挂 metadata 用，不进 PackageMember，见上方注释）
+MetadataAnnotation
+  = _ "{" _ "@" _ q:QualifiedName _ "}" { return q; }
 
 // 官方 AliasMember：`alias ShortName for Some::Qualified::Name;`
 AliasStatement
@@ -584,8 +576,9 @@ PartDef
       };
     }
 
+// 官方 def 特化用 `:>`（subclassification）；`:` 是既有内容广泛使用的形式，两者都收
 PartDefSpecialization
-  = WS ":" WS inh:QualifiedNames { return inh; }
+  = WS (":>" / ":") WS inh:QualifiedNames { return inh; }
 
 // 定义体两种写法（均为标准 SysML v2）：
 //   part def Name { ... }  —— 带成员
@@ -628,7 +621,7 @@ PortDefBody
   / _ ";" { return []; }
 
 PortDefSpecialization
-  = WS ":" WS inh:QualifiedNames { return inh; }
+  = WS (":>" / ":") WS inh:QualifiedNames { return inh; }
 
 PortBodyMember
   = PortUsageWithDir

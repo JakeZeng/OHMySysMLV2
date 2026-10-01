@@ -39,6 +39,7 @@ import type {
   Requirement,
   ConstraintBlock,
 } from '../ast/model';
+import { tryParseExpr } from '../expr';
 
 // ─── 错误模型 ──────────────────────────────────────────────────────────
 
@@ -394,22 +395,14 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
     }
   }
 
-  // 5) filter 算子非标准
-  const allowedOps = ['@', 'not @', 'istype', 'hastype'];
+  // 5) filter 表达式解析（M16 P3）：文本直接交给 expr 引擎解析；失败 → W305。
+  // filter 现在接受完整官方表达式语言（@X / @@X / istype / hastype / all / and-or-not / ...）。
   for (const v of model.views ?? []) {
     for (const f of v.filters ?? []) {
-      // f 形如 `@X::Y` / `not @X` / `istype X` / `hastype X`
-      const head = f.split(/\s+/).slice(0, 2).join(' ');
-      const isAllowed = allowedOps.some(
-        (op) =>
-          (op.endsWith('@') ? head.startsWith(op) : head.startsWith(op + ' ')) ||
-          head === op ||
-          (op === '@' && head.startsWith('@')),
-      );
-      if (!isAllowed) {
+      if (tryParseExpr(f) === null) {
         issues.push({
           code: 'W305_FILTER_UNKNOWN_OP',
-          message: `view \`${v.name}\` 的 \`filter\` 子句 \`${f}\` 的算子不在标准 §7.26（` + allowedOps.join(' / ') + '）范围内',
+          message: `view \`${v.name}\` 的 \`filter\` 表达式 \`${f}\` 无法解析（§7.26 官方表达式语言）`,
           location: v.location,
           severity: 'warning',
         });
