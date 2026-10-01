@@ -217,27 +217,36 @@ func ParseViewBody(content string) ParsedViewBody {
 // 种类即用。这是本 POC 的约定，不是标准；认不出来回落到 interconnection。
 //
 // 与前端 parser 的 deriveRenderKind 保持同一套规则（两边都会独立算一次）。
+// renderKindFromRef 从 rendering usage 的引用名推导渲染方式（M16 P4）。
+//
+// 官方 4（asTextualNotation / asTreeDiagram / asInterconnectionDiagram /
+// asElementTable）+ 历史上 4 非标准名字（asStateDiagram / asActionDiagram /
+// asRequirementTable / asSnapshotTable）的路由映射保留——后者通过项目标准库
+// （standardLibrary.go）注入的 `rendering def` 合法化（Q22 + Q23）。认不出来回落到
+// `interconnection`（与前端 deriveRenderKind 保持一致：双端同一字符串映射）。
 func renderKindFromRef(ref string) model.RenderKind {
 	base := ref
 	if i := strings.LastIndex(base, "::"); i >= 0 {
 		base = base[i+2:]
 	}
 	low := strings.ToLower(strings.Trim(base, "'"))
-	low = strings.TrimPrefix(low, "as")
-	for _, suffix := range []string{"diagram", "view", "table"} {
-		low = strings.TrimSuffix(low, suffix)
+	if strings.Contains(low, "interconnection") || strings.Contains(low, "textualnotation") {
+		return model.RenderKindInterconnection
 	}
-	for _, k := range []model.RenderKind{
-		model.RenderKindInterconnection,
-		model.RenderKindRequirement,
-		model.RenderKindSnapshot,
-		model.RenderKindState,
-		model.RenderKindAction,
-		model.RenderKindTree,
-	} {
-		if strings.Contains(low, string(k)) {
-			return k
-		}
+	if strings.Contains(low, "tree") || strings.Contains(low, "elementtable") {
+		return model.RenderKindTree
+	}
+	if strings.Contains(low, "requirement") {
+		return model.RenderKindRequirement
+	}
+	if strings.Contains(low, "state") {
+		return model.RenderKindState
+	}
+	if strings.Contains(low, "action") {
+		return model.RenderKindAction
+	}
+	if strings.Contains(low, "snapshot") {
+		return model.RenderKindSnapshot
 	}
 	return model.RenderKindInterconnection
 }

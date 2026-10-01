@@ -49,8 +49,8 @@ export interface FlowGraph {
  * 同步入口：立即返回一个带临时坐标的 FlowGraph，便于 store 在 pipeline
  * 同步路径里使用。临时坐标是简单的网格布局，由 ELK 异步重排后覆盖。
  */
-export function modelToFlow(model: SysMLModel): FlowGraph {
-  const partial = buildGraph(model, gridLayout);
+export function modelToFlow(model: SysMLModel, exposedExternal?: ExposedExternal[]): FlowGraph {
+  const partial = buildGraph(model, gridLayout, exposedExternal);
   return partial;
 }
 
@@ -58,8 +58,8 @@ export function modelToFlow(model: SysMLModel): FlowGraph {
  * 异步入口：构建图 + ELK 自动布局。返回带最终坐标的 FlowGraph。
  * 这是 M2 推荐的入口。
  */
-export async function modelToFlowLayouted(model: SysMLModel): Promise<FlowGraph> {
-  const partial = buildGraph(model, gridLayout);
+export async function modelToFlowLayouted(model: SysMLModel, exposedExternal?: ExposedExternal[]): Promise<FlowGraph> {
+  const partial = buildGraph(model, gridLayout, exposedExternal);
   return elkLayout(partial);
 }
 
@@ -69,7 +69,23 @@ interface LayoutFn {
   (nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds: { width: number; height: number } };
 }
 
-function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
+/**
+ * M16 P4（Q14=A 合成视图画布）：跨包暴露元素以「幽灵节点」呈现。
+ * 来源 = 后端 computeExposed 的解析结果（M16 P3 后端 filter 求值）；
+ * owned（view body 内）成员照常可编辑；exposed 仅展示、不可拖拽 / 删除。
+ *
+ * 前端合成入口（M16 P4.5 wiring 后续接入 ViewModelingPane）：
+ *   const extras = view.exposedElements;  // backend-resolved
+ *   const graph = modelToFlow(model, extras);
+ */
+export interface ExposedExternal {
+  /** qualified name，如 `Vehicle::Engine` —— 末段前的最后一段为源包 */
+  qualifiedName: string;
+  /** 元数据里的 kind（PartDefinition / PortUsage 等） */
+  kind: string;
+}
+
+function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: ExposedExternal[]): FlowGraph {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -225,7 +241,32 @@ function buildGraph(model: SysMLModel, layout: LayoutFn): FlowGraph {
     if (edge) edges.push(edge);
   }
 
-  // 5. 布局
+  // 5. M16 P4 合成视图画布：跨包暴露元素渲染为「幽灵节点」（只读 + 源包 tooltip）
+  //    owned（已通过 buildGraph 走 packages/models 走视图体）成员保持可编辑。
+  //    幽灵节点 key 用 `ghost:${qualifiedName}` 避免与已有 owned 节点 id 冲突。
+  if (exposedExternal && exposedExternal.length > 0) {
+    for (const ext of exposedExternal) {
+      const id = `ghost:${ext.qualifiedName}`;
+      // 末段前的最后一段为源包：`A::B::C` → sourcePackage = `A::B`，末段 = `C`
+      const segs = ext.qualifiedName.split('::');
+      const name = segs[segs.length - 1];
+      const sourcePackage = segs.length > 1 ? segs.slice(0, -1).join('::') : '';
+      nodes.push({
+        id,
+        type: 'sysmlGhost',
+        position: { x: 0, y: 0 }, // ELK 覆盖
+        data: {
+          label: name,
+          kind: ext.kind || 'exposed',
+          sourcePackage,
+          ghost: true,
+          readOnly: true,
+        },
+      });
+    }
+  }
+
+  // 6. 布局
   const { positioned, bounds } = layout(nodes, edges);
   return { nodes: positioned, edges, bounds };
 }
@@ -254,6 +295,8 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
   );
   const requirementNodes = nodes.filter((n) => n.type === 'sysmlRequirement');
   const constraintNodes = nodes.filter((n) => n.type === 'sysmlConstraint');
+  // M16 P4 合成视图画布：跨包 expose 元素（不可编辑、只展示）
+  const ghostNodes = nodes.filter((n) => n.type === 'sysmlGhost');
 
   let cursorX = ORIGIN_X;
   let cursorY = ORIGIN_Y;
@@ -340,6 +383,25 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
     cursorX = ORIGIN_X;
   }
   for (const n of constraintNodes) {
+    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+    if (cursorX > MAX_COL_X) {
+      cursorX = ORIGIN_X;
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+  }
+
+  // M16 P4 合成视图画布：跨包 expose 元素（只读 + 源包 tooltip）
+  if (ghostNodes.length > 0) {
+    if (rowHeight > 0) {
+      cursorY += rowHeight + ROW_GAP;
+      rowHeight = 0;
+    }
+    cursorX = ORIGIN_X;
+  }
+  for (const n of ghostNodes) {
     positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
     cursorX += PART_WIDTH + COL_GAP;
     rowHeight = Math.max(rowHeight, PART_HEIGHT);

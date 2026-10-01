@@ -1080,6 +1080,22 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
 	v.RenderKind = parsed.RenderKind
 	v.FilterQualifiedNames = parsed.FilterQualifiedNames
+	// M16 P4：注入标准库前缀（4 官方 + 4 历史上常用），再把 view 包内容塞到其下做合成渲染——
+	// `render asTreeDiagram;` 等引用即可 resolve 到合法 rendering def（不再生成非法
+	// 方言）。ComputeExposed 对已解析的 expose 路径 + filter 表达式求值，输出
+	// 真实过 filter 的元素集合（覆盖旧 ExposedElements 的「未过滤」语义）。
+	v.Content = parser.StandardLibrary + "\n" + req.Content
+	pkgRefs = h.packageRefsForResolve(c, projectID) // 含 stdlib 的最新引用
+	parsed = parser.ParseViewBodyWithPackages(v.Content, pkgRefs)
+	filtered := parser.ComputeExposed(parsed, pkgRefs)
+	if len(filtered) > 0 {
+		v.ExposedElements = make([]model.ExposedElement, 0, len(filtered))
+		for _, fe := range filtered {
+			v.ExposedElements = append(v.ExposedElements, fe.ExposedElement)
+		}
+	}
+	// FilterQualifiedNames 是 filter 全文，已被 ComputeExposed 使用过；保持原值
+	v.FilterQualifiedNames = parsed.FilterQualifiedNames
 	v.InnerElements = parsed.InnerElements
 	v.ViewpointQualifiedName = parsed.SatisfiesQualifiedName
 	v.ViewpointID = h.resolveSatisfiedViewpointID(c, projectID, v.ViewpointQualifiedName)

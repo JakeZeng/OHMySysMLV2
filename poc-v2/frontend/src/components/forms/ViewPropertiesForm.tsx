@@ -128,14 +128,27 @@ export const ViewPropertiesForm: React.FC<ViewPropertiesFormProps> = ({
 
       <div>
         <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-          渲染类别（UI hint）
+          渲染（renderer）
         </label>
-        <Input
+        <select
           value={renderingCategory}
           onChange={(e) => setRenderingCategory(e.target.value)}
-          placeholder="如 structure / behavior / requirement / constraint"
           data-testid="view-prop-rendering-category"
-        />
+          className="mt-1 h-7 w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs focus:border-brand-500 focus:outline-none"
+        >
+          <option value="">（默认 / content 中的 render）</option>
+          <option value="asTextualNotation">asTextualNotation（官方标准）</option>
+          <option value="asTreeDiagram">asTreeDiagram（官方标准）</option>
+          <option value="asInterconnectionDiagram">asInterconnectionDiagram（官方标准）</option>
+          <option value="asElementTable">asElementTable（官方标准）</option>
+          <option value="asStateDiagram">asStateDiagram（标准库扩展）</option>
+          <option value="asActionDiagram">asActionDiagram（标准库扩展）</option>
+          <option value="asRequirementTable">asRequirementTable（标准库扩展）</option>
+          <option value="asSnapshotTable">asSnapshotTable（标准库扩展）</option>
+        </select>
+        <p className="mt-0.5 text-[10px] text-gray-400">
+          官方 4 个标准 + 历史 4 个非标准（项目标准库自动注入 rendering def，§7.26 / Q22）
+        </p>
       </div>
 
       <div>
