@@ -15,6 +15,6 @@
     "types": ["node"],
     "outDir": "dist"
   },
-  "include": ["ast/**/*.ts", "parser/**/*.ts", "validator/**/*.ts", "transform/**/*.ts", "tests/**/*.ts"],
+  "include": ["ast/**/*.ts", "parser/**/*.ts", "validator/**/*.ts", "transform/**/*.ts", "views/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "frontend", "dist"]
 }
