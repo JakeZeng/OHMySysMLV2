@@ -15,6 +15,8 @@ export default defineConfig({
       '@validator': path.resolve(__dirname, '../validator'),
       '@transform': path.resolve(__dirname, '../transform'),
       '@ast': path.resolve(__dirname, '../ast'),
+      // M17 切片 C
+      '@views': path.resolve(__dirname, '../views'),
     },
   },
 });

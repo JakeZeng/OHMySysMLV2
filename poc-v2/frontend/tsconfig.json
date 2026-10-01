@@ -22,7 +22,8 @@
       "@parser/*": ["../parser/*"],
       "@validator/*": ["../validator/*"],
       "@transform/*": ["../transform/*"],
-      "@ast/*": ["../ast/*"]
+      "@ast/*": ["../ast/*"],
+      "@views/*": ["../views/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
