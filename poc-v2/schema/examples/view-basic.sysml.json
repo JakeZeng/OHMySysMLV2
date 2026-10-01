@@ -1,0 +1,50 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v2",
+  "version": "2.0.0",
+  "exportedAt": "2026-10-02T00:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-vehicle",
+        "name": "VehicleModel",
+        "members": [
+          {
+            "kind": "partDef",
+            "id": "pd-vehicle",
+            "name": "Vehicle",
+            "body": [],
+            "location": { "line": 2, "column": 3, "offset": 20 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      }
+    ],
+    "connections": [],
+    "views": [
+      {
+        "kind": "view",
+        "id": "view-part-structure",
+        "name": "Part Structure View",
+        "declKind": "definition",
+        "filters": ["@SysML::PartUsage"],
+        "reveals": [],
+        "renderingRef": "TreeDiagram",
+        "members": [],
+        "location": { "line": 6, "column": 1, "offset": 80 }
+      },
+      {
+        "kind": "view",
+        "id": "view-vehicle-parts",
+        "name": "vehicle parts view",
+        "declKind": "usage",
+        "viewDefinitionRef": "Part Structure View",
+        "reveals": ["VehicleModel::Vehicle"],
+        "satisfies": "vehicle structure perspective",
+        "renderingRef": "TreeDiagram",
+        "members": [],
+        "location": { "line": 9, "column": 1, "offset": 200 }
+      }
+    ]
+  }
+}

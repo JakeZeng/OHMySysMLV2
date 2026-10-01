@@ -1,0 +1,46 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v2",
+  "version": "2.0.0",
+  "exportedAt": "2026-10-02T00:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-vehicle",
+        "name": "VehicleModel",
+        "members": [
+          {
+            "kind": "partDef",
+            "id": "pd-vehicle",
+            "name": "Vehicle",
+            "body": [],
+            "location": { "line": 2, "column": 3, "offset": 20 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      }
+    ],
+    "connections": [],
+    "views": [
+      {
+        "kind": "view",
+        "id": "view-outer",
+        "name": "Outer View",
+        "declKind": "definition",
+        "reveals": [],
+        "members": [
+          {
+            "kind": "view",
+            "id": "view-inner",
+            "name": "Inner View",
+            "declKind": "shorthand",
+            "reveals": ["VehicleModel::Vehicle"],
+            "members": [],
+            "location": { "line": 8, "column": 3, "offset": 80 }
+          }
+        ],
+        "location": { "line": 6, "column": 1, "offset": 60 }
+      }
+    ]
+  }
+}

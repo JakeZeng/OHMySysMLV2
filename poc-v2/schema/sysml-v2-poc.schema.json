@@ -1,14 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://sysmlv2-poc.example.com/schema/v1",
+  "$id": "https://sysmlv2-poc.example.com/schema/v2",
   "title": "SysML v2 POC Model",
-  "description": "SysML v2 POC 工具的模型 JSON 格式",
+  "description": "SysML v2 POC 工具的模型 JSON 格式。M17 切片 B 起升 v2,首次纳入 view / viewpoint / nested view。",
   "type": "object",
   "required": ["$schema", "version", "exportedAt", "model"],
   "properties": {
     "$schema": {
       "type": "string",
-      "const": "https://sysmlv2-poc.example.com/schema/v1"
+      "const": "https://sysmlv2-poc.example.com/schema/v2"
     },
     "version": {
       "type": "string",
@@ -34,6 +34,16 @@
         "connections": {
           "type": "array",
           "items": { "$ref": "#/definitions/Connection" }
+        },
+        "views": {
+          "type": "array",
+          "description": "M17 切片 B:顶层 view 数组(ViewDefinition / ViewUsage / shorthand)",
+          "items": { "$ref": "#/definitions/View" }
+        },
+        "viewpoints": {
+          "type": "array",
+          "description": "M17 切片 B:顶层 viewpoint 数组",
+          "items": { "$ref": "#/definitions/Viewpoint" }
         }
       }
     },
@@ -73,7 +83,9 @@
         { "$ref": "#/definitions/PartUsage" },
         { "$ref": "#/definitions/PortUsage" },
         { "$ref": "#/definitions/AttributeUsage" },
-        { "$ref": "#/definitions/Connection" }
+        { "$ref": "#/definitions/Connection" },
+        { "$ref": "#/definitions/View" },
+        { "$ref": "#/definitions/Viewpoint" }
       ]
     },
     "ImportStatement": {
@@ -199,6 +211,67 @@
       "properties": {
         "partName": { "type": "string" },
         "portName": { "type": "string" },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "View": {
+      "type": "object",
+      "required": ["kind", "name", "location"],
+      "description": "M17 切片 B:M15/M16 遗留 schema 补全。ViewDefinition / ViewUsage / shorthand 通过 declKind 区分。",
+      "properties": {
+        "kind": { "const": "view" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "declKind": {
+          "type": "string",
+          "enum": ["definition", "usage", "shorthand"],
+          "description": "§7.26 三种声明形式(view def N{} / view N: Def{} / view N{})"
+        },
+        "viewDefinitionRef": { "type": "string" },
+        "specializes": { "type": "string" },
+        "satisfies": { "type": "string" },
+        "reveals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "expose 引用列表(qualified paths)"
+        },
+        "filters": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "filter 子句列表(Q17-B:文本原样保留给 expr 引擎解析)"
+        },
+        "renderKind": { "type": "string" },
+        "renderingRef": { "type": "string" },
+        "multipleRenders": { "type": "boolean" },
+        "members": {
+          "type": "array",
+          "description": "view body 内 owned 成员(Q13-C 弱 namespace,qualified name = V::X)",
+          "items": { "$ref": "#/definitions/NamespaceMember" }
+        },
+        "location": { "$ref": "#/definitions/SourceLocation" }
+      }
+    },
+    "Viewpoint": {
+      "type": "object",
+      "required": ["kind", "name", "location"],
+      "description": "M17 切片 B:M15 §7.26 Viewpoint。ViewpointDefinition 是 RequirementDefinition 的特化,subject 表达关注点。",
+      "properties": {
+        "kind": { "const": "viewpoint" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "declKind": {
+          "type": "string",
+          "enum": ["definition", "usage", "shorthand"]
+        },
+        "viewpointDefinitionRef": { "type": "string" },
+        "subject": {
+          "type": "string",
+          "description": "§7.26 subject : T;——关注点关联"
+        },
+        "members": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NamespaceMember" }
+        },
         "location": { "$ref": "#/definitions/SourceLocation" }
       }
     }

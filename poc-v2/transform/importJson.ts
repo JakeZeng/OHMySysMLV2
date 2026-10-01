@@ -13,11 +13,17 @@
  *   5. 所有节点必须有 `location`（line/column/offset）
  */
 
-import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefinition, PortDefinition, PartUsage, PortUsage, AttributeUsage, Connection, ImportStatement } from '../ast/model';
+import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefinition, PortDefinition, PartUsage, PortUsage, AttributeUsage, Connection, ImportStatement, SysMLView, SysMLViewpoint } from '../ast/model';
 import { serialize } from './serializer';
 
 function emptyModel(): SysMLModel {
-  return { packages: [], connections: [], stateMachines: [], activities: [], requirements: [], traceLinks: [], constraintBlocks: [], enums: [], comments: [] };
+  return {
+    packages: [], connections: [],
+    stateMachines: [], activities: [], requirements: [], traceLinks: [],
+    constraintBlocks: [], enums: [], comments: [],
+    // M17 切片 B:views / viewpoints 顶层数组
+    views: [], viewpoints: [],
+  };
 }
 
 // ─── 类型守卫 ─────────────────────────────────────────────────────────
@@ -96,7 +102,25 @@ export function importFromJson(jsonStr: string): ImportResult {
     }
   }
 
-  const model: SysMLModel = { ...emptyModel(), packages, connections };
+  // 5b. M17 切片 B:校验顶层 views
+  const views: SysMLView[] = [];
+  if (Array.isArray(modelRaw.views)) {
+    for (let i = 0; i < modelRaw.views.length; i++) {
+      const viewResult = validateView(modelRaw.views[i], `$.model.views[${i}]`, errors);
+      if (viewResult) views.push(viewResult);
+    }
+  }
+
+  // 5c. M17 切片 B:校验顶层 viewpoints
+  const viewpoints: SysMLViewpoint[] = [];
+  if (Array.isArray(modelRaw.viewpoints)) {
+    for (let i = 0; i < modelRaw.viewpoints.length; i++) {
+      const vpResult = validateViewpoint(modelRaw.viewpoints[i], `$.model.viewpoints[${i}]`, errors);
+      if (vpResult) viewpoints.push(vpResult);
+    }
+  }
+
+  const model: SysMLModel = { ...emptyModel(), packages, connections, views, viewpoints };
 
   // 6. 序列化为文本
   let text = '';
@@ -179,6 +203,10 @@ function validateMember(raw: unknown, path: string, errors: ImportError[]): Name
       return validateAttributeUsage(raw, path, errors);
     case 'connection':
       return validateConnection(raw, path, errors);
+    case 'view':
+      return validateView(raw, path, errors);
+    case 'viewpoint':
+      return validateViewpoint(raw, path, errors);
     default:
       errors.push({ path: `${path}.kind`, message: `未知的成员类型: ${kind}` });
       return null;
@@ -400,5 +428,117 @@ function validateLocation(raw: unknown, path: string, errors: ImportError[]): So
     line: typeof obj.line === 'number' ? obj.line : 1,
     column: typeof obj.column === 'number' ? obj.column : 1,
     offset: typeof obj.offset === 'number' ? obj.offset : 0,
+  };
+}
+
+// ─── M17 切片 B: View / Viewpoint 校验 ─────────────────────────────────
+
+/**
+ * 校验一个 view 节点。容忍 legacy 字段(无 viewDefinitionRef 等),按 M17 §3
+ * 配套的 4 元 group 落地。
+ *
+ * viewDefinitionRef / renderingRef / satisfies 等字符串字段缺失时为 undefined,
+ * 后续 serialize 走 'definition' 默认形态(shorthand 不会破坏 round-trip)。
+ */
+function validateView(raw: unknown, path: string, errors: ImportError[]): SysMLView | null {
+  if (!raw || typeof raw !== 'object') {
+    errors.push({ path, message: 'view 必须是对象' });
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.kind !== 'string' || obj.kind !== 'view') {
+    errors.push({ path: `${path}.kind`, message: 'kind 必须是 "view"' });
+    return null;
+  }
+  if (typeof obj.name !== 'string' || obj.name.length === 0) {
+    errors.push({ path: `${path}.name`, message: 'name 必须是非空字符串' });
+    return null;
+  }
+
+  const location = validateLocation(obj.location, `${path}.location`, errors);
+
+  // declKind: definition / usage / shorthand,缺省 'definition'
+  let declKind: 'definition' | 'usage' | 'shorthand' | undefined;
+  if (obj.declKind === 'definition' || obj.declKind === 'usage' || obj.declKind === 'shorthand') {
+    declKind = obj.declKind;
+  }
+
+  const reveals = Array.isArray(obj.reveals)
+    ? (obj.reveals as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const filters = Array.isArray(obj.filters)
+    ? (obj.filters as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const members: NamespaceMember[] = [];
+  if (Array.isArray(obj.members)) {
+    for (let i = 0; i < obj.members.length; i++) {
+      const m = validateMember(obj.members[i], `${path}.members[${i}]`, errors);
+      if (m) members.push(m);
+    }
+  }
+
+  return {
+    kind: 'view',
+    id: typeof obj.id === 'string' ? obj.id : crypto.randomUUID(),
+    name: obj.name as string,
+    declKind,
+    viewDefinitionRef: typeof obj.viewDefinitionRef === 'string' ? obj.viewDefinitionRef : undefined,
+    specializes: typeof obj.specializes === 'string' ? obj.specializes : undefined,
+    satisfies: typeof obj.satisfies === 'string' ? obj.satisfies : undefined,
+    reveals,
+    filters,
+    renderKind: typeof obj.renderKind === 'string' ? obj.renderKind : undefined,
+    renderingRef: typeof obj.renderingRef === 'string' ? obj.renderingRef : undefined,
+    multipleRenders: !!obj.multipleRenders,
+    members,
+    location,
+  };
+}
+
+/**
+ * 校验一个 viewpoint 节点。ViewpointDefinition 是 RequirementDefinition 的特化,
+ * §7.26 标准用 `subject : T;` 表达关注点。
+ */
+function validateViewpoint(raw: unknown, path: string, errors: ImportError[]): SysMLViewpoint | null {
+  if (!raw || typeof raw !== 'object') {
+    errors.push({ path, message: 'point 必须是对象' });
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.kind !== 'string' || obj.kind !== 'viewpoint') {
+    errors.push({ path: `${path}.kind`, message: 'kind 必须是 "viewpoint"' });
+    return null;
+  }
+  if (typeof obj.name !== 'string' || obj.name.length === 0) {
+    errors.push({ path: `${path}.name`, message: 'name 必须是非空字符串' });
+    return null;
+  }
+
+  const location = validateLocation(obj.location, `${path}.location`, errors);
+
+  let declKind: 'definition' | 'usage' | 'shorthand' | undefined;
+  if (obj.declKind === 'definition' || obj.declKind === 'usage' || obj.declKind === 'shorthand') {
+    declKind = obj.declKind;
+  }
+
+  const members: NamespaceMember[] = [];
+  if (Array.isArray(obj.members)) {
+    for (let i = 0; i < obj.members.length; i++) {
+      const m = validateMember(obj.members[i], `${path}.members[${i}]`, errors);
+      if (m) members.push(m);
+    }
+  }
+
+  return {
+    kind: 'viewpoint',
+    id: typeof obj.id === 'string' ? obj.id : crypto.randomUUID(),
+    name: obj.name as string,
+    declKind,
+    viewpointDefinitionRef: typeof obj.viewpointDefinitionRef === 'string' ? obj.viewpointDefinitionRef : undefined,
+    subject: typeof obj.subject === 'string' ? obj.subject : undefined,
+    members,
+    location,
   };
 }

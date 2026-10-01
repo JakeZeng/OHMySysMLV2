@@ -27,6 +27,8 @@ import type {
   ConstraintBlock,
   EnumDefinition,
   CommentBlock,
+  SysMLView,
+  SysMLViewpoint,
 } from '../ast/model';
 
 // ─── 公共入口 ──────────────────────────────────────────────────────────
@@ -61,6 +63,16 @@ export function serialize(model: SysMLModel): string {
   // M5: 顶层约束块
   for (const cb of model.constraintBlocks ?? []) {
     serializeConstraintBlock(cb, 0, lines);
+  }
+
+  // M17 切片 B: 顶层 view(ViewDefinition / ViewUsage / shorthand)
+  for (const v of model.views ?? []) {
+    serializeView(v, 0, lines);
+  }
+
+  // M17 切片 B: 顶层 viewpoint
+  for (const vp of model.viewpoints ?? []) {
+    serializeViewpoint(vp, 0, lines);
   }
 
   return lines.join('\n') + '\n';
@@ -167,6 +179,12 @@ function serializePackage(pkg: Package, indent: number, out: string[]): void {
         break;
       case 'comment':
         serializeComment(m, indent + 1, out);
+        break;
+      case 'view':
+        serializeView(m, indent + 1, out);
+        break;
+      case 'viewpoint':
+        serializeViewpoint(m, indent + 1, out);
         break;
     }
   }
@@ -365,5 +383,142 @@ function serializeComment(c: CommentBlock, indent: number, out: string[]): void 
     out.push(`${pad}comment ${c.body} about ${c.about};`);
   } else {
     out.push(`${pad}comment ${c.body};`);
+  }
+}
+
+// ─── M17 切片 B: View / Viewpoint ───────────────────────────────────────
+
+/**
+ * 序列化单个 view。
+ *
+ * 形式(§7.26):
+ *   - `view def N { ... }`         (ViewDefinition,declKind='definition')
+ *   - `view N : Def { ... }`       (ViewUsage 实例,declKind='usage',viewDefinitionRef 不空)
+ *   - `view N { ... }`             (shorthand ViewUsage,declKind='shorthand')
+ *
+ * body 子句按 M15 §3.1 顺序输出:
+ *   import → filter → render → expose → satisfy → owned members
+ *
+ * 注:owned members 是 view body 内的 NamespaceMember,需要递归 serialize。
+ *     Q17-B 嵌套 view 通过 `members` 数组递归处理(本函数末尾循环)。
+ */
+function serializeView(v: SysMLView, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  const head = serializeViewHead(v, pad);
+  out.push(`${head} {`);
+
+  // body 子句
+  for (const f of v.filters ?? []) {
+    out.push(`${pad}  filter ${f};`);
+  }
+  for (const r of v.reveals ?? []) {
+    // 不带引号:reveal 字符串就是 qualified path
+    out.push(`${pad}  expose ${r};`);
+  }
+  if (v.renderingRef) {
+    out.push(`${pad}  render ${v.renderingRef};`);
+  }
+  if (v.satisfies) {
+    out.push(`${pad}  satisfy ${v.satisfies};`);
+  }
+
+  // body 内 owned members(递归 NamespaceMember)
+  for (const m of v.members ?? []) {
+    serializeNamespaceMember(m, indent + 1, out);
+  }
+
+  out.push(`${pad}}`);
+}
+
+function serializeViewHead(v: SysMLView, pad: string): string {
+  const decl = v.declKind ?? 'definition';
+  const quoted = `'${v.name}'`;
+  if (decl === 'definition') {
+    return `${pad}view def ${quoted}`;
+  }
+  // usage / shorthand 都用 `view Name : Def { }`;shorthand 时 Def 省略
+  const def = v.viewDefinitionRef ? `'${v.viewDefinitionRef}'` : '';
+  return `${pad}view ${quoted}${def ? ` : ${def}` : ''}`;
+}
+
+function serializeViewpoint(vp: SysMLViewpoint, indent: number, out: string[]): void {
+  const pad = '  '.repeat(indent);
+  const quoted = `'${vp.name}'`;
+  const def = vp.viewpointDefinitionRef ? ` : '${vp.viewpointDefinitionRef}'` : '';
+  out.push(`${pad}viewpoint ${quoted}${def} {`);
+
+  if (vp.subject) {
+    out.push(`${pad}  subject : ${vp.subject};`);
+  }
+  for (const m of vp.members ?? []) {
+    serializeNamespaceMember(m, indent + 1, out);
+  }
+  out.push(`${pad}}`);
+}
+
+/**
+ * view / viewpoint body 内的 NamespaceMember 序列化分发。
+ *
+ * M17 切片 B 范围:view 可内嵌 view(嵌套 view,§7.26/Q17-B),
+ * 也可内嵌其它 NamespaceMember(part def / usage / package 等)。
+ */
+function serializeNamespaceMember(m: NamespaceMember, indent: number, out: string[]): void {
+  switch (m.kind) {
+    case 'package':
+      // 包 → 走 serializePackage 路径(已有实现)
+      // 这里用 appendLines 风格不直接调,直接拼 header 然后递归 body
+      // 简化:此处暂不递归嵌套包进 view(§7.26 一般不允许,留作未来)
+      out.push(`${'  '.repeat(indent)}package ${m.name} { /* nested package in view */ }`);
+      break;
+    case 'import':
+      out.push(`${'  '.repeat(indent)}import ${m.namespace};`);
+      break;
+    case 'partDef':
+      // 简化:复用现有的 serializePartDef(签名兼容)
+      serializePartDef(m, indent, out);
+      break;
+    case 'portDef':
+      serializePortDef(m, indent, out);
+      break;
+    case 'partUsage':
+      serializePartUsage(m, indent, out);
+      break;
+    case 'portUsage':
+      serializePortUsage(m, indent, out);
+      break;
+    case 'attributeUsage':
+      serializeAttributeUsage(m, indent, out);
+      break;
+    case 'stateMachine':
+      serializeStateMachine(m, indent, out);
+      break;
+    case 'activity':
+      serializeActivity(m, indent, out);
+      break;
+    case 'requirement':
+      serializeRequirement(m, indent, out);
+      break;
+    case 'constraintBlock':
+      serializeConstraintBlock(m, indent, out);
+      break;
+    case 'enumDef':
+      serializeEnum(m, indent, out);
+      break;
+    case 'comment':
+      serializeComment(m, indent, out);
+      break;
+    case 'view':
+      serializeView(m, indent, out);
+      break;
+    case 'viewpoint':
+      serializeViewpoint(m, indent, out);
+      break;
+    case 'connection':
+    case 'trace':
+      // view body 内一般不放 connection / trace,本切片不处理
+      break;
+    default:
+      // exhaustive
+      break;
   }
 }

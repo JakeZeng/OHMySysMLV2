@@ -1,0 +1,36 @@
+{
+  "$schema": "https://sysmlv2-poc.example.com/schema/v2",
+  "version": "2.0.0",
+  "exportedAt": "2026-10-02T00:00:00Z",
+  "model": {
+    "packages": [
+      {
+        "kind": "package",
+        "id": "pkg-vehicle",
+        "name": "VehicleModel",
+        "members": [
+          {
+            "kind": "partDef",
+            "id": "pd-vehicle",
+            "name": "Vehicle",
+            "body": [],
+            "location": { "line": 2, "column": 3, "offset": 20 }
+          }
+        ],
+        "location": { "line": 1, "column": 1, "offset": 0 }
+      }
+    ],
+    "connections": [],
+    "viewpoints": [
+      {
+        "kind": "viewpoint",
+        "id": "vp-safety",
+        "name": "Safety Viewpoint",
+        "declKind": "definition",
+        "subject": "Vehicle",
+        "members": [],
+        "location": { "line": 6, "column": 1, "offset": 60 }
+      }
+    ]
+  }
+}

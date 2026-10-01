@@ -11,8 +11,8 @@
 
 import type { SysMLModel } from '../ast/model';
 
-export const SCHEMA_VERSION = '1.0.0';
-export const SCHEMA_URI = 'https://sysmlv2-poc.example.com/schema/v1';
+export const SCHEMA_VERSION = '2.0.0';
+export const SCHEMA_URI = 'https://sysmlv2-poc.example.com/schema/v2';
 
 export interface SysMLJsonExport {
   $schema: string;
