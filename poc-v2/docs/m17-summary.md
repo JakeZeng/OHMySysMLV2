@@ -352,9 +352,9 @@ function manualLock(targetId: string, elementsById: Map<string, Element>): void 
 | 4 | `m15-summary.md` | 加 Q13-C 勘误注(M15 描述跟 Q13 不一致,见第 10 节) | F2 |
 | 5 | `useViewElement(id)`(原则 4) | 增加 `qualifyName` 字段作为派生数据,避免每个组件重算 | F2 |
 | 6 | `views-ownership.inv.test.ts` | 新建:冻结 `classifyOwnership` 的「同输入必同输出」(原则 2) | F1 |
-| 7 | `viewSchema.ts` | 新建:Q17-B 嵌套 view schema | F3 |
+| 7 | `sysml-v2-poc.schema.json` + `importJson.ts` + `exportJson.ts` | **M15/M16 遗留**:补 view 定义 + `validateView` + view 输出 + `$schema` / `version` 概念修正 | F3 + 原则 3 |
 | 8 | `Validator` | 新增 `detectExposeCycle(viewGraph)` + DFS three-color 实现 | F3 |
-| 9 | `SchemaVersion` | 升 v2(Q17-B 是 schema 不兼容变更) | F3 |
+| 9 | `SchemaVersion` | 升 v2(Q17-B 是 schema 不兼容变更 + JSON view 通路首次落地) | F3 |
 | 10 | `views-cycle.inv.test.ts` | 新建:冻结 DFS 行为(F3 配套) | F3 |
 | 11 | `layoutEngine.ts` | 确认现有 ELK.js 调用支持 defaultable 坐标字段(估计已支持) | F4 |
 | 12 | `Connection` schema | 加 source/target,移除坐标字段 | F4 |
@@ -371,7 +371,13 @@ function manualLock(targetId: string, elementsById: Map<string, Element>): void 
 按依赖关系切片:
 
 1. **切片 A**(前置):`classifyOwnership` + `classifyNamespaceOf` + 不变式测试(原则 2 配套)
-2. **切片 B**:`viewSchema.ts` + SchemaVersion 升 v2(原则 3)
+2. **切片 B**(JSON view 通路首次落地,**M15/M16 遗留 bug**,~5.5–7 天):
+   - 补 schema 定义(`SysMLView` / `SysMLViewpoint` / `nestedViews`)
+   - 补 `importJson.ts` 的 `validateView` / `validateViewpoint` / `validateNestedView`
+   - 补 `exportJson.ts` 的 view 输出 + 修正 `$schema` / `version` 概念混淆
+   - 补 3 个 examples JSON(`view-basic` / `nested-view` / `viewpoint-basic`)
+   - 兼容性测试(老 JSON 走 v1 路径,新 JSON 走 v2)
+   - `schema-inv.test.ts` 冻结 schema 升级路径
 3. **切片 C**:`useViewElement(id)` + 四件套迁移(原则 4)
 4. **切片 D**:`decideOnViewDelete` / `renderElementName` / `applyRename` / `validateNameUniqueness`(F1 + F2)
 5. **切片 E**:`detectExposeCycle` + DFS three-color + `views-cycle.inv.test.ts`(F3)
@@ -382,6 +388,47 @@ function manualLock(targetId: string, elementsById: Map<string, Element>): void 
 G1 可独立合并(后端能力先到位);G2 等 G1 完成后启动(避免前端 mock 不一致)。
 
 切片 A 是其他六片的**前置依赖**;B / C 可并行;D / E / F / G 等 A 完成后启动。
+
+### 8.3 Pre-dev 步骤 4 — Invariant test fixture 设计
+
+`views-ownership.inv.test.ts` 是切片 A 同步交付的不变式测试,需要覆盖 `classifyOwnership` / `classifyNamespaceOf` 的所有判定分支。
+
+#### Fixture 列表(实施期直接用)
+
+| ID | 形状 | 期望输出 | 覆盖分支 |
+|---|---|---|---|
+| F1 | `package P { part def X }` 单独 | `owned` by P | Q10 基础 owned |
+| F2 | `package P { part def X }; view V { part def X }` | `owned` by V(Q10 升级 prompt) | Q10 多视图 owns |
+| F3 | `package P { part def X }; view V { expose P::X }` | `exposed` to V | Q12 暴露关系 |
+| F4 | `view V { /* dangling ref to ::Ghost */ }` | `referenced` dangling | Q11 dangling |
+| F5 | `view V { view W { ... } }`(嵌套 view) | `owned` by V + nested | Q17-B + Q18-B |
+| F6 | `view V1 { expose V2 }; view V2 { expose V1 }` | `exposed` 互链 + 环 | Q18-B 跨 view 环(validator 层报) |
+| F7 | `view V { /* view V */ }` 自指 | self-ref 合法 | Q18-B self-ref |
+| F8 | `view V1, V2 { part def X }` | `owned` by V1+V2, Q12 ownScope=2 | Q12 多视图 owns |
+| F9 | `classifyNamespaceOf(X)` 在 view body 内 | `scope='view', viewId` | Q13-C 弱 namespace |
+| F10 | `classifyNamespaceOf(X)` 在 package 内 | `scope='global'` | Q13-C global scope |
+| F11 | lock 上下文:`classifyOwnership(X, {from: 'lock'})` | 同 view 上下文(Q27 单一入口) | Q27-A |
+| F12 | referenced 在 lock 上下文 | null lockKind(Q25-C referenced 不锁) | Q25-C |
+
+#### Fixture 数据结构
+
+```typescript
+type Fixture = {
+  source: string;                  // SysML v2 源码片段
+  parsed: SysMLModel;              // parse 后 AST(预先算好)
+  elementsById: Map<string, Element>;
+  expected: OwnershipKind | NamespaceScope | null;
+  description: string;
+};
+```
+
+每个 fixture 都是 `(source, parsed, expected)` 三元组,测试用 `classifyOwnership` 跑一遍确认输出。
+
+#### 「同输入必同输出」保证
+
+- 每个 fixture 跑 3 次:不同线程 / 不同时间点 → 输出必须 byte-for-byte 一致;
+- 跑 N=100 次随机顺序 → 不依赖调用顺序;
+- 任何一次失败 → `views-ownership.inv.test.ts` 红,阻止合并(原则 2 不变式)。
 
 ---
 
@@ -430,4 +477,6 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 | `views-cycle.inv.test.ts`(§8.1 #10) | 切片 E 同步交付 |
 | SchemaVersion 升 v2 影响范围审查 | 切片 B 启动前(影响 JSON 导入兼容性) |
 | Pre-dev 步骤 2 类型签名对齐 | 切片 A 启动前 |
+| Pre-dev 步骤 3 Schema 兼容性审查(2026-10-02) | **完成**;发现 JSON view 通路未贯通(M15/M16 遗留),切片 B 扩工 +4–5 天 |
+| Pre-dev 步骤 4 Invariant test fixture 设计(2026-10-02) | **完成**;12 个 fixture F1–F12 + 不变式保证已写入 §8.3 |
 | 切片 G 拆 G1/G2(摸底修正 2026-10-02) | 已写入 §8.2 |
