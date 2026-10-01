@@ -272,10 +272,15 @@ function reportCycleError(err: CycleError): void {
 围绕 Q25 / Q26 / Q27 / Q28,**核心决策**:`classifyOwnership` 的判分结果**直接上送** lock 层,保持原则 2 的「单一入口」贯穿:
 
 ```typescript
-// ─── Q28-A: LockKind 枚举扩 3 项 ────────────────────────────
-// 现有 lock kind: 'model' | 'view' | 'comment'(M13 已有)
-// F5 新增: 'view-owned' | 'view-exposed'(Q25-C,referenced 不锁)
-type LockKind = 'model' | 'view' | 'view-owned' | 'view-exposed' | 'comment';
+// ─── Q28-A: LockKind 枚举扩 2 项 ────────────────────────────
+// 现有 lock kind(M13 已有,Go 端 model.ScopeKind* 常量白名单):
+//   'package' | 'view' | 'model'
+// F5 新增(Q25-C,referenced 不锁):
+//   'view-owned' | 'view-exposed'
+//
+// 双端实施:Go 端扩常量 + handler 白名单,TS 端 const enum 镜像。
+// 实际落地拆 G1(Go) / G2(TS) 两个子切片(见 §8.2)。
+type LockKind = 'package' | 'view' | 'model' | 'view-owned' | 'view-exposed';
 
 // ─── Q27-A: classifyOwnership 新增 lock 上下文 ───────────────
 type OwnershipContext =
@@ -344,7 +349,7 @@ function manualLock(target: ViewElement | ViewUsage): void {
 | 12 | `Connection` schema | 加 source/target,移除坐标字段 | F4 |
 | 13 | `viewState` zustand slice | 显式标记为 runtime,不进 viewSchema | F4 |
 | 14 | `Element` AST | 保持现有 line/column 字段(F4 不动) | F4 |
-| 15 | `LockKind` 枚举 | 扩 3 项:`view` / `view-owned` / `view-exposed` | F5 |
+| 15 | LockKind 双端扩展 | Go `model.ScopeKind*` 常量 +2 项 + handler 白名单加 2 项 + TS `LockKind` 枚举镜像 | F5 |
 | 16 | `LockService` | 在 `applyRename` / `decideOnViewDelete` 等关键 UI 操作前**自动**加锁 | F5 |
 | 17 | 协作 UI | Palette 右键菜单加「锁定 / 解锁」选项 | F5 |
 | 18 | `classifyOwnership` | 增加 `'lock'` 上下文(原则 2 单一入口贯穿) | F5 |
@@ -360,7 +365,10 @@ function manualLock(target: ViewElement | ViewUsage): void {
 4. **切片 D**:`decideOnViewDelete` / `renderElementName` / `applyRename` / `validateNameUniqueness`(F1 + F2)
 5. **切片 E**:`detectExposeCycle` + DFS three-color + `views-cycle.inv.test.ts`(F3)
 6. **切片 F**:运行时字段分类(纯分类决策,落地轻,无新代码)(F4)
-7. **切片 G**:`LockKind` 枚举扩 + `withViewLock` + M13 协作回归 fixture(F5)
+7. **切片 G1**(Go 后端):扩 `model.ScopeKind*` 常量 + handler 白名单校验 + 2 个 Go fixture(F5)
+8. **切片 G2**(TS 前端):`lockService.ts` 包装 + `LockKind` const enum + 3 个 vitest fixture(F5)
+
+G1 可独立合并(后端能力先到位);G2 等 G1 完成后启动(避免前端 mock 不一致)。
 
 切片 A 是其他六片的**前置依赖**;B / C 可并行;D / E / F / G 等 A 完成后启动。
 
@@ -410,3 +418,5 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 | `views-ownership.inv.test.ts`(§8.1 #6) | 切片 A 同步交付 |
 | `views-cycle.inv.test.ts`(§8.1 #10) | 切片 E 同步交付 |
 | SchemaVersion 升 v2 影响范围审查 | 切片 B 启动前(影响 JSON 导入兼容性) |
+| Pre-dev 步骤 2 类型签名对齐 | 切片 A 启动前 |
+| 切片 G 拆 G1/G2(摸底修正 2026-10-02) | 已写入 §8.2 |
