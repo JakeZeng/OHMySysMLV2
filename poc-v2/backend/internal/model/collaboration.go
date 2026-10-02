@@ -11,10 +11,17 @@ package model
 import "time"
 
 // ScopeKind scope 类型枚举。
+//
+// M17 切片 G1（F5/Q28-A）新增 view-owned / view-exposed 两项，对应 F1/Q12 的
+// 「元素被 view owned」「元素被 view 暴露」两种 ownership 关系的协作锁粒度。
+// 锁字符串格式：<kind>:<id>（id 对 view-owned 是 viewId，对 view-exposed 是 viewId）。
+// referenced 关系不锁（Q25-C），故无 ScopeKindReferenced。
 const (
-	ScopeKindPackage = "package"
-	ScopeKindView    = "view"
-	ScopeKindModel   = "model" // 兼容 M11 旧 Model 实体（M12 后基本不用）
+	ScopeKindPackage     = "package"
+	ScopeKindView        = "view"
+	ScopeKindModel       = "model"        // 兼容 M11 旧 Model 实体（M12 后基本不用）
+	ScopeKindViewOwned   = "view-owned"   // M17 F5：元素被 view 直接 owns
+	ScopeKindViewExposed = "view-exposed" // M17 F5：元素被 view expose
 )
 
 // MakeScope 构造 scope 字符串。

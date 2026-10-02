@@ -61,8 +61,9 @@ func (h *Handler) AcquireOrHeartbeatLock(c *gin.Context) {
 	kind := c.Param("kind")
 	id := c.Param("id")
 	scope := model.MakeScope(kind, id)
-	if kind != model.ScopeKindPackage && kind != model.ScopeKindView && kind != model.ScopeKindModel {
-		badRequest(c, "kind 必须是 package/view/model", nil)
+	if kind != model.ScopeKindPackage && kind != model.ScopeKindView && kind != model.ScopeKindModel &&
+		kind != model.ScopeKindViewOwned && kind != model.ScopeKindViewExposed {
+		badRequest(c, "kind 必须是 package/view/model/view-owned/view-exposed", nil)
 		return
 	}
 
@@ -124,8 +125,8 @@ func (h *Handler) AcquireOrHeartbeatLock(c *gin.Context) {
 				"code":    "E_LOCK_HELD",
 				"message": "锁已被其他用户持有",
 				"details": gin.H{
-					"owner":      gin.H{"userId": cur.OwnerID, "username": cur.Username},
-					"expiresAt":  cur.ExpiresAt,
+					"owner":       gin.H{"userId": cur.OwnerID, "username": cur.Username},
+					"expiresAt":   cur.ExpiresAt,
 					"baseVersion": cur.BaseVersion,
 				},
 			}})
@@ -198,10 +199,10 @@ func (h *Handler) respondLock(c *gin.Context, scope string) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": LockResponse{
-		Scope: scope,
-		Owner: &Owner{UserID: cur.OwnerID, Username: cur.Username},
-		AcquiredAt: cur.AcquiredAt,
-		ExpiresAt: cur.ExpiresAt,
+		Scope:       scope,
+		Owner:       &Owner{UserID: cur.OwnerID, Username: cur.Username},
+		AcquiredAt:  cur.AcquiredAt,
+		ExpiresAt:   cur.ExpiresAt,
 		BaseVersion: cur.BaseVersion,
 	}})
 }
@@ -219,9 +220,9 @@ func (h *Handler) broadcastLockChanged(scope string) {
 	h.hub.Publish(scope, hub.Event{
 		Type: "lock_changed",
 		Data: gin.H{
-			"scope": scope,
-			"owner": gin.H{"userId": cur.OwnerID, "username": cur.Username},
-			"expiresAt": cur.ExpiresAt,
+			"scope":       scope,
+			"owner":       gin.H{"userId": cur.OwnerID, "username": cur.Username},
+			"expiresAt":   cur.ExpiresAt,
 			"baseVersion": cur.BaseVersion,
 		},
 	})

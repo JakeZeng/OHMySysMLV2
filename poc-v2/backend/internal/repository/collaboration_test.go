@@ -209,6 +209,99 @@ func TestEditLock_ForceRelease(t *testing.T) {
 	}
 }
 
+// ─── M17 切片 G1（F5/Q28-A）：view-owned / view-exposed scope 类型 ──────────────
+
+// 验证 F5 invariant：「view-owned」scope 走与 package/view 一致的获取 + 心跳 + 释放路径。
+// scope 字符串用 model.ScopeKindViewOwned 常量构造,确保前后端 ScopeKind 字符串镜像一致。
+func TestEditLock_ViewOwned_Scope(t *testing.T) {
+	repo, _ := newCollabTestRepo(t)
+	createTestUser(t, repo, "u1", "alice")
+	createTestUser(t, repo, "u2", "bob")
+	ctx := context.Background()
+
+	scope := model.MakeScope(model.ScopeKindViewOwned, "view_x")
+	lock := &model.EditLock{
+		Scope: scope, OwnerID: "u1", Username: "alice",
+		ExpiresAt: time.Now().Add(time.Minute), BaseVersion: 1,
+	}
+
+	// 1) alice 获取 view-owned 锁
+	if err := repo.TryAcquireLock(ctx, lock); err != nil {
+		t.Fatalf("view-owned 锁获取应成功：%v", err)
+	}
+
+	// 2) bob 重复获取应被拒(release 已存在)
+	if err := repo.TryAcquireLock(ctx, &model.EditLock{
+		Scope: scope, OwnerID: "u2", Username: "bob",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}); err != ErrLockHeldByOther {
+		t.Errorf("view-owned 已被锁,bob 接管应失败：got %v", err)
+	}
+
+	// 3) alice 心跳应成功
+	if err := repo.HeartbeatLock(ctx, scope, "u1", 60); err != nil {
+		t.Errorf("view-owned owner 心跳应成功：%v", err)
+	}
+
+	// 4) bob 心跳应失败
+	if err := repo.HeartbeatLock(ctx, scope, "u2", 60); err != ErrLockHeldByOther {
+		t.Errorf("view-owned 非 owner 心跳应失败：got %v", err)
+	}
+
+	// 5) release 测 owner 并验证取回 kind=id 与 ScopeKindViewOwned 镜像一致
+	ok, _ := repo.ReleaseLock(ctx, scope, "u1")
+	if !ok {
+		t.Errorf("view-owned owner 释放应成功")
+	}
+	if got, _ := model.ParseScope(scope); got != model.ScopeKindViewOwned {
+		t.Errorf("view-owned kind 解码失真：got %q", got)
+	}
+}
+
+// 验证 F5 invariant：「view-exposed」scope 同样支持获取 + 心跳 + 释放(referenced 不锁,Q25-C 不在范围)。
+func TestEditLock_ViewExposed_Scope(t *testing.T) {
+	repo, _ := newCollabTestRepo(t)
+	createTestUser(t, repo, "u1", "alice")
+	createTestUser(t, repo, "u2", "bob")
+	ctx := context.Background()
+
+	scope := model.MakeScope(model.ScopeKindViewExposed, "view_y")
+	lock := &model.EditLock{
+		Scope: scope, OwnerID: "u1", Username: "alice",
+		ExpiresAt: time.Now().Add(time.Minute), BaseVersion: 1,
+	}
+
+	// 1) 获取应成功
+	if err := repo.TryAcquireLock(ctx, lock); err != nil {
+		t.Fatalf("view-exposed 锁获取应成功：%v", err)
+	}
+
+	// 2) 同一 scope 不同用户再获取应被拒
+	if err := repo.TryAcquireLock(ctx, &model.EditLock{
+		Scope: scope, OwnerID: "u2", Username: "bob",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}); err != ErrLockHeldByOther {
+		t.Errorf("view-exposed 已被锁,bob 接管应失败：got %v", err)
+	}
+
+	// 3) 同一用户不同 view-exposed scope 各自独立(避免粒度串扰)
+	otherScope := model.MakeScope(model.ScopeKindViewExposed, "view_z")
+	if err := repo.TryAcquireLock(ctx, &model.EditLock{
+		Scope: otherScope, OwnerID: "u1", Username: "alice",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Errorf("view-exposed 不同 viewId 应各自独立：got %v", err)
+	}
+
+	// 4) 心跳和释放流程
+	if err := repo.HeartbeatLock(ctx, scope, "u1", 60); err != nil {
+		t.Errorf("view-exposed owner 心跳应成功：%v", err)
+	}
+	if got, _ := model.ParseScope(scope); got != model.ScopeKindViewExposed {
+		t.Errorf("view-exposed kind 解码失真：got %q", got)
+	}
+}
+
 // ─── Comments ──────────────────────────────────────────────────────
 
 func TestComments_AddListDelete(t *testing.T) {
@@ -217,7 +310,7 @@ func TestComments_AddListDelete(t *testing.T) {
 	ctx := context.Background()
 
 	c := &model.Comment{
-		ID: "cmt_" + uuid.NewString()[:8],
+		ID:    "cmt_" + uuid.NewString()[:8],
 		Scope: "package:p1", UserID: "u1", Username: "alice",
 		ElementID: "el1", Line: 5, Content: "hello",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),

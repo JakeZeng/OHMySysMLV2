@@ -218,6 +218,14 @@ func (h *Handler) canAccessScope(c *gin.Context, scope string) bool {
 			return false
 		}
 		return true
+	// M17 切片 G1（F5）：元素被 view owned / view exposed 时，访问权限跟着 view 走
+	// (scope id = viewId);前端 lockKindFor 把 OwnershipKind → LockKind 后用这俩 kind。
+	case model.ScopeKindViewOwned, model.ScopeKindViewExposed:
+		_, _, perm, err := loadAccessibleView(c, h.repo, id, PermRead)
+		if err != nil || perm < PermRead {
+			return false
+		}
+		return true
 	default:
 		badRequest(c, "未知 scope 类型: "+kind, nil)
 		return false
