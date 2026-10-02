@@ -92,14 +92,16 @@ view LocalHelperView { … }                            // ViewUsage 省略定�
 `rendering n : Def`），标准原文明确「SysML 不提供指定视图如何渲染的具体构造」——
 本实现把引用名映射到可用 renderer（名字含 tree → TreeRenderer，含 requirement → 需求表）。
 
-`view` 是**独立于 `package` 的顶层 Namespace 类别** —— 解析后进 `model.views`，
+`view` **承载 Namespace 语义，本身不引入命名空间** —— 解析后进 `model.views`，
 **不进** `model.packages`。body 内 `stateMachine` / `activity` / `requirement` 照样参与
 `flattenNestedMembers` 扁平化（可视化依赖顶层数组）。
 
-> ⚠️ **M17 勘误**：本节「独立于 `package` 的顶层 Namespace 类别」措辞与 M17 原则声明不一致。
-> M17 Q13 推荐「**承载 Namespace 语义，本身不引入命名空间**」（官方 §7.26 语义）。
-> 详见 `m17-summary.md` §10。M17 实施期切片 D 完成后会改本节措辞，M17 讨论稿（2026-10-01）
-> 先行加注保留历史。
+> ⚠️ **M17 勘误**(2026-10-02 切片 D 完成)：本节原「独立于 `package` 的顶层 Namespace 类别」
+> 措辞与 M17 原则声明不一致。已按 `m17-summary.md` §10 修订为「承载 Namespace 语义，
+> 本身不引入命名空间」（官方 §7.26 语义 + M17 Q13-C 弱 namespace 决策）。M15 仍保留
+> 顶层「view / package 互斥容器」的实现模型（`model.views` vs `model.packages` 分两个数组），
+> 但语义层明确「view 不引入新 namespace」—— 视图内 owned 的元素**仅在视图内**做局部查重
+> （`applyRename` / `validateNameUniqueness` 走 `checkWithinViewUnique`），跨视图同名合法。
 
 `view Name { … }`（省略 `: Def`）也是合法 ViewUsage —— 语法的 `type?` 可选，
 对应 `viewDefinitionId` 为空、`declKind = 'shorthand'`。两种写法在树上都是 ViewUsage。

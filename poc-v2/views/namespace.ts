@@ -14,6 +14,10 @@
  *   - `expose` 引入的元素(归属仍是其原 namespace owner)走 `global`
  *
  * 跟 `classifyOwnership` 同形:tagged union + 单一入口,invariant test 共用框架。
+ *
+ * 切片 D 落地:
+ *   - `validateNameUniqueness` 占位 → 真查重(`checkGlobalUnique` / `checkWithinViewUnique`)
+ *   - 新增 `applyRename(elementId, newName, ctx)` 纯函数(Q16),只返回决策不触达 model API
  */
 
 import type {
@@ -155,10 +159,16 @@ export function computeQualifiedName(
 
 /**
  * F2 / Q15:命名查重(view 内 / global 分两路)。
+ *
+ * 切片 D 实装:
+ *   - `global` —— 跨所有顶层 / 包内 / 视图外的元素查重
+ *   - `view`   —— 仅在该 view 成员内查重(view 引入的弱 namespace)
+ *
+ * 返回 `{ok: true}` 或 `{ok: false, reason, conflictingId}`,调用方按需展示。
  */
 export type ValidationResult =
   | { ok: true }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; conflictingId: string };
 
 export function validateNameUniqueness(
   name: string,
@@ -171,20 +181,144 @@ export function validateNameUniqueness(
   return checkWithinViewUnique(name, scope.viewId, ctx);
 }
 
-// ─── 内部 helpers(占位实现,切片 D 替换完整)───────────────────────────────
-
-function checkGlobalUnique(_name: string, _ctx: RenderCtx): ValidationResult {
-  // 切片 A 占位:不实现全局查重(走现有 validator)
+/**
+ * F2 / Q15:view 内查重(view-private 元素 vs 同 view 内同 node 名)。
+ *
+ * 注意:`expose` 引入的元素**不参与**本 view 的查重——它们归属仍是原 namespace owner
+ * (Q13-C 弱 namespace + Q12 语义对称)。
+ */
+export function checkWithinViewUnique(
+  name: string,
+  viewId: string,
+  ctx: RenderCtx,
+): ValidationResult {
+  for (const view of ctx.model.views) {
+    if (view.id !== viewId) continue;
+    for (const m of iterViewMembers(view)) {
+      if (((m as { name?: string }).name ?? '') === name) {
+        return {
+          ok: false,
+          reason: `name \`${name}\` conflicts with existing element in view \`${view.name}\``,
+          conflictingId: m.id,
+        };
+      }
+    }
+  }
+  for (const vp of ctx.model.viewpoints) {
+    if (vp.id !== viewId) continue;
+    for (const m of iterViewpointMembers(vp)) {
+      if (((m as { name?: string }).name ?? '') === name) {
+        return {
+          ok: false,
+          reason: `name \`${name}\` conflicts with existing element in viewpoint \`${vp.name}\``,
+          conflictingId: m.id,
+        };
+      }
+    }
+  }
   return { ok: true };
 }
 
-function checkWithinViewUnique(
-  _name: string,
-  _viewId: string,
-  _ctx: RenderCtx,
+/**
+ * F2 / Q15:全局查重(包内 / 顶层 / 跨视图外的元素)。
+ *
+ * 同名跨**不同** view 合法(Q13-C 弱 namespace 决定);
+ * 仅当两个元素都在「view 外」(包内 / 顶层)且同名才报冲突。
+ */
+export function checkGlobalUnique(
+  name: string,
+  ctx: RenderCtx,
 ): ValidationResult {
-  // 切片 A 占位:不实现 view 内查重(切片 D 替换)
+  // 1. 顶层包内 + 顶层元素
+  for (const pkg of ctx.model.packages) {
+    if (pkg.name === name) {
+      return {
+        ok: false,
+        reason: `name \`${name}\` conflicts with existing package`,
+        conflictingId: pkg.id,
+      };
+    }
+    for (const m of pkg.members) {
+      if (((m as { name?: string }).name ?? '') === name) {
+        return {
+          ok: false,
+          reason: `name \`${name}\` conflicts with existing element in package \`${pkg.name}\``,
+          conflictingId: m.id,
+        };
+      }
+    }
+  }
+  // 2. 顶层 view / viewpoint
+  for (const view of ctx.model.views) {
+    if (view.name === name) {
+      return {
+        ok: false,
+        reason: `name \`${name}\` conflicts with existing view`,
+        conflictingId: view.id,
+      };
+    }
+  }
+  for (const vp of ctx.model.viewpoints) {
+    if (vp.name === name) {
+      return {
+        ok: false,
+        reason: `name \`${name}\` conflicts with existing viewpoint`,
+        conflictingId: vp.id,
+      };
+    }
+  }
   return { ok: true };
+}
+
+// ─── Q16:applyRename 决策(纯函数)───────────────────────────────────────────
+
+/**
+ * F2 / Q16:applyRename 的纯函数版。
+ *
+ * **不**触达 model API / 广播 / 锁——只回答「这次改名是否合法 + 应该走哪种路径」。
+ * 调用方按决策结果再:
+ *   - `ok=true`  → `modelStore.renameNode(id, newName)` + M13 广播(Q25/F5 自动加锁)
+ *   - `ok=false` → 阻止改名,把 `reason` 显示给用户
+ *
+ * 为什么这样拆:`applyRename` 是「策略」(policy),`renameNode` 是「机制」(mechanism);
+ * 测试只测策略,机制由 modelStore + textEdit 已有覆盖。
+ */
+export type RenameDecision =
+  | { ok: true; scope: NamespaceScope }
+  | { ok: false; reason: string; conflictingId: string };
+
+export function applyRename(
+  elementId: string,
+  newName: string,
+  ctx: RenderCtx,
+): RenameDecision {
+  // 0. 输入校验
+  if (!newName.trim()) {
+    return {
+      ok: false,
+      reason: 'name cannot be empty',
+      conflictingId: '',
+    };
+  }
+  // 1. 元素存在性
+  const el = ctx.elementsById.get(elementId);
+  if (!el) {
+    return {
+      ok: false,
+      reason: `element ${elementId} not found`,
+      conflictingId: '',
+    };
+  }
+  // 2. 同一元素自己 rename 成同名 → noop,合法
+  const currentName = (el as { name?: string }).name ?? elementId;
+  if (currentName === newName) {
+    return { ok: true, scope: classifyNamespaceOf(elementId, ctx.elementsById, ctx.model) };
+  }
+  // 3. 命名空间内查重
+  const scope = classifyNamespaceOf(elementId, ctx.elementsById, ctx.model);
+  const v = validateNameUniqueness(newName, scope, ctx);
+  if (!v.ok) return v;
+  return { ok: true, scope };
 }
 
 // ─── 默认 factory ─────────────────────────────────────────────────────────

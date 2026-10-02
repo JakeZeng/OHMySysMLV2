@@ -40,6 +40,12 @@ import type {
   ConstraintBlock,
 } from '../ast/model';
 import { tryParseExpr } from '../expr';
+// M17 切片 D（F2/Q15）：view 内 + global 查重统一入口（原则 2 单一入口贯穿）
+import {
+  buildElementsIndex,
+  checkGlobalUnique,
+  checkWithinViewUnique,
+} from '../views';
 
 // ─── 错误模型 ──────────────────────────────────────────────────────────
 
@@ -290,6 +296,11 @@ export function validate(model: SysMLModel): ValidationResult {
   // flattenNestedMembers 提升进这两个数组，因此天然覆盖包内视图）。
   validateViews(model, issues);
 
+  // M17 切片 D（F2/Q15）：view 内 / global 查重（原则 2 单一入口贯穿）
+  // 走 `@views` 里的 checkGlobalUnique / checkWithinViewUnique，
+  // 与 PropertyPanel / ElementFormPanel 等 UI 层共用一份判定——同输入必同输出。
+  validateViewUniqueness(model, issues);
+
   // M16 P1（Q1/Q19）：顶层裸元素风格 warning
   validateTopLevelStyle(model, issues);
 
@@ -410,6 +421,141 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
     }
   }
 }
+
+/**
+ * M17 切片 D（F2/Q15）：view 内 + global 命名查重。
+ *
+ * 与 `validateViews` 的「视图引用合法性」互补——这里查的是视图**自身的命名空间**:
+ *   - `view V { part def A; part def B }` —— V 内 A / B 都得 unique（F1/Q13-C 弱 namespace）
+ *   - 跨 view 同名合法(`view V1 { A }` + `view V2 { A }` 不报)
+ *   - 顶层 view / viewpoint / 包内元素互相**在全局**范围内不重名
+ *
+ * 走 `@views` 的 `checkGlobalUnique` / `checkWithinViewUnique` —— 跟 PropertyPanel 的
+ * `applyRename` / ElementFormPanel 改名走同一份判定,**原则 2 单一入口贯穿**。
+ */
+function validateViewUniqueness(model: SysMLModel, issues: ValidationIssue[]): void {
+  // index 用于拿到冲突元素的 location（若冲突元素有 location）
+  const index = buildElementsIndex(model);
+
+  // 1) view 内查重 —— 每个 view 内的 owned 元素不能重名
+  for (const v of model.views ?? []) {
+    const seen = new Map<string, SourceLocation>();
+    for (const m of walkViewMembers(v)) {
+      const name = (m as { name?: string }).name;
+      if (!name) continue;
+      if (seen.has(name)) {
+        // 复用 E101 — 跟包内重名用同码,UI 错误面板逻辑一致
+        const declLoc = elementLocFromIndex(index, m.id) ?? v.location;
+        issues.push({
+          code: 'E101_DUPLICATE_NAME',
+          message: `view \`${v.name}\` 内重复的元素名：\`${name}\``,
+          location: declLoc,
+          severity: 'error',
+          relatedLocations: [seen.get(name)!],
+        });
+      } else {
+        seen.set(name, elementLocFromIndex(index, m.id) ?? v.location);
+      }
+    }
+  }
+
+  // 2) viewpoint 内查重 —— 同 view
+  for (const vp of model.viewpoints ?? []) {
+    const seen = new Map<string, SourceLocation>();
+    for (const m of walkViewpointMembers(vp)) {
+      const name = (m as { name?: string }).name;
+      if (!name) continue;
+      if (seen.has(name)) {
+        const declLoc = elementLocFromIndex(index, m.id) ?? vp.location;
+        issues.push({
+          code: 'E101_DUPLICATE_NAME',
+          message: `viewpoint \`${vp.name}\` 内重复的元素名：\`${name}\``,
+          location: declLoc,
+          severity: 'error',
+          relatedLocations: [seen.get(name)!],
+        });
+      } else {
+        seen.set(name, elementLocFromIndex(index, m.id) ?? vp.location);
+      }
+    }
+  }
+
+  // 3) global 查重 —— view 内 owned 的元素 **不会** 跟包内同名冲突
+  //    (Q13-C 弱 namespace：view 引入弱 namespace,不污染外层)
+  //    这里只报「顶层 / 包内」的元素之间互相重名,留给原来的 collectFromPackage 处理。
+  //    同时把 view 本身 / 暴露引用作为「包内再查重」的一种扩展用途交由视图层代理。
+  //
+  //    由于我们不修改 collectFromPackage 的现状(避免大改),这一步只对 view / viewpoint
+  //    **自身名字** 在 global 层做查重(view name = 顶层视图名)。
+  for (const v of model.views ?? []) {
+    const r = checkGlobalUnique(v.name, { elementsById: index, model });
+    if (!r.ok) {
+      // 跳过「自我」情况 —— v 自己也满足 globalUnique 失败(它自身的 name 在 model 里)
+      // 这条已经在 collectFromPackage 之类的全局走查里登记。
+      // 这里再次确认能容忍(Q13-C 弱 namespace 跨视图同名合法 但跟包内 / 顶层重名时冲突)。
+      if (r.conflictingId !== v.id) {
+        issues.push({
+          code: 'E101_DUPLICATE_NAME',
+          message: `view 顶层名 \`${v.name}\` 与工程内已有元素同名：${r.reason}`,
+          location: v.location,
+          severity: 'error',
+          relatedLocations: [],
+        });
+      }
+    }
+  }
+  for (const vp of model.viewpoints ?? []) {
+    const r = checkGlobalUnique(vp.name, { elementsById: index, model });
+    if (!r.ok && r.conflictingId !== vp.id) {
+      issues.push({
+        code: 'E101_DUPLICATE_NAME',
+        message: `viewpoint 顶层名 \`${vp.name}\` 与工程内已有元素同名：${r.reason}`,
+        location: vp.location,
+        severity: 'error',
+        relatedLocations: [],
+      });
+    }
+  }
+}
+
+/** 递归遍历 view members(view 可以嵌套 view + package + viewpoint)。 */
+function* walkViewMembers(v: SysMLView): IterableIterator<NamespaceMember> {
+  for (const m of v.members ?? []) {
+    yield m;
+    if (m.kind === 'view') yield* walkViewMembers(m as SysMLView);
+    else if (m.kind === 'package') yield* walkPackageMembers(m as Package);
+    else if (m.kind === 'viewpoint') yield* walkViewpointMembers(m as SysMLViewpoint);
+  }
+}
+
+function* walkViewpointMembers(vp: SysMLViewpoint): IterableIterator<NamespaceMember> {
+  for (const m of vp.members ?? []) {
+    yield m;
+    if (m.kind === 'viewpoint') yield* walkViewpointMembers(m as SysMLViewpoint);
+  }
+}
+
+function* walkPackageMembers(pkg: Package): IterableIterator<NamespaceMember> {
+  for (const m of pkg.members ?? []) {
+    yield m;
+    if (m.kind === 'package') yield* walkPackageMembers(m as Package);
+  }
+}
+
+function elementLocFromIndex(
+  index: ReadonlyMap<string, NamespaceMember>,
+  id: string,
+): SourceLocation | null {
+  const m = index.get(id);
+  return m && (m as { location?: SourceLocation }).location
+    ? (m as { location: SourceLocation }).location
+    : null;
+}
+
+// 类型 shim（避免在 validator 里再去 ast 拉类型 —— SysMLView/SysMLViewpoint 类型
+// 在 ast/model 里已导出,这里直接复用不引新符号）。
+type SysMLView = import('../ast/model').SysMLView;
+type SysMLViewpoint = import('../ast/model').SysMLViewpoint;
 
 /**
  * M16 P1（Q1/Q19）：顶层裸元素风格 warning。

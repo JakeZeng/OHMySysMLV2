@@ -124,8 +124,10 @@ view 'vehicle parts view' : StructureView {    // ViewUsage（实例，显式引
 }
 ```
 
-`view` 是独立于 `package` 的顶层 Namespace 类别，解析后进 `model.views`、**不进** `model.packages`；
-body 内的 `stateMachine` / `activity` / `requirement` 等照样参与扁平化（可视化依赖顶层数组）。
+`view` **承载 Namespace 语义，本身不引入命名空间**（M17 切片 D 修订），
+解析后进 `model.views`、**不进** `model.packages`；body 内的 `stateMachine` / `activity` /
+`requirement` 等照样参与扁平化（可视化依赖顶层数组）。视图内 owned 元素走 view 内局部查重
+（`applyRename` / `checkWithinViewUnique`），跨视图同名合法。
 
 > **返工记录**：M15 主体交付时这些子句是按自造方言实现的（`render as tree;`、
 > body 前 `satisfies`），用 13 条标准形式做探针时 **13/13 解析失败**。现在

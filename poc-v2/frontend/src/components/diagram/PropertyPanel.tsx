@@ -24,6 +24,12 @@ import {
 import { Button } from '../ui/Button';
 import { useModelStore } from '../../stores/modelStore';
 import type { Node } from '@xyflow/react';
+// M17 切片 D：rename 提交前走 applyRename 校验（F2/Q15-Q16 单一入口贯穿）
+import {
+  applyRename,
+  buildElementsIndex,
+  type RenderCtx,
+} from '@views/index';
 
 export interface PropertyPanelProps {
   /** 当前选中的 React Flow 节点（null = 未选中） */
@@ -61,11 +67,14 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
 
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState('');
+  // M17 切片 D：改名失败的 inline 错误；保留在编辑态，用户修正后再次提交。
+  const [renameError, setRenameError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (selectedNode) {
       setNameDraft(String((selectedNode.data as { label?: string }).label ?? ''));
       setEditingName(false);
+      setRenameError(null);
     }
   }, [selectedNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -125,9 +134,27 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
   );
 
   const handleRenameSubmit = () => {
-    if (nameDraft.trim() && nameDraft.trim() !== data.label && isFromModel) {
-      renameNode(String(selectedNode.id), nameDraft.trim());
+    if (!nameDraft.trim() || nameDraft.trim() === data.label || !isFromModel) {
+      setRenameError(null);
+      setEditingName(false);
+      return;
     }
+    // M17 切片 D：先走 applyRename 校验（F2/Q15-Q16 单一入口）
+    const model = pipeline.model;
+    if (!model) {
+      setRenameError('model not loaded');
+      return;
+    }
+    const index = buildElementsIndex(model);
+    const ctx: RenderCtx = { elementsById: index, model };
+    const decision = applyRename(String(selectedNode.id), nameDraft.trim(), ctx);
+    if (!decision.ok) {
+      setRenameError(decision.reason);
+      // 保留 editing 态，让用户改
+      return;
+    }
+    setRenameError(null);
+    renameNode(String(selectedNode.id), nameDraft.trim());
     setEditingName(false);
   };
 
@@ -187,16 +214,29 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
                 e.preventDefault();
                 handleRenameSubmit();
               }}
-              className="mt-1 flex items-center gap-1"
+              className="mt-1 flex flex-col gap-1"
             >
               <input
                 value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
+                onChange={(e) => {
+                  setNameDraft(e.target.value);
+                  if (renameError) setRenameError(null);
+                }}
                 autoFocus
                 onBlur={handleRenameSubmit}
-                className="h-7 flex-1 rounded border border-brand-300 bg-white px-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:bg-gray-800"
+                className="h-7 w-full rounded border border-brand-300 bg-white px-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:bg-gray-800"
                 data-testid="prop-name-input"
+                aria-invalid={!!renameError}
               />
+              {renameError && (
+                <span
+                  className="text-[11px] text-red-600 dark:text-red-400"
+                  data-testid="prop-rename-error"
+                  role="alert"
+                >
+                  {renameError}
+                </span>
+              )}
             </form>
           ) : (
             <div className="mt-1 flex items-center gap-1">

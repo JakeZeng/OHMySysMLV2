@@ -26,7 +26,11 @@ export {
   renderElementName,
   computeQualifiedName,
   validateNameUniqueness,
+  checkGlobalUnique,
+  checkWithinViewUnique,
+  applyRename,
   type NameView,
   type RenderCtx,
   type ValidationResult,
+  type RenameDecision,
 } from './namespace';
