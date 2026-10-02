@@ -34,3 +34,12 @@ export {
   type ValidationResult,
   type RenameDecision,
 } from './namespace';
+export {
+  detectExposeCycle,
+  buildViewGraph,
+  detectExposeCycleFromModel,
+  type ViewGraph,
+  type ViewId,
+  type Color,
+  type CycleReport,
+} from './cycle';

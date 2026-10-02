@@ -41,10 +41,12 @@ import type {
 } from '../ast/model';
 import { tryParseExpr } from '../expr';
 // M17 切片 D（F2/Q15）：view 内 + global 查重统一入口（原则 2 单一入口贯穿）
+// M17 切片 E（F3/Q19-D）：view 间 expose 环检测 DFS three-color
 import {
   buildElementsIndex,
   checkGlobalUnique,
   checkWithinViewUnique,
+  detectExposeCycleFromModel,
 } from '../views';
 
 // ─── 错误模型 ──────────────────────────────────────────────────────────
@@ -85,7 +87,9 @@ export type ValidationIssueCode =
   | 'W305_FILTER_UNKNOWN_OP'
   // M16 P1（官方对齐）
   | 'E306_VIEW_MULTIPLE_RENDER'
-  | 'W307_TOPLEVEL_BARE';
+  | 'W307_TOPLEVEL_BARE'
+  // M17 切片 E（F3/Q20-A）：view 间 expose 环 — parser/validator 共用
+  | 'E_VIEW_EXPOSE_CYCLE';
 
 export type IssueSeverity = 'error' | 'warning';
 
@@ -419,6 +423,26 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
         });
       }
     }
+  }
+
+  // 6) M17 切片 E（F3/Q19-D）：view 间 expose 环检测（DFS three-color）。
+  //    单一错误码 `E_VIEW_EXPOSE_CYCLE`，与 parser 层共用（severity 区分）。
+  //    self-ref（Q18-B）由 detectExposeCycle 内置跳过，不报。
+  const cycleReport = detectExposeCycleFromModel(model, buildElementsIndex(model));
+  for (const cycle of cycleReport.cycles) {
+    // cycle 是 view id 列表,末段等于首段闭合。挑第一处非首 view 作为 location 锚点。
+    const firstNonStart = cycle[1] ?? cycle[0]!;
+    const anchorView = (model.views ?? []).find((v) => v.id === firstNonStart);
+    const pathLabel = cycle.map((id) => {
+      const v = (model.views ?? []).find((vv) => vv.id === id);
+      return v ? `\`${v.name}\`` : `\`${id}\``;
+    }).join(' → ');
+    issues.push({
+      code: 'E_VIEW_EXPOSE_CYCLE',
+      message: `view 间 expose 关系形成环：${pathLabel}（Q18-B 跨 view 环禁止，self-ref 合法）`,
+      location: anchorView?.location ?? model.views?.[0]?.location ?? { line: 1, column: 1, offset: 0 },
+      severity: 'error',
+    });
   }
 }
 
