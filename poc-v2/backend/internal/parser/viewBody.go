@@ -123,6 +123,9 @@ func ParseViewBody(content string) ParsedViewBody {
 	if strings.TrimSpace(content) == "" {
 		return out
 	}
+	// 先剥掉 `//` 行注释与 `/* ... */` 块注释，避免教学注释里的
+	// `render asTreeDiagram;` / `filter @X;` 等示例被当成真实子句解析。
+	content = stripViewBodyComments(content)
 
 	// 1. render —— 官方两种形式：声明式内联 / 引用式（M16 P1：legacy 枚举已移除）
 	switch {
@@ -507,4 +510,37 @@ func inferKind(content, qualifiedName string) string {
 		}
 	}
 	return ""
+}
+
+// ─── 注释剥离 ───────────────────────────────────────────────────────
+
+// stripViewBodyComments 在解析 view body 之前先去掉注释内容。
+//
+// 处理两类：
+//   - `// ... \n`：行注释。**只在行首空白之后剥离**——保留行内 `//`，
+//     避免误伤单引号标准名字里出现的 `//`（罕见但合法）。这一限制足以
+//     应对 M15/M17 默认模板中
+//     「`// 作用范围：import ...; filter @SysML::PartUsage;`」与
+//     「`// 渲染方式：render <RenderingRef>; 例：... asTreeDiagram;`」
+//     这类骨架注释被当真子句解析的回归（M17 修复点）。注意由此带来的
+//     **遗留风险**：行内 `// render asTreeDiagram;` 仍会被解析为子句
+//     （见 TestParseViewBody_StripsCommentsBeforeParsing 的内联注释用例）。
+//   - `/* ... */`：块注释。整段删除（含跨行）。
+//
+// 剥离策略：用单独的 replaceAll 步骤——先块后行；行注释替换时只抹掉
+// `//` 之后到换行的内容，保留行首缩进，便于 UI 等下游消费者复用。
+//
+// 注意：这不是一个完整的 SysML 词法器，但 view body 子集不含 string
+// literal 转义、嵌套注释等复杂结构，足够当下 POC 使用。
+var (
+	blockCommentRe  = regexp.MustCompile(`/\*[\s\S]*?\*/`)
+	lineCommentRe   = regexp.MustCompile(`(?m)^([ \t]*)//[^\n]*`)
+)
+
+func stripViewBodyComments(s string) string {
+	// 块注释优先：避免 `// foo /* bar */ baz` 的混淆（行注释最坏只吃掉
+	// 块尾一侧，块注释模式跨行匹配会兜住剩余部分）。
+	s = blockCommentRe.ReplaceAllString(s, "")
+	// 行注释：保留行首空白（`$1`），仅抹掉 `//` 起到行尾的内容。
+	return lineCommentRe.ReplaceAllString(s, "$1")
 }

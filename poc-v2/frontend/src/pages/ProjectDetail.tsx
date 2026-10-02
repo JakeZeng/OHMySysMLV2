@@ -70,7 +70,7 @@ const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
  */
 const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
   // 作用范围：import Views::*;  filter @SysML::PartUsage;
-  // 渲染方式：render <RenderingRef>;   例：render asTreeDiagram;
+  // 渲染方式：render <RenderingRef>;   例：<RenderingRef> 占位名 asTreeDiagram;
   // （expose 只能出现在 view usage 体内——官方约束，§8.2.2.26）
 }
 `;

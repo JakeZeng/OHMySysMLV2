@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sysmlv2/mbse-backend/internal/model"
@@ -360,5 +361,168 @@ func TestNormalizeRenderKind(t *testing.T) {
 	}
 	if model.NormalizeRenderKind("") != model.RenderKindInterconnection {
 		t.Error("empty should default to interconnection")
+	}
+}
+
+// M17 fix：前端默认骨架的 `// 渲染方式：render asTreeDiagram;` 注释里
+// 包含一段与 renderRefRe 完全匹配的子串，会被错推成 RenderKindTree，
+// 导致「右键包内 → 新建视图 → 默认渲染方式 = tree」。本测试套保护
+// stripViewBodyComments 行/块注释剥离逻辑。
+func TestParseViewBody_StripsCommentsBeforeParsing(t *testing.T) {
+	t.Run("M15 默认骨架——行注释里的 render 不应影响 renderKind", func(t *testing.T) {
+		// 与 ProjectDetail.tsx::DEFAULT_VIEW_BODY 同形态（教学型注释）
+		content := `view def MyView {
+  // 作用范围：import Views::*;  filter @SysML::PartUsage;
+  // 渲染方式：render <RenderingRef>;   例：<RenderingRef> 占位名 asTreeDiagram;
+  // （expose 只能出现在 view usage 体内——官方约束，§8.2.2.26）
+}
+`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindInterconnection {
+			t.Errorf("注释里的示例 asTreeDiagram 不应被当作渲染方式；got %q want %q",
+				r.RenderKind, model.RenderKindInterconnection)
+		}
+		// filter 注释里的 @SysML::PartUsage 也不应进入 FilterQualifiedNames
+		for _, got := range r.FilterQualifiedNames {
+			if strings.Contains(got, "PartUsage") {
+				t.Errorf("注释里的 filter 子句不应被当真 filter；FilterQualifiedNames=%v", r.FilterQualifiedNames)
+			}
+		}
+	})
+
+	t.Run("M15 默认骨架变体——前端早期版本（render 关键字前填真名）", func(t *testing.T) {
+		// 修复前的旧版骨架（曾把 `render asTreeDiagram;` 整句写在注释里）
+		content := `view def OldView {
+  // 渲染方式：render asTreeDiagram;
+}
+`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindInterconnection {
+			t.Errorf("注释里的 render asTreeDiagram; 不应影响 renderKind；got %q", r.RenderKind)
+		}
+	})
+
+	t.Run("块注释里的 render 不应影响 renderKind", func(t *testing.T) {
+		content := `view def V {
+  /* render asTreeDiagram; */
+  render asRequirementTable;
+}
+`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindRequirement {
+			t.Errorf("块注释 + 真 render 应只看到真 render；got %q want %q",
+				r.RenderKind, model.RenderKindRequirement)
+		}
+	})
+
+	t.Run("块注释跨行", func(t *testing.T) {
+		content := `view def V {
+  /*
+    render asTreeDiagram;
+    filter @SysML::PartUsage;
+  */
+  render asStateDiagram;
+}
+`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindState {
+			t.Errorf("跨行块注释里的 render/filter 不应影响解析；got %q want %q",
+				r.RenderKind, model.RenderKindState)
+		}
+		if len(r.FilterQualifiedNames) != 0 {
+			t.Errorf("跨行块注释里的 filter 不应进入列表；got %v", r.FilterQualifiedNames)
+		}
+	})
+
+	t.Run("行内注释（// 不在行首）保留——避免误伤单引号名字", func(t *testing.T) {
+		// `//` 不在行首时**不剥离**：保护单引号标准名字里可能出现的 `//`。
+		// 但作为遗留风险：行内 `//` 之后如果含有形如 `render <name>;` 的
+		// 子串，仍会被子句正则匹配（注释剥离器的 MVP 边界）。此用例
+		// 锁定当前行为，方便后续若引入完整词法器时升级验证。
+		content := `view V { expose Pkg::X; // inline comment
+}`
+		r := ParseViewBody(content)
+		// 行内注释里没有解析得动的子串，所以仍应是 interconnection
+		if r.RenderKind != model.RenderKindInterconnection {
+			t.Errorf("行内 //（无解析子串）不应影响 renderKind；got %q", r.RenderKind)
+		}
+		if len(r.ExposedElements) != 1 {
+			t.Errorf("真 expose 应保留；got %v", r.ExposedElements)
+		}
+	})
+
+	t.Run("行内注释里的伪装 render 仍会被命中（MVP 边界）", func(t *testing.T) {
+		// 锁定当前已知遗留缺陷：行内 // 后若含 render / filter 子串，
+		// 不会被剥离 → 仍被当真子句解析。等下一轮引入完整词法器再升级。
+		content := `view V { expose Pkg::X; // render asTreeDiagram;
+}`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindTree {
+			t.Errorf("当前实现：行内注释里的 render 子串仍会被解析；锁定期望 tree；got %q", r.RenderKind)
+		}
+	})
+
+	t.Run("真实子句不被误伤", func(t *testing.T) {
+		// 行首 // 之外的 // 必须保留；真 render / 真 filter 必须正常解析
+		content := `view V {
+  // 教学注释：render <RenderingRef>;
+  render asTreeDiagram;
+  filter @SysML::PartUsage;
+}
+`
+		r := ParseViewBody(content)
+		if r.RenderKind != model.RenderKindTree {
+			t.Errorf("真 render 应被识别；got %q", r.RenderKind)
+		}
+		if len(r.FilterQualifiedNames) != 1 || r.FilterQualifiedNames[0] != "@SysML::PartUsage" {
+			t.Errorf("真 filter 应被识别；got %v", r.FilterQualifiedNames)
+		}
+	})
+}
+
+// stripViewBodyComments 直接单测：验证空串、纯注释、混合内容三种情况。
+func TestStripViewBodyComments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "空串",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "纯行注释",
+			in:   "// hello\n   // indent\n",
+			want: "\n   \n",
+		},
+		{
+			name: "纯块注释",
+			in:   "/* hello */",
+			want: "",
+		},
+		{
+			name: "块注释跨行",
+			in:   "/* line1\nline2 */keep",
+			want: "keep",
+		},
+		{
+			name: "行内 // 不剥离",
+			in:   "expose Pkg::X; // inline",
+			want: "expose Pkg::X; // inline",
+		},
+		{
+			name: "混合：注释外有真实 render",
+			in:   "// header\nrender asTreeDiagram;",
+			want: "\nrender asTreeDiagram;",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := stripViewBodyComments(c.in); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
 	}
 }
