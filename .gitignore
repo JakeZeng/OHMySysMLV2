@@ -75,3 +75,6 @@ Thumbs.db
 # Local smoke-test scratch
 _smoke.ts
 .poc-tests*.log
+
+# git worktrees (parallel dev sessions)
+.worktrees/
