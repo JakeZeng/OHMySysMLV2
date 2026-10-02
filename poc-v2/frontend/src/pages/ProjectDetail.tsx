@@ -350,7 +350,7 @@ export const ProjectDetail: React.FC = () => {
         if (nextContent === (full.content ?? '')) {
           throw new Error('未找到 view body 插入点');
         }
-        await viewApi.update(view.id, {
+        const updatedView = await viewApi.update(view.id, {
           name: full.name,
           packageId: full.packageId,
           description: full.description,
@@ -360,6 +360,10 @@ export const ProjectDetail: React.FC = () => {
           metadata: full.metadata,
           version: full.version,
         });
+        // 实时同步当前编辑会话：画布 + Monaco 立即出现新 expose 行
+        useModelStore.getState().applyExternalContent(
+          'view', view.id, nextContent, updatedView.version,
+        );
         await refreshViews();
         showToast({
           title: `已 expose 到「${view.name}」`,
@@ -704,7 +708,7 @@ export const ProjectDetail: React.FC = () => {
           scopeName: pkg.name,
           defaultPkgName: pkg.name,
         });
-        await packageApi.update(parentPackageId, {
+        const updated = await packageApi.update(parentPackageId, {
           name: pkg.name,
           parentPackageId: pkg.parentPackageId,
           description: pkg.description,
@@ -715,6 +719,10 @@ export const ProjectDetail: React.FC = () => {
         await refreshPackages();
         // M14：失效元素缓存，让树刷新时重新加载
         useElementTreeCacheStore.getState().invalidate(parentPackageId);
+        // 实时同步当前编辑会话：画布 + Monaco 立即刷新；version 同步避免下次保存 409
+        useModelStore
+          .getState()
+          .applyExternalContent('package', parentPackageId, newContent, updated.version);
         showToast({ title: `已创建 ${item.label}「${name}」`, variant: 'success' });
         setSearchParams({ package: parentPackageId });
       } catch (e) {
@@ -736,7 +744,7 @@ export const ProjectDetail: React.FC = () => {
         // 1. 取 owner（view 或 viewpoint）的 content + packageId
         let ownerContent: string;
         let ownerPackageId: string | undefined;
-        let updateOwner: (content: string) => Promise<unknown>;
+        let updateOwner: (content: string) => Promise<{ id: string; version: number }>;
 
         if (ref.ownerKind === 'view') {
           const v = await viewApi.get(ref.ownerId);
@@ -790,7 +798,7 @@ export const ProjectDetail: React.FC = () => {
         }
 
         // 2. 从 owner content 中移除 def
-        await updateOwner(extracted.remaining);
+        const ownerUpdated = await updateOwner(extracted.remaining);
 
         // 3. 追加到所属包 body（M16 P0：统一插入路径，AST 定位目标包）
         const pkg = await packageApi.get(ownerPackageId);
@@ -799,7 +807,7 @@ export const ProjectDetail: React.FC = () => {
           scopeName: pkg.name,
           defaultPkgName: pkg.name,
         });
-        await packageApi.update(ownerPackageId, {
+        const pkgUpdated = await packageApi.update(ownerPackageId, {
           name: pkg.name,
           parentPackageId: pkg.parentPackageId,
           description: pkg.description,
@@ -813,6 +821,19 @@ export const ProjectDetail: React.FC = () => {
         await refreshPackages();
         await refreshViews();
         await refreshViewpoints();
+        // 4b. 实时同步当前编辑会话：view owner 和 package owner 各调一次，仅匹配的那个生效
+        // viewpoint 不在 modelStore 编辑会话范围（无 viewpoint session），跳过
+        if (ref.ownerKind === 'view') {
+          useModelStore.getState().applyExternalContent(
+            'view',
+            ref.ownerId,
+            extracted.remaining,
+            ownerUpdated.version,
+          );
+        }
+        useModelStore
+          .getState()
+          .applyExternalContent('package', ownerPackageId, newPkgContent, pkgUpdated.version);
         showToast({
           title: `已提升「${ref.elementName}」到包`,
           variant: 'success',
@@ -872,12 +893,15 @@ export const ProjectDetail: React.FC = () => {
                     action.ref.elementName, trimmed,
                   );
                   if (edited.text === (v.content ?? '')) throw new Error('未找到元素声明');
-                  await viewApi.update(ownerId, {
+                  const updatedView = await viewApi.update(ownerId, {
                     name: v.name, packageId: v.packageId, description: v.description,
                     content: edited.text, colorTag: v.colorTag,
                     renderingCategory: v.renderingCategory, metadata: v.metadata,
                     version: v.version,
                   });
+                  useModelStore.getState().applyExternalContent(
+                    'view', ownerId, edited.text, updatedView.version,
+                  );
                 } else {
                   const pkg = await packageApi.get(ownerId);
                   const edited = renameElementByName(
@@ -885,11 +909,14 @@ export const ProjectDetail: React.FC = () => {
                     action.ref.elementName, trimmed,
                   );
                   if (edited.text === (pkg.content ?? '')) throw new Error('未找到元素声明');
-                  await packageApi.update(ownerId, {
+                  const updatedPkg = await packageApi.update(ownerId, {
                     name: pkg.name, parentPackageId: pkg.parentPackageId,
                     description: pkg.description, content: edited.text,
                     metadata: pkg.metadata, version: pkg.version,
                   });
+                  useModelStore.getState().applyExternalContent(
+                    'package', ownerId, edited.text, updatedPkg.version,
+                  );
                 }
                 useElementTreeCacheStore.getState().invalidate(ownerId);
                 await refreshPackages();
@@ -911,23 +938,29 @@ export const ProjectDetail: React.FC = () => {
                     v.content ?? '', action.ref.elementKind ?? 'partDef', action.ref.elementName,
                   );
                   if (edited.text === (v.content ?? '')) throw new Error('未找到元素声明');
-                  await viewApi.update(ownerId, {
+                  const updatedView = await viewApi.update(ownerId, {
                     name: v.name, packageId: v.packageId, description: v.description,
                     content: edited.text, colorTag: v.colorTag,
                     renderingCategory: v.renderingCategory, metadata: v.metadata,
                     version: v.version,
                   });
+                  useModelStore.getState().applyExternalContent(
+                    'view', ownerId, edited.text, updatedView.version,
+                  );
                 } else {
                   const pkg = await packageApi.get(ownerId);
                   const edited = deleteElementByName(
                     pkg.content ?? '', action.ref.elementKind ?? 'partDef', action.ref.elementName,
                   );
                   if (edited.text === (pkg.content ?? '')) throw new Error('未找到元素声明');
-                  await packageApi.update(ownerId, {
+                  const updatedPkg = await packageApi.update(ownerId, {
                     name: pkg.name, parentPackageId: pkg.parentPackageId,
                     description: pkg.description, content: edited.text,
                     metadata: pkg.metadata, version: pkg.version,
                   });
+                  useModelStore.getState().applyExternalContent(
+                    'package', ownerId, edited.text, updatedPkg.version,
+                  );
                 }
                 useElementTreeCacheStore.getState().invalidate(ownerId);
                 await refreshPackages();

@@ -264,4 +264,62 @@ test.describe.serial('M14 截图归档', () => {
 
     await shot(page, '06-connect-auto-from-edge.png');
   });
+
+  test('07. 树右键添加 partDef → 画布 + Monaco 立即刷新（不刷新页面）', async ({ page, request }) => {
+    // M17.x 回归：发起方 sync gap —— 右键创建后画布/Monaco 必须立即反映新元素
+    const auth = await bootstrap(request, 'm17s7');
+    await injectAuth(page, {
+      ...auth,
+      username: `m17s7_${auth.userId.slice(0, 6)}`,
+      email: auth.email,
+    });
+
+    // 1) API 建 1 个空包
+    const pkgResp = await request.post(`/api/v1/projects/${auth.projectId}/packages`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+      data: {
+        name: `Sync-${Date.now().toString(36)}`,
+        parentPackageId: '',
+        content: 'package Sync {}',
+      },
+    });
+    const pkgBody = await pkgResp.json();
+    const pkgId = pkgBody?.data?.id ?? pkgBody?.id ?? '';
+
+    // 2) 直接带 ?package=:pkgId 进 → 走 usePackageContent.loadPackage
+    await page.goto(`/projects/${auth.projectId}?package=${pkgId}`);
+    await waitFor(page, `[data-testid^="tree-row-pkg:"]`);
+    await page.waitForTimeout(2500); // 等画布 + Monaco 落地
+
+    // 3) 右键包节点 → 新建元素
+    const pkgRow = page.locator(`[data-testid^="tree-row-pkg:"]`).first();
+    await pkgRow.click({ button: 'right' });
+    await page.waitForTimeout(400);
+    await page.getByTestId('ctx-create-element-trigger').click();
+    await page.waitForTimeout(500);
+
+    // 4) 在 modal 中选 partDef（点击即提交）
+    await page.getByTestId('element-choose-partDef').click();
+    await page.waitForTimeout(1500);
+
+    // 5) 不刷新页面，断言：
+    //    a) 树里出现新 partDef 节点
+    const newElem = page.locator(`[data-testid^="tree-row-elem:"]`).first();
+    const hasNewElem = await newElem.count();
+    //    b) 切到 text 模式后 Monaco 含 part def 声明
+    const textBtn = page.getByTestId('toggle-mode-text').first();
+    if (await textBtn.count()) {
+      await textBtn.click({ force: true });
+      await page.waitForTimeout(1500);
+    }
+    const editor = page.locator('.monaco-editor').first();
+    const hasMonaco = await editor.count();
+    const linesText = hasMonaco ? await editor.innerText() : '';
+
+    await shot(page, '07-tree-create-element-no-reload.png');
+
+    // 软断言：失败也不抛，方便 CI 报错时定位
+    expect(hasNewElem, '新元素应出现在树').toBeGreaterThan(0);
+    expect(linesText).toMatch(/part\s+def/i);
+  });
 });

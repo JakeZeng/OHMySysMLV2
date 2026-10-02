@@ -102,6 +102,18 @@ interface ModelState {
   setVersion: (v: number) => void;
   /** M13：同步版本号 + 原始内容（属性面板保存后调用） */
   syncBase: (version: number, content: string) => void;
+  /**
+   * 树右键操作 + 协同接收：将外部写入的内容推到当前内容会话。
+   * 仅当 modelStore.entityKind/entityId 与入参匹配时落库（返回 true）；
+   * 否则 no-op（返回 false），调用方不必关心——用户切换到该实体时
+   * loadPackage/loadView 会拉最新。
+   */
+  applyExternalContent: (
+    entityKind: ContentEntityKind,
+    entityId: string,
+    content: string,
+    version: number,
+  ) => boolean;
   runPipeline: (text: string) => void;
   reset: () => void;
 
@@ -210,6 +222,22 @@ export const useModelStore = create<ModelState>((set, get) => ({
   syncBase(version, content) {
     set({ version, baseVersion: version, baseContent: content });
     useCollabStore.getState().setBaseContent(version, content);
+  },
+
+  applyExternalContent(entityKind, entityId, content, version) {
+    const s = get();
+    if (s.entityKind !== entityKind || s.entityId !== entityId) return false;
+    set({
+      content,
+      version,
+      baseVersion: version,
+      baseContent: content,
+      saved: false,
+      dirty: false,
+    });
+    useCollabStore.getState().setBaseContent(version, content);
+    get().runPipeline(content);
+    return true;
   },
 
   runPipeline(text) {
@@ -732,3 +760,51 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * 协同接收处理：M13 SSE `content_updated` → useCollabStream 派发 `collab:content-updated`
+ * window event（useCollabStream.ts:98-104）。
+ *
+ * 行为：
+ *   - scope 不匹配 → 忽略
+ *   - scope 匹配 + dirty=false → silent refetch + applyExternalContent
+ *   - scope 匹配 + dirty=true → 不覆盖；M13 409 + 3-way merge 在下次保存时弹出 ConflictModal
+ *
+ * 导出便于单测：直接调用 `applyRemoteContentUpdate({ scope })` 即可模拟一次接收。
+ */
+export async function applyRemoteContentUpdate(detail: { scope: string }): Promise<void> {
+  if (!detail?.scope) return;
+  const s = useModelStore.getState();
+  if (!s.entityKind || !s.entityId) return;
+  const target = `${s.entityKind}:${s.entityId}`;
+  if (detail.scope !== target) return;
+  if (s.dirty) return;
+  try {
+    if (s.entityKind === 'package') {
+      const pkg = await packageApi.get(s.entityId);
+      useModelStore.getState().applyExternalContent(
+        'package',
+        s.entityId,
+        pkg.content ?? '',
+        pkg.version,
+      );
+    } else if (s.entityKind === 'view') {
+      const v = await viewApi.get(s.entityId);
+      useModelStore.getState().applyExternalContent(
+        'view',
+        s.entityId,
+        v.content ?? '',
+        v.version,
+      );
+    }
+  } catch (err) {
+    console.warn('[collab] remote reload failed:', err);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('collab:content-updated', (raw) => {
+    const e = raw as CustomEvent<{ scope: string }>;
+    void applyRemoteContentUpdate(e.detail);
+  });
+}
