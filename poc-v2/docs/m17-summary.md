@@ -481,3 +481,58 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 | Pre-dev 步骤 4 Invariant test fixture 设计(2026-10-02) | **完成**;12 个 fixture F1–F12 + 不变式保证已写入 §8.3 |
 | **M17 启动决策**(2026-10-02 用户拍板) | ① **worktree 隔离**(`m17/view-modeling` 分支) ② **切片逐个 commit** ③ **B / D 单独 PR review** ④ **切片 B 完成时全量回归**(`npm test` + `frontend npm test` + `go test ./...` + `k6 perf`) + **拍 baseline 截图** |
 | 切片 G 拆 G1/G2(摸底修正 2026-10-02) | 已写入 §8.2 |
+---
+
+## 12. 画布锚点（2026-10-04 起，commit 110775a）
+
+### 12.1 需求
+
+1. 图元可连接锚点需支持**任意点**（此前每个图元只有固定左中/右中两个 `<Handle>`，全仓库无任何 Handle 传 `id`，也无 `sourceHandle`/`targetHandle`）。
+2. 端口图元可**任意拖到 owner 元素的任意边任意位置**（此前吸附只在渲染期算，写进局部变量不回写 store）。
+
+用户拍板的四项决策：手势分工用「边框 ~8px 带 = 连线 / 内部 = 移动」**不用修饰键**；锚点存 layoutStore + 后端 layout 接口（runtime 层，与「Port 坐标属 UI 渲染细节、不入 SysML schema」一致）；结构连线改 **bezier**，状态机 transition 边保持 smoothstep；端口级 connect 的既有 bug 一并修。
+
+### 12.2 已完成（切片 S1–S4，commit 110775a）
+
+| 切片 | 内容 |
+|---|---|
+| S1 | `lib/anchor.ts` 锚点纯函数；`portAttachSide` 改为 `anchorFromPoint` 薄封装 |
+| S2 | `transform/stableKey.ts` 布局键按限定名（**修掉了「位置从来存不住」这个既有 bug**）|
+| S3 | `connect A to B;` 文法（此前 addConnection 生成的语句**根本解析不了**）+ serializer 静默损坏 |
+| S4 | 端口任意贴边持久化：后端 Attach + 两处 `parentId` 守卫 + DiagramCanvas 锚点推导 |
+
+四片互相咬合（S2 是 S4 前置，共享 modelToFlow.ts / layoutStore.ts），故合并为一个提交。
+
+### 12.3 未完成：切片 S5 任意点连线（需求 1）
+
+**动代码前必读的四条源码复核结论**（读 @xyflow/react 12.4.4 装好的源码得出，与直觉相反，是为避免返工）：
+
+| 坑 | 结论 | 对策 |
+|---|---|---|
+| 边端点不能走 RF handle 解析 | `getEdgePosition` 遇缺 `sourceHandle`/`targetHandle` 返回 **null**，`EdgeWrapper` 拿到 null **整条边不渲染**（不是回退节点中心）；且 `onlyRenderVisibleElements={true}` 下节点滚出视口即卸载 → 无 handleBounds → **边凭空消失** | 注册自定义 edge 类型，自行从 `(anchor, internals.positionAbsolute, measured)` 算路径渲染 `<BaseEdge>`；edge 对象上**绝不**设 `sourceHandle`/`targetHandle` |
+| `loose` 模式给不了任意点终点 | `onPointerMove` 用 `getClosestHandle(radius=20)` 在**已存在的 handle** 里找最近，点在节点正文会静默吸附到某个边中点 | 连线手势**自己实现**，不用 RF 的 `onConnect` |
+| `Handle` 必须在下压之前就存在 | `HandleComponent` 绑的是 React `onMouseDown`（`index.mjs:1886`），非全局监听；按下后才 mount 的 Handle 收不到那次事件 | 锚点由 **hover（mousemove）**驱动；`nodrag` 由 `<Handle>` 自带，不用手动传给 ReactFlow |
+| handle 定位取的是矩形**边**不是中心 | `getHandlePosition`（`system/index.mjs:1489`） | `transform` 必须按边分四种，否则每个端点往节点内偏半个 handle 尺寸 |
+
+**待做清单**
+
+- [ ] `<AnchorStrips>`：节点内部组件，4 条绝对定位 `nodrag` 细带（贴边框线）。⚠️ **不要做成一个 `inset:0` 的整圈** —— 否则吃掉所有内部 mousedown，直接打破既有 e2e 用例 A2。`cursor: crosshair` 写进 `styles/index.css`（该文件目前**没有任何** `.react-flow__handle` / `.react-flow__node` 规则）。加进 `NON_PANE_SELECTOR`（`DiagramCanvas.tsx:401`）。
+- [ ] 连线手势：strip 上 `onPointerDown` → document 级 pointermove/pointerup → `document.elementFromPoint` 找光标下节点 → `anchorFromPoint` 实时算目标锚点 → 松手回调 `onConnectCreate(sourceId, targetId, {sourceAnchor, targetAnchor})`。移除 RF 的 `onConnect`/`handleConnect`（:867）。
+- [ ] 自定义边 `anchored`：`BaseEdge` + `useStore(s => s.nodeLookup.get(edge.source)?.internals)`。`nodeLookup` 里所有节点常驻（不随渲染卸载），故离屏边不会消失。
+- [ ] 结构连线改 bezier：`transform/modelToFlow.ts` 的 `makeEdge`（:522）`type: 'smoothstep'` → `'bezier'`。状态机 transition 边（:153）保持 smoothstep。
+- [ ] 边锚点持久化：layoutStore 平行 map `edgeAnchors`（按 stableKey）→ `layoutApi.save` 第二个字段 → Go `layoutPayload.Edges`。
+- [ ] `addConnection` 全同步（插文本 → runPipeline → 同步出边），故调用前后做一次 edge id 集合差 + `(source,target)` 校验即可精确拿到新边 id 把锚点挂上，**不需要 TTL 或重试**。
+
+### 12.4 S5 的验证清单
+
+**e2e**（需前后端已起；本机 Playwright chromium 尚未装好）
+- `e2e/m17-canvas-interaction.spec.ts` 追加 **A3 内部拖动仍移动节点**（守住 8px 带不误伤，A2 作基线）、**A4 边框带拖动发起连线**。
+- `e2e/m16-p5-screenshots.spec.ts` 追加**端口拖到上边 → 刷新 → 仍在原位**（复用已有 `gotoCanvasNode`/`modelPos`/1600ms 防抖）。
+- 必须回归且不能挂：m17 的 A/A2/B/B2/C/C2、m16 的 `09-10`（断言刷新前后坐标完全一致，用 `expectAllNodesVisible` 守 M16 P5 的 `measured` 回归）。
+- 截图：bezier 会改全部模型的结构连线外观，需重跑 `m16-p5-screenshots.spec.ts` 重新归档并确认无意外位移。
+
+**已知遗留**
+- 旧 localStorage 布局数据因键名变更失效一次（刷新后回到自动布局一次），属预期。
+- hexagon 约束块的 clipPath 是六边形，上下边框带会伸出角外，纯视觉瑕疵，未加分支。
+- 明确不做：端口改 RF 真子节点（`parentNode`）—— 方向正确但需同时改 `layoutEngine.toElkChild`、两处 pipeline 守卫、DiagramCanvas 盒子算法，建议 S5 之后单独 PR。注意 `extent: 'parent'` 会把子节点夹进父框，与「徽标骑在边框上」矛盾，届时须用坐标 extent。
+- `sysmlGhost` 没注册进 `nodeTypes`（产出但未注册），属既有缺口，非本次引入。
