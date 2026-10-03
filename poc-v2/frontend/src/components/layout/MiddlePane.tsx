@@ -28,6 +28,8 @@ export interface MiddlePaneProps {
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
   /** M15：点击 satisfies 视角跳转 */
   onOpenViewpoint?: (viewpointId: string) => void;
+  /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
+  onRenameFocus?: () => void;
 }
 
 export const MiddlePane: React.FC<MiddlePaneProps> = ({
@@ -40,6 +42,7 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
   onCreateView,
   onDiagramReady,
   onOpenViewpoint,
+  onRenameFocus,
 }) => {
   if (selectedPackageId) {
     return (
@@ -48,6 +51,7 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
         selectedNode={selectedNode}
         onSelectNode={onSelectNode}
         onDiagramReady={onDiagramReady}
+        onRenameFocus={onRenameFocus}
       />
     );
   }
@@ -59,6 +63,7 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
         onSelectNode={onSelectNode}
         onDiagramReady={onDiagramReady}
         onOpenViewpoint={onOpenViewpoint}
+        onRenameFocus={onRenameFocus}
       />
     );
   }

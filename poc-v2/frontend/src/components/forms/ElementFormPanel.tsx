@@ -29,12 +29,18 @@ const KIND_COLOR: Record<string, string> = {
 
 export interface ElementFormPanelProps {
   selectedNode: Node | null;
+  /**
+   * M17：画布双击节点 → 把「名称」输入框聚焦并全选。
+   * 传自增计数：每次双击 +1，effect 依赖它重跑。
+   */
+  focusNameTick?: number;
   onClear: () => void;
   readOnly?: boolean;
 }
 
 export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   selectedNode,
+  focusNameTick,
   onClear,
   readOnly = false,
 }) => {
@@ -43,6 +49,19 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const deleteNode = useModelStore((s) => s.deleteNode);
   // M12：建模模式是全局 UI 偏好，不再挂在 View 实体上
   const modelingMode = useUIStore((s) => s.modelingMode);
+  const panelRef = React.useRef<HTMLElement | null>(null);
+
+  // M17：双击画布节点 = 直接进改名。用面板自身的 ref 限定作用域，
+  // 避免 document 上还有别的 form-field-name（比如对话框里的）被误聚焦。
+  React.useEffect(() => {
+    if (!focusNameTick || !selectedNode) return;
+    const input = panelRef.current?.querySelector<HTMLInputElement>(
+      '[data-testid="form-field-name"]',
+    );
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [focusNameTick, selectedNode]);
 
   // M11.x: 列表字段（attributes / ports）— 从 AST 读取当前列表。
   // 必须在 early return 之前调用，避免 React hooks 顺序不一致（"Rendered more hooks"）。
@@ -74,7 +93,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
               提示
             </div>
             <div>• 单击节点：选中并打开表单</div>
-            <div>• 双击节点：改名</div>
+            <div>• 双击节点：选中并定位名称</div>
             <div>• 拖动节点：移动位置</div>
             <div>• Backspace / Delete：删除</div>
           </div>
@@ -154,6 +173,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
 
   return (
     <aside
+      ref={panelRef}
       className="flex w-72 flex-col border-l border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900"
       data-testid="element-form-panel"
     >

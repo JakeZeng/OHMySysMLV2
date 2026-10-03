@@ -37,6 +37,14 @@ import {
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import {
+  isVerticalSide,
+  portAttachSide,
+  portDirectionArrows,
+  portLabelOffset,
+  snapPortToBorder,
+  type PortSide,
+} from '../lib/portSide';
 
 // ─── 节点类型定义（保持 M10 不变） ────────────────────────────
 
@@ -44,8 +52,21 @@ interface BaseNodeData {
   label: string;
   nodeType: string;
   location?: { line: number; column: number };
+  /** M17：端口贴在所属 part 的哪条边，由 stableNodes 按几何注入 */
+  attachSide?: PortSide;
   [key: string]: unknown;
 }
+
+function isPortSide(v: unknown): v is PortSide {
+  return v === 'left' || v === 'right' || v === 'top' || v === 'bottom';
+}
+
+/** measured 拿不到时的兜底尺寸（与 layoutEngine 的 ELK 声明一致）。 */
+const FALLBACK_NODE_W = 200;
+const FALLBACK_NODE_H = 80;
+/** 端口徽标的兜底尺寸 —— 徽标只装方向箭头，约 14~22px；端口名不占盒子。 */
+const FALLBACK_PORT_W = 18;
+const FALLBACK_PORT_H = 14;
 
 const PartDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
@@ -128,28 +149,82 @@ const PortDefNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoPortDefNode = React.memo(PortDefNode);
 
+/**
+ * M17 端口徽标。
+ *
+ * 结构：**徽标骑在所属 part 的边框上（只装方向箭头），端口名飘在边框外侧。**
+ *
+ * 之前名字和箭头一起塞在节点盒子里，结果整块压在 part 上面、盖住 part 自己的
+ * 标签（见 docs/screenshots 里的自测图）。现在：
+ *   - 节点盒 = 徽标本身（名字 absolute，不撑盒子）→ 吸附计算拿到的中心就是徽标真中心
+ *   - 名字走 portLabelOffset(side)，永远落在**朝外**那条边上，间隔 6px
+ *   - 箭头的排布轴跟着吸附边转：左右边横排 ◀▶，上下边竖排 ▲▼
+ */
 const PortNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
-  const directionArrow = d.direction === 'in' ? '◀' : d.direction === 'out' ? '▶' : '◀▶';
+  // 吸附边由 stableNodes 按几何算好灌进来；缺失时按左右边的横排兜底。
+  const side: PortSide = isPortSide(d.attachSide) ? d.attachSide : 'left';
+  const { glyphs, stacked } = portDirectionArrows(d.direction, side);
+  const vertical = isVerticalSide(side);
+
+  // 徽标：只装箭头。左右边是扁的，上下边是竖的（和所在边垂直）。
+  const badgeStyle: React.CSSProperties = {
+    position: 'relative',
+    display: 'flex',
+    flexDirection: stacked ? 'column' : 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: selected ? '#d9f7be' : '#fff',
+    border: `1px solid ${selected ? '#389e0d' : '#52c41a'}`,
+    borderRadius: '3px',
+    padding: '0 3px',
+    // 单箭头（in / out）也给个 14px 最小边长，小徽标不好点
+    minWidth: '14px',
+    minHeight: '14px',
+    fontFamily: 'monospace',
+  };
+  const arrowsStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    flexDirection: stacked ? 'column' : 'row',
+    alignItems: 'center',
+    fontSize: '8px',
+    lineHeight: '8px',
+    color: '#8c8c8c',
+  };
+  // 端口名：无边框无底色的裸文字，只靠位置表明归属，避免突兀
+  const labelStyle: React.CSSProperties = {
+    position: 'absolute',
+    ...portLabelOffset(side),
+    color: '#595959',
+    fontFamily: 'monospace',
+    fontSize: '10px',
+    lineHeight: '12px',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+  };
+  const handleStyle = { background: '#52c41a', width: 5, height: 5 };
+  // 把手放在「朝外」那条边上，连线自然从 part 外侧引出去
+  const [inbound, outbound] = vertical
+    ? side === 'top'
+      ? [Position.Bottom, Position.Top]
+      : [Position.Top, Position.Bottom]
+    : side === 'left'
+      ? [Position.Right, Position.Left]
+      : [Position.Left, Position.Right];
+  const nudge = (pos: Position) =>
+    ({
+      [Position.Left]: { left: -3 },
+      [Position.Right]: { right: -3 },
+      [Position.Top]: { top: -3 },
+      [Position.Bottom]: { bottom: -3 },
+    })[pos];
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-        background: selected ? '#d9f7be' : '#fff',
-        border: `1.5px solid ${selected ? '#389e0d' : '#52c41a'}`,
-        borderRadius: '10px',
-        padding: '2px 8px',
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        minWidth: '80px',
-      }}
-    >
-      <Handle type="target" position={Position.Left} style={{ background: '#52c41a', width: 6, height: 6, left: -3 }} />
-      <span style={{ fontSize: '9px', color: '#8c8c8c' }}>{directionArrow}</span>
-      <span style={{ color: '#262626', whiteSpace: 'nowrap' }}>{d.label}</span>
-      <Handle type="source" position={Position.Right} style={{ background: '#52c41a', width: 6, height: 6, right: -3 }} />
+    <div style={badgeStyle}>
+      <Handle type="target" position={inbound} style={{ ...handleStyle, ...nudge(inbound) }} />
+      <span style={arrowsStyle}>{glyphs.map((g) => <span key={g}>{g}</span>)}</span>
+      <Handle type="source" position={outbound} style={{ ...handleStyle, ...nudge(outbound) }} />
+      <span style={labelStyle}>{d.label}</span>
     </div>
   );
 };
@@ -318,10 +393,27 @@ const nodeTypes = {
 
 // ─── 回调接口 ─────────────────────────────────────────
 
+/**
+ * 画布上「不是空白」的元素：节点、连线、缩放控件、缩略图、自定义面板。
+ * 双击新建和空白点击的位移判定都要靠它把「点在空白上」筛出来 ——
+ * 节点 DOM 就在 .react-flow__pane 内部，光靠 closest('.react-flow__pane') 分不开。
+ */
+const NON_PANE_SELECTOR =
+  '.react-flow__node, .react-flow__edge, .react-flow__controls, ' +
+  '.react-flow__minimap, .react-flow__panel';
+
 export interface DiagramCanvasProps {
   nodes: Node[];
   edges: Edge[];
-  onNodeRename?: (nodeId: string, newName: string) => void;
+  /**
+   * M17: 双击节点 → 请求宿主聚焦右栏「名称」输入框（进入改名）。
+   * 不带 node 参数：双击的同时 handleNodeDoubleClick 已经把节点选中了，
+   * 右栏此时显示的就是这个节点的属性表单，宿主只需要把「聚焦请求」的计数 +1。
+   *
+   * 改名本身仍走属性表单的 applyFieldEdit(fieldKey='name') → renameNode，
+   * 画布不再直接调改名接口（原实现用 window.prompt）。
+   */
+  onNodeRenameFocus?: () => void;
   onNodeDelete?: (nodeId: string) => void;
   onEdgeDelete?: (edgeId: string) => void;
   onNodesDelete?: (nodeIds: string[]) => void;
@@ -362,7 +454,7 @@ export interface DiagramCanvasHandle {
 export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>(({
   nodes,
   edges,
-  onNodeRename,
+  onNodeRenameFocus,
   onNodeDelete,
   onNodesDelete,
   onEdgesDelete,
@@ -396,6 +488,53 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
    * value：节点 id → 节点身份（type + label）
    */
   const selectedRef = React.useRef<Map<string, { type?: string; label?: string }>>(new Map());
+
+  /**
+   * M17: 是否正按住空格（= 平移手势激活）。
+   *
+   * 空格 + 左键是**唯一**的平移方式，所以这个状态必须复位得足够干净：
+   * keyup 收不到（切窗口时按着空格）的话平移手段会直接消失，所以 window blur
+   * 也当作抬起处理。
+   */
+  const [spacePan, setSpacePan] = React.useState(false);
+
+  React.useEffect(() => {
+    /**
+     * 空格在这些地方是别的功能，按住它们不该武装平移：
+     *  - input/textarea/select/contentEditable：属性表单、搜索框输入空格
+     *  - .monaco-editor：SysML 文本编辑器（它靠隐藏 textarea 收键盘）
+     *  - 工程树行：Space = 选中当前行（ProjectTree 只 preventDefault，
+     *    没有 stopPropagation，事件照样冒到 window）
+     */
+    const isTypingTarget = (t: EventTarget | null): boolean => {
+      if (!(t instanceof HTMLElement)) return false;
+      if (t.isContentEditable) return true;
+      if (t.closest('.monaco-editor')) return true;
+      if (t.closest('[data-testid^="tree-row-"]')) return true;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault(); // 空格别把页面滚了
+      setSpacePan(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      setSpacePan(false);
+    };
+    // 按着空格切走窗口：keyup 永远不来，必须在这里复位
+    const blur = () => setSpacePan(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
 
   /** 在给定节点池里解析「用户以为选中的那个节点」：先按 id，再按身份兜底 */
   const resolveSelected = React.useCallback((pool: Node[]): Node | null => {
@@ -535,6 +674,21 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         }
       }
     }
+    // M17：先给所有「可作为端口宿主」的节点量出绝对包围盒，供下面算吸附边。
+    // 端口自身的盒子在 map 回调里现算（measured 可能刚拿到）。
+    const boxes = new Map<string, { x: number; y: number; width: number; height: number }>();
+    for (const n of nodes) {
+      if (n.type === 'sysmlPort') continue;
+      const m = (n as { measured?: { width: number; height: number } }).measured
+        ?? prevMeasured.get(String(n.id));
+      boxes.set(String(n.id), {
+        x: n.position?.x ?? 0,
+        y: n.position?.y ?? 0,
+        width: m?.width ?? FALLBACK_NODE_W,
+        height: m?.height ?? FALLBACK_NODE_H,
+      });
+    }
+
     return nodes.map((n) => {
       const idStr = String(n.id);
       const cls: string[] = [];
@@ -549,9 +703,33 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         const isDef = /sysml.*Def$/.test(nodeType) || /sysml.*Definition$/.test(nodeType);
         cls.push(isDef ? 'rf-palette-drop-ok' : 'rf-palette-drop-bad');
       }
+      // M17：端口按几何算「贴的是 part 的哪条边」→ 灌进 data.attachSide，
+      // 并把徽标位置吸到那条边框上（名字飘在框外，见 PortNode）。
+      // 端口的 parentId 在 Node 顶层（自定义字段，React Flow 不认），
+      // 详见 lib/portSide.ts 的说明。
+      const parentId = (n as { parentId?: string }).parentId;
+      let data = n.data as BaseNodeData;
+      let position = n.position;
+      if (n.type === 'sysmlPort' && parentId) {
+        const parent = boxes.get(parentId);
+        if (parent) {
+          const self = {
+            x: n.position?.x ?? 0,
+            y: n.position?.y ?? 0,
+            width: measured?.width ?? FALLBACK_PORT_W,
+            height: measured?.height ?? FALLBACK_PORT_H,
+          };
+          const side = portAttachSide(self, parent);
+          if (data.attachSide !== side) data = { ...data, attachSide: side };
+          const snapped = snapPortToBorder(self, parent, side);
+          if (snapped.x !== self.x || snapped.y !== self.y) position = snapped;
+        }
+      }
       return {
         ...n,
         id: idStr,
+        data,
+        position,
         selected: selectedNodeIds.has(idStr),
         className: cls.length > 0 ? cls.join(' ') : undefined,
         ...(measured ? { measured } : {}),
@@ -563,19 +741,61 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [edges]
   );
 
-  // 双击节点 → 改名 prompt
+  // 双击节点 → 选中 + 请右栏聚焦「名称」输入框（不再弹 window.prompt）
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       if (!interactive) return; // text 模式：禁用
-      if (!onNodeRename) return;
-      if ((node as { parentId?: string }).parentId) return;
-      const label = (node.data as { label?: string })?.label ?? '';
-      const input = window.prompt(`改名为（新名字必须符合 SysML 标识符规则）:`, label);
-      if (input && input !== label) {
-        onNodeRename(String(node.id), input.trim());
-      }
+      if ((node as { parentId?: string }).parentId) return; // 端口不参与改名
+      // 端口徽标之外还要确保属性表单已经切到这个节点：直接补一次选中回写，
+      // 否则「双击的那一下」若是首次选中，右栏要到下一次渲染才更新。
+      const idStr = String(node.id);
+      selectedRef.current = new Map([
+        [idStr, { type: node.type, label: (node.data as { label?: string })?.label }],
+      ]);
+      setSelectedNodeIds(new Set([idStr]));
+      onSelectionChange?.(node);
+      onNodeRenameFocus?.();
     },
-    [onNodeRename, interactive]
+    [interactive, onNodeRenameFocus, onSelectionChange]
+  );
+
+  /**
+   * M17: 点画布空白 → 清选中，右栏回退到「所属实体」（包页→包属性 / 视图页→视图属性）。
+   *
+   * 不靠 React Flow 的 resetSelectedElements()：它只发 select change，
+   * 而我们的 handleNodesChange 会把 select 回写进 selectedRef，
+   * resolveSelected 那层「同类型 + 同名」兜底（为文本编辑 id 平移而存在）
+   * 仍可能把已清掉的选中态认回来。
+   *
+   * 到达路径：开了 selectionOnDrag 之后 Pane 不再挂 onClick（index.js:1650），
+   * 改由 onPointerUp 在「没真正框出选区」时调用同一个 onClick（index.js:1622）。
+   * 所以这里收到的是 pointerup 事件而不是 click —— React 的类型写的是
+   * ReactMouseEvent，但 clientX/clientY 两个都有。
+   *
+   * 位移守卫是双保险：框选拖拽已被 userSelectionActive 挡掉、
+   * 空格平移已被 d3-zoom 的 clickDistance 挡掉，这里再按 3px 卡一道，
+   * 免得哪天改了 RF 的 props 组合就把刚选好的节点误清了。
+   */
+  const paneDownPosRef = React.useRef<{ x: number; y: number } | null>(null);
+  /**
+   * React Flow 没有 onPanePointerDown 这个 prop，所以起点记在外层 wrapper 上，
+   * 再按 NON_PANE_SELECTOR 筛出真正的画布空白。
+   */
+  const handleCanvasPointerDown = useCallback((e: React.PointerEvent) => {
+    const onPane = !(e.target as HTMLElement | null)?.closest(NON_PANE_SELECTOR);
+    paneDownPosRef.current = onPane ? { x: e.clientX, y: e.clientY } : null;
+  }, []);
+  const handlePaneClick = useCallback(
+    (e: React.MouseEvent) => {
+      const start = paneDownPosRef.current;
+      paneDownPosRef.current = null;
+      // 位移超过 3px = 这不是「单击」，是框选 / 空格平移的收尾，别动选中态
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 3) return;
+      selectedRef.current = new Map();
+      setSelectedNodeIds(new Set());
+      onSelectionChange?.(null);
+    },
+    [onSelectionChange],
   );
 
   const handleNodesChange = useCallback(
@@ -696,14 +916,27 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     setHoveredPaletteDropNodeId(null);
   }, [interactive, onPaletteDrop]);
 
-  const handlePaneDoubleClick = useCallback((e: React.MouseEvent) => {
-    if (!interactive) return;
-    if (!onPaneDoubleClick) return;
-    const instance = rfInstanceRef.current;
-    if (!instance) return;
-    const flowPos = instance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    onPaneDoubleClick(flowPos);
-  }, [interactive, onPaneDoubleClick]);
+  /**
+   * 双击**画布空白** → 按当前视图类型新建元素。
+   *
+   * 挂在 wrapper 的原生 onDoubleClick 上，但必须把节点/连线/控件排除掉 ——
+   * 这正是原先 bug 的成因：`onDoubleClick` 被透传到 rf__wrapper
+   * （@xyflow/react index.js:3775 的 ...rest），双击节点会冒泡到这里，
+   * 于是「双击已有元素」既触发改名 prompt 又新建了一个元素。
+   * （12.11.6 没有 onPaneDoubleClick prop，只能自己在 wrapper 上筛。）
+   */
+  const handlePaneDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!interactive) return;
+      if (!onPaneDoubleClick) return;
+      if ((e.target as HTMLElement | null)?.closest(NON_PANE_SELECTOR)) return;
+      const instance = rfInstanceRef.current;
+      if (!instance) return;
+      const flowPos = instance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      onPaneDoubleClick(flowPos);
+    },
+    [interactive, onPaneDoubleClick],
+  );
 
   return (
     <div
@@ -711,8 +944,11 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       style={{ width: '100%', height: '100%', position: 'relative' }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onPointerDownCapture={handleCanvasPointerDown}
+      onDoubleClick={handlePaneDoubleClick}
       data-testid="canvas-wrapper"
       data-mode={interactive ? 'drag' : 'text'}
+      data-space-pan={spacePan ? '1' : undefined}
     >
       <ReactFlow
         nodes={stableNodes}
@@ -726,9 +962,20 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         onConnect={handleConnect}
         onInit={handleInit}
         onSelectionChange={handleSelectionChange}
-        onDoubleClick={handlePaneDoubleClick}
+        // 空白处单击 → 清选中（ReactFlow 只负责把事件递过来，位移起点见 handleCanvasPointerDown）
+        onPaneClick={handlePaneClick}
         onlyRenderVisibleElements={true}
-        nodesDraggable={interactive}
+        // M17：空格+左键是唯一平移方式 → 空白处左键改成框选。
+        // RF 内部 panOnDrag = panActivationKeyPressed || _panOnDrag，
+        // 所以 _panOnDrag 关掉后，空格按下时 pane 会自动切回平移。
+        panOnDrag={false}
+        selectionOnDrag
+        panActivationKeyCode="Space"
+        // 按住空格时必须禁掉节点拖拽：RF 的节点拖拽过滤器
+        // （@xyflow/system index.js:2351）只看 button / noDragClassName /
+        // handleSelector，完全不看 panActivationKeyPressed，
+        // 不关掉的话「空格+拖节点」仍然是拖节点而不是平移。
+        nodesDraggable={interactive && !spacePan}
         nodesConnectable={interactive}
         elementsSelectable={true}
         deleteKeyCode={['Backspace', 'Delete']}

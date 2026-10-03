@@ -84,9 +84,11 @@ export interface ModelingPaneProps {
   adapter: ModelingAdapter;
   /** M14：暴露 diagramRef 给宿主（用于从树点击元素后聚焦画布节点） */
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
+  /** M17：双击画布节点 → 宿主把右栏「名称」输入框聚焦过来 */
+  onRenameFocus?: () => void;
 }
 
-export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramReady }) => {
+export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramReady, onRenameFocus }) => {
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const modelingMode = useUIStore((s) => s.modelingMode);
@@ -304,8 +306,8 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* 简化的 Palette：直接复用 PalettePanel（M11 组件，已对接 modelStore） */}
-        <PalettePanel />
+        {/* Palette 工具箱：仅可视化模式显示（文本模式由编辑器 + 右侧属性面板承担） */}
+        {modelingMode !== 'text' && <PalettePanel />}
 
         {/* 主体 */}
         {modelingMode === 'text' ? (
@@ -341,7 +343,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
                 ref={diagramRef}
                 nodes={adapter.pipeline.nodes}
                 edges={adapter.pipeline.edges}
-                onNodeRename={adapter.renameNode}
+                onNodeRenameFocus={onRenameFocus}
                 onNodeDelete={adapter.deleteNode}
                 onNodesDelete={(ids) => ids.forEach(adapter.deleteNode)}
                 onEdgesDelete={(ids) => ids.forEach(adapter.deleteConnection)}

@@ -99,9 +99,10 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
             <div className="font-sans text-[10px] font-semibold uppercase tracking-wider text-gray-500">
               快捷键
             </div>
-            <div>双击节点：改名</div>
+            <div>双击节点：选中并定位名称</div>
             <div>Backspace：删除节点</div>
             <div>拖动：移动位置</div>
+            <div>空格 + 拖动：平移画布</div>
           </div>
         </div>
       </aside>

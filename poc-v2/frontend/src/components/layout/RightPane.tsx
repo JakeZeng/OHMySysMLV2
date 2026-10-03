@@ -26,6 +26,11 @@ export interface RightPaneProps {
   selectedPackageId: string | null;
   selectedViewId: string | null;
   selectedNode: Node | null;
+  /**
+   * M17：画布双击节点 → 聚焦 ElementFormPanel 的「名称」输入框。
+   * 自增计数（而不是 boolean）：连续两次双击时 boolean 不变，第二次不会重新全选。
+   */
+  focusNameTick?: number;
   onClearedSelection: () => void;
   onOpenSettings: () => void;
   onOpenShare: () => void;
@@ -36,6 +41,7 @@ export const RightPane: React.FC<RightPaneProps> = ({
   selectedPackageId,
   selectedViewId,
   selectedNode,
+  focusNameTick,
   onClearedSelection,
   onOpenSettings,
   onOpenShare,
@@ -74,6 +80,7 @@ export const RightPane: React.FC<RightPaneProps> = ({
         <div className="flex-1 overflow-y-auto p-3">
           <ElementFormPanel
             selectedNode={selectedNode}
+            focusNameTick={focusNameTick}
             onClear={onClearedSelection}
           />
         </div>

@@ -39,6 +39,8 @@ export interface ViewRendererProps {
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
   /** 点击 satisfies 视角时跳转（宿主注入） */
   onOpenViewpoint?: (viewpointId: string) => void;
+  /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
+  onRenameFocus?: () => void;
 }
 
 const BEHAVIOR_KINDS: ReadonlySet<BehaviorKind> = new Set(['state', 'action', 'snapshot']);
@@ -49,6 +51,7 @@ export const ViewRenderer: React.FC<ViewRendererProps> = ({
   onSelectNode,
   onDiagramReady,
   onOpenViewpoint,
+  onRenameFocus,
 }) => {
   const { view } = useViewDetail(viewId);
   const renderKind = view?.renderKind ?? 'interconnection';
@@ -91,6 +94,7 @@ export const ViewRenderer: React.FC<ViewRendererProps> = ({
             selectedNode={selectedNode}
             onSelectNode={onSelectNode}
             onDiagramReady={onDiagramReady}
+            onRenameFocus={onRenameFocus}
           />
         </div>
       </>

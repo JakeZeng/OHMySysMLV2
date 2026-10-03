@@ -24,6 +24,8 @@ export interface PackageModelingPaneProps {
   onSelectNode: (n: Node | null) => void;
   /** M14：暴露 diagramRef 给宿主 */
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
+  /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
+  onRenameFocus?: () => void;
 }
 
 export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
@@ -31,6 +33,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
   selectedNode,
   onSelectNode,
   onDiagramReady,
+  onRenameFocus,
 }) => {
   const { showToast } = useToast();
   const content = usePackageContent(packageId);
@@ -97,7 +100,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
 
   return (
     <>
-      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} />
+      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} onRenameFocus={onRenameFocus} />
       <TemplateChooserModal
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}

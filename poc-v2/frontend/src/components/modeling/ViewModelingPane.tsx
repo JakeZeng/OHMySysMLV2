@@ -21,6 +21,8 @@ export interface ViewModelingPaneProps {
   onSelectNode: (n: Node | null) => void;
   /** M14：暴露 diagramRef 给宿主 */
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
+  /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
+  onRenameFocus?: () => void;
 }
 
 export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
@@ -28,6 +30,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
   selectedNode,
   onSelectNode,
   onDiagramReady,
+  onRenameFocus,
 }) => {
   const { showToast } = useToast();
   const view = useViewContent(viewId);
@@ -94,7 +97,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
 
   return (
     <>
-      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} />
+      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} onRenameFocus={onRenameFocus} />
       <TemplateChooserModal
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}

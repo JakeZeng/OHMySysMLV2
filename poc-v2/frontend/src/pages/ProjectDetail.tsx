@@ -259,6 +259,17 @@ export const ProjectDetail: React.FC = () => {
     null,
   );
 
+  /**
+   * M17：双击画布节点 → 聚焦右栏「名称」输入框。
+   * 用自增计数而不是 boolean：连续两次双击同一个节点时 boolean 不变，
+   * 第二次的 useEffect 不会重跑，输入框也就不会被重新全选。
+   */
+  const [renameFocusTick, setRenameFocusTick] = React.useState(0);
+  const handleRenameFocus = React.useCallback(
+    () => setRenameFocusTick((t) => t + 1),
+    [],
+  );
+
   // M14：ModelingPane 把 diagramRef 暴露给宿主（用于从树点击元素后聚焦画布节点）
   const diagramHandleRef = React.useRef<DiagramCanvasHandle | null>(null);
   const handleDiagramReady = React.useCallback(
@@ -1102,6 +1113,7 @@ export const ProjectDetail: React.FC = () => {
               onCreatePackage={() => void handleCreatePackage(null)}
               onCreateView={() => void handleCreateView(null)}
               onDiagramReady={handleDiagramReady}
+              onRenameFocus={handleRenameFocus}
               onOpenViewpoint={(id) => setSearchParams({ viewpoint: id })}
             />
           }
@@ -1111,6 +1123,7 @@ export const ProjectDetail: React.FC = () => {
               selectedPackageId={selectedPackageId}
               selectedViewId={selectedViewId}
               selectedNode={selectedCanvasNode}
+              focusNameTick={renameFocusTick}
               onClearedSelection={clearSelection}
               onOpenSettings={() => setShowSettings(true)}
               onOpenShare={() => setShowShare(true)}
