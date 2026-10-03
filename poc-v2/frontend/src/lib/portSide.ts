@@ -12,7 +12,18 @@
  *
  * 判定结果供 DiagramCanvas 注入 `data.attachSide`，PortNode 据此决定方向箭头
  * 是横排（◀▶，左右边）还是竖排（▲▼，上下边），并把 Handle 挪到对应边上。
+ *
+ * M17：判边规则已下沉到 `anchor.ts` 的 `anchorFromPoint`，本文件只保留
+ * 「端口语义」的包装 —— 连线端点与端口贴边共用同一套几何，避免两套竞争规则。
  */
+
+import {
+  anchorFromPoint,
+  anchorPoint,
+  boxCenter,
+  normalizeAnchor,
+  type Anchor,
+} from './anchor';
 
 export type PortSide = 'left' | 'right' | 'top' | 'bottom';
 
@@ -31,19 +42,13 @@ export function isVerticalSide(side: PortSide): boolean {
 /**
  * 端口贴的是 part 的哪条边。
  *
- * 取 |dx|/parent.width 与 |dy|/parent.height 中较大的一轴定方向：
- * - 横向更大 → cx 在 part 中心左边记 'left'，否则 'right'
- * - 纵向更大 → cy 在 part 中心上边记 'top'，否则 'bottom'
+ * 现在只是 `anchorFromPoint` 的薄封装 —— 判边规则已经收敛到 anchor.ts 一处
+ * （取 |dx|/parent.width 与 |dy|/parent.height 中较大的一轴，偏移相等走横轴）。
+ * 这里保留 `PortSide` 别名与函数签名，是因为 DiagramCanvas / PortNode 消费的是
+ * 「边」这个概念，不关心沿边的 ratio —— 而连线端点需要完整的锚点。
  */
 export function portAttachSide(port: PortBox, parent: PortBox): PortSide {
-  const pcx = parent.x + parent.width / 2;
-  const pcy = parent.y + parent.height / 2;
-  const cx = port.x + port.width / 2;
-  const cy = port.y + port.height / 2;
-  const dx = Math.abs(cx - pcx) / Math.max(parent.width, 1);
-  const dy = Math.abs(cy - pcy) / Math.max(parent.height, 1);
-  if (dx >= dy) return cx < pcx ? 'left' : 'right';
-  return cy < pcy ? 'top' : 'bottom';
+  return anchorFromPoint(boxCenter(port), parent).side;
 }
 
 /**
@@ -109,6 +114,75 @@ export function snapPortToBorder(
         y: parent.y + parent.height - port.height / 2,
       };
   }
+}
+
+/**
+ * 端口的最终摆放：节点左上角坐标 + 贴边锚点 + 吸附边。
+ *
+ * 三个字段一起返回，是因为它们**必须同源**：徽标中心骑在边框线上，边是事实，
+ * 位置是结果。分开存、分开算就会在角上互相拉扯（见本文件开头的说明）。
+ */
+export interface PortPlacement {
+  /** 徽标节点自身的左上角坐标 */
+  position: { x: number; y: number };
+  /** 在 parent 边框上的挂点（可持久化） */
+  anchor: Anchor;
+  /** 供 PortNode 决定箭头排布方向 */
+  side: PortSide;
+}
+
+/**
+ * 由锚点单向推导徽标位置 —— 锚点在这里是**事实**。
+ *
+ * 父元素被拖动 / 拉伸后，锚点不变、边框变，徽标跟着边框走；这正是把锚点
+ * 持久化（而不是只存坐标）的意义。
+ */
+export function placePortByAnchor(
+  port: PortBox,
+  parent: PortBox,
+  anchor: Anchor,
+): PortPlacement {
+  const pt = anchorPoint(anchor, parent);
+  return {
+    // 徽标中心骑在边框线上 → 左上角要往回退半个徽标
+    position: { x: pt.x - port.width / 2, y: pt.y - port.height / 2 },
+    anchor: normalizeAnchor(anchor),
+    side: anchor.side,
+  };
+}
+
+/**
+ * 没有锚点时按几何吸附（**既有行为**，供老数据 / 新建端口兜底），并反推出锚点。
+ *
+ * 反推这一步是关键：即使本次是靠坐标吸附，也顺手把锚点补上，下次就能走
+ * 锚点推导分支。否则锚点永远是 undefined，用户拖过的位置一刷新就又变回
+ * 「按坐标吸附」，父元素一动就掉出边框。
+ */
+export function placePortByGeometry(port: PortBox, parent: PortBox): PortPlacement {
+  const side = portAttachSide(port, parent);
+  const snapped = snapPortToBorder(port, parent, side);
+  const placed: PortBox = { ...snapped, width: port.width, height: port.height };
+  return {
+    position: snapped,
+    anchor: normalizeAnchor(anchorFromPoint(boxCenter(placed), parent)),
+    side,
+  };
+}
+
+/**
+ * 端口摆放的统一入口 —— 有锚点走锚点，没锚点走几何。
+ *
+ * 调用方（DiagramCanvas 的 stableNodes / handleNodesChange）只认这一个函数，
+ * 免得两处各自判断「有没有锚点」而写出不一致的分支。
+ */
+export function resolvePortPlacement(
+  port: PortBox,
+  parent: PortBox,
+  anchor?: Anchor | null,
+): PortPlacement {
+  return anchor
+    ? placePortByAnchor(port, parent, anchor)
+    : placePortByGeometry(port, parent);
 }
 
 /**

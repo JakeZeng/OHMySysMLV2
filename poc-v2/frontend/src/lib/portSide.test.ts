@@ -5,10 +5,28 @@ import {
   isVerticalSide,
   snapPortToBorder,
   portLabelOffset,
+  placePortByAnchor,
+  placePortByGeometry,
+  resolvePortPlacement,
 } from './portSide';
+import { anchorFromPoint, boxCenter } from './anchor';
 
 const PART = { x: 100, y: 100, width: 200, height: 80 };
 const BADGE = { width: 18, height: 14 };
+
+describe('portAttachSide === anchorFromPoint(...).side', () => {
+  it('扫一遍画布网格，两者逐格一致（锁定委托关系）', () => {
+    // portAttachSide 已是 anchorFromPoint 的薄封装。这里遍历一张网格式的徽标位置，
+    // 确认「端口贴边」和「连线端点选边」永远不会给出两套矛盾的答案 ——
+    // 这正是 M17 把两个需求收敛到同一个抽象的目的。
+    for (let x = -50; x <= 350; x += 25) {
+      for (let y = -50; y <= 250; y += 25) {
+        const port = { x, y, width: 18, height: 14 };
+        expect(portAttachSide(port, PART)).toBe(anchorFromPoint(boxCenter(port), PART).side);
+      }
+    }
+  });
+});
 
 describe('portAttachSide — 端口贴哪条边', () => {
   it('端口中心在 part 左侧 → left', () => {
@@ -150,6 +168,137 @@ describe('portLabelOffset — 名字贴在朝外那条边', () => {
     for (const side of ['left', 'right', 'top', 'bottom'] as const) {
       const o = portLabelOffset(side);
       expect(Object.keys(o).some((k) => k === 'right' || k === 'bottom')).toBe(side === 'left' || side === 'top');
+    }
+  });
+});
+
+// ─── M17 S4：锚点 ⇄ 徽标位置 ──────────────────────────────────────────
+//
+// 需求 2「端口可任意拖到 owner 元素的任意边任意位置」的判定标准。
+// 关键不变量：徽标中心恒骑在边框线上，且**父元素改了尺寸/位置后徽标跟着走**。
+
+describe('placePortByAnchor — 锚点是事实，位置是结果', () => {
+  const center = (p: { x: number; y: number }) => boxCenter({ ...p, ...BADGE });
+
+  it('四条边的任意 ratio：徽标中心精确落在边框线上', () => {
+    const cases = [
+      { side: 'left', ratio: 0.25 },
+      { side: 'right', ratio: 0.75 },
+      { side: 'top', ratio: 0.1 },
+      { side: 'bottom', ratio: 0.9 },
+    ] as const;
+    for (const anchor of cases) {
+      const r = placePortByAnchor({ x: 0, y: 0, ...BADGE }, PART, anchor);
+      expect(r.side).toBe(anchor.side);
+      const c = center(r.position);
+      if (anchor.side === 'left') expect(c.x).toBeCloseTo(PART.x, 6);
+      if (anchor.side === 'right') expect(c.x).toBeCloseTo(PART.x + PART.width, 6);
+      if (anchor.side === 'top') expect(c.y).toBeCloseTo(PART.y, 6);
+      if (anchor.side === 'bottom') expect(c.y).toBeCloseTo(PART.y + PART.height, 6);
+      // 沿边坐标也要对上（量化到 1/48，容差半个量级 ≈ 200/48/2）
+      const tol = 3;
+      if (anchor.side === 'left' || anchor.side === 'right') {
+        expect(c.y).toBeCloseTo(PART.y + anchor.ratio * PART.height, -0.5);
+        expect(Math.abs(c.y - (PART.y + anchor.ratio * PART.height))).toBeLessThan(tol);
+      } else {
+        expect(Math.abs(c.x - (PART.x + anchor.ratio * PART.width))).toBeLessThan(tol);
+      }
+    }
+  });
+
+  it('父元素平移 → 徽标跟着平移，偏移量不变（这是存锚点而非存坐标的意义）', () => {
+    const anchor = { side: 'top', ratio: 0.5 } as const;
+    const before = placePortByAnchor({ x: 0, y: 0, ...BADGE }, PART, anchor);
+    const moved = { ...PART, x: PART.x + 137, y: PART.y - 42 };
+    const after = placePortByAnchor({ x: 0, y: 0, ...BADGE }, moved, anchor);
+    expect(after.position.x - before.position.x).toBeCloseTo(137, 6);
+    expect(after.position.y - before.position.y).toBeCloseTo(-42, 6);
+  });
+
+  it('父元素被拉伸（高度 80→200）→ 徽标仍在同一条边的同一比例处', () => {
+    const anchor = { side: 'right', ratio: 0.5 } as const;
+    const before = placePortByAnchor({ x: 0, y: 0, ...BADGE }, PART, anchor);
+    const stretched = { ...PART, height: 200 };
+    const after = placePortByAnchor({ x: 0, y: 0, ...BADGE }, stretched, anchor);
+    expect(after.position.y - before.position.y).toBeCloseTo(60, 6); // (200-80)/2
+    expect(after.position.x).toBeCloseTo(before.position.x, 6);   // 右边没动
+  });
+
+  it('越界 ratio 被夹进 [0,1]，不产生框外的徽标', () => {
+    const r = placePortByAnchor({ x: 0, y: 0, ...BADGE }, PART, { side: 'left', ratio: 5 });
+    expect(r.anchor.ratio).toBe(1);
+    expect(r.position.y + BADGE.height / 2).toBeCloseTo(PART.y + PART.height, 6);
+  });
+
+  it('ratio 量化到 1/48 份 —— 存进去的是干净值，不是浮点尾巴', () => {
+    const r = placePortByAnchor({ x: 0, y: 0, ...BADGE }, PART, { side: 'top', ratio: 1 / 3 });
+    expect(r.anchor.ratio * 48).toBe(Math.round(r.anchor.ratio * 48));
+  });
+});
+
+describe('placePortByGeometry — 没有锚点时的兜底，且顺手补出锚点', () => {
+  it('位置与既有 snapPortToBorder + portAttachSide 完全一致（不回归）', () => {
+    // 每条边各给一个真能判到该边的徽标位置（判边用归一化偏移，
+    // PART 是 200×80 的扁框，上下方向要离得更远才压过横向）
+    const cases = [
+      { side: 'left', port: { x: 20, y: 130 } },
+      { side: 'right', port: { x: 270, y: 130 } },
+      { side: 'top', port: { x: 141, y: 20 } },
+      { side: 'bottom', port: { x: 141, y: 230 } },
+    ] as const;
+    for (const { side, port } of cases) {
+      const full = { ...port, ...BADGE };
+      const snapped = snapPortToBorder(full, PART, side);
+      const r = placePortByGeometry(full, PART);
+      expect(portAttachSide(full, PART)).toBe(side);
+      expect(r.position).toEqual(snapped);
+      expect(r.side).toBe(side);
+    }
+  });
+
+  it('反推出的锚点与判定出的边一致', () => {
+    const r = placePortByGeometry({ x: 42, y: 37, ...BADGE }, PART);
+    expect(r.anchor.side).toBe(r.side);
+  });
+
+  it('反推出的锚点回灌后位置基本不动（量化误差内）—— 幂等', () => {
+    const first = placePortByGeometry({ x: 42, y: 37, ...BADGE }, PART);
+    const second = placePortByAnchor({ ...first.position, ...BADGE }, PART, first.anchor);
+    expect(Math.abs(second.position.x - first.position.x)).toBeLessThanOrEqual(3);
+    expect(Math.abs(second.position.y - first.position.y)).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('resolvePortPlacement — 有锚点走锚点，无锚点走几何', () => {
+  it('给了锚点 → 走锚点分支，忽略传进来的原始坐标', () => {
+    const anchor = { side: 'bottom', ratio: 0.25 } as const;
+    const a = resolvePortPlacement({ x: 999, y: 999, ...BADGE }, PART, anchor);
+    const b = placePortByAnchor({ x: 999, y: 999, ...BADGE }, PART, anchor);
+    expect(a).toEqual(b);
+  });
+
+  it('锚点为 null / undefined → 回落几何分支', () => {
+    for (const none of [null, undefined]) {
+      expect(resolvePortPlacement({ x: 42, y: 37, ...BADGE }, PART, none)).toEqual(
+        placePortByGeometry({ x: 42, y: 37, ...BADGE }, PART),
+      );
+    }
+  });
+
+  it('全网格扫描：任意拖动位置都能落到 owner 的某条边上', () => {
+    // 需求 2 的核心断言：不存在「拖到哪儿都贴不上边」的死角。
+    for (let x = -80; x <= 400; x += 20) {
+      for (let y = -80; y <= 300; y += 20) {
+        const r = placePortByGeometry({ x, y, ...BADGE }, PART);
+        const c = boxCenter({ ...r.position, ...BADGE });
+        // 徽标中心至少有一条坐标轴压在 part 的边界上
+        const onEdge =
+          Math.abs(c.x - PART.x) < 0.001 ||
+          Math.abs(c.x - (PART.x + PART.width)) < 0.001 ||
+          Math.abs(c.y - PART.y) < 0.001 ||
+          Math.abs(c.y - (PART.y + PART.height)) < 0.001;
+        expect(onEdge).toBe(true);
+      }
     }
   });
 });

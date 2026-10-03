@@ -950,8 +950,15 @@ ConnectStatement
       };
     }
 
-// 端点表达式：`a.b.c.d` —— 多层嵌套访问。
-// MVP 简化：只取最后一层作为 portName，前面拼起来作为 partName。
+// 端点表达式：两种形态。
+//
+// 1. `a.b.c.d` —— 多层嵌套访问。MVP 简化：只取最后一层作为 portName，
+//    前面拼起来作为 partName。
+// 2. `a` —— **裸端点**，SysML v2 语义上合法（连到 part 本身，不指定端口）。
+//    port 为 undefined（**不是空串** —— 空串会和匿名端口 `port :>> x;` 的
+//    名字撞上，modelToFlow 查端口表时会误命中）。
+//
+// 顺序要紧：带点的分支必须在前，否则 `a.b` 会被裸分支先吃掉 `.b`。
 EndpointExpr
   = a:Identifier _ "." _ b:Identifier _ "." _ c:Identifier rest:(_ "." _ Identifier)*
     {
@@ -962,6 +969,8 @@ EndpointExpr
     }
   / a:Identifier _ "." _ b:Identifier
     { return { part: a, port: b }; }
+  / a:Identifier !("." / "to")
+    { return { part: a, port: undefined }; }
 
 // ─── 原子符号 ─────────────────────────────────────────────────────────
 

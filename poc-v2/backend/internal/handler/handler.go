@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -1431,10 +1432,65 @@ func (h *Handler) DeleteViewpoint(c *gin.Context) {
 
 // ─── M16 P5/Q10：画布布局持久化（kind = package | view；不 bump version） ───
 
+// LayoutAnchor 端口在所属元素边框上的挂点。
+//
+// M17：坐标只能表达「在哪」，不能表达「贴哪条边的哪个位置」—— 父元素一旦
+// 拉伸，端口就会被钉死在某个绝对坐标上、从边框上掉下来。锚点是尺寸无关的。
+type LayoutAnchor struct {
+	Side  string  `json:"side"`            // left | right | top | bottom
+	Ratio float64 `json:"ratio"`           // 沿该边的归一化位置，[0, 1]
+}
+
 // LayoutPosition 单节点坐标。
 type LayoutPosition struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
+	// Attach 仅端口节点有值；nil 表示普通元素 / 老数据（回落按坐标渲染）。
+	//
+	// 用指针区分「没有锚点」与「锚点在 (0,0)」—— 后者不合法，但指针能让
+	// 两者在 JSON 层面就是不同形状，不至于被静默当成同一件事。
+	Attach *LayoutAnchor `json:"attach,omitempty"`
+}
+
+// normalizeLayoutPosition 清洗客户端送来的布局条目。
+//
+// attach 里的 side 是自由字符串、ratio 是任意浮点，都是**不可信输入**。
+// 与其在读取时处处提防，不如在入库前就收敛成合法值：非法 side 直接丢掉整个
+// 锚点（等价于「这个端口没有锚点」，前端会回落到按坐标吸附，行为可预期），
+// ratio 夹进 [0,1]，NaN / Inf 一律当 0.5（正中）。
+//
+// x / y 也要挡 NaN：JSON 允许非有限数（1e999、NaN 字面量），
+// 存进去之后前端会拿到 NaN 坐标，整张画布变空白。
+func normalizeLayoutPosition(p LayoutPosition) LayoutPosition {
+	out := p
+	if math.IsNaN(out.X) || math.IsInf(out.X, 0) {
+		out.X = 0
+	}
+	if math.IsNaN(out.Y) || math.IsInf(out.Y, 0) {
+		out.Y = 0
+	}
+	if p.Attach == nil {
+		return out
+	}
+	switch p.Attach.Side {
+	case "left", "right", "top", "bottom":
+	default:
+		out.Attach = nil
+		return out
+	}
+	r := p.Attach.Ratio
+	if math.IsNaN(r) {
+		r = 0.5
+	}
+	if math.IsInf(r, 0) {
+		if r > 0 {
+			r = 1
+		} else {
+			r = 0
+		}
+	}
+	out.Attach = &LayoutAnchor{Side: p.Attach.Side, Ratio: math.Max(0, math.Min(1, r))}
+	return out
 }
 
 // layoutPayload 布局请求体：nodeId → 坐标。
@@ -1469,6 +1525,9 @@ func (h *Handler) SaveLayout(c *gin.Context) {
 	}
 	if req.Nodes == nil {
 		req.Nodes = map[string]LayoutPosition{}
+	}
+	for k, p := range req.Nodes {
+		req.Nodes[k] = normalizeLayoutPosition(p)
 	}
 	b, err := json.Marshal(req.Nodes)
 	if err != nil {

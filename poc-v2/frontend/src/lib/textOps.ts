@@ -496,7 +496,7 @@ export function findNewNodeId(
   name: string,
 ): string | undefined {
   for (const pkg of model.packages) {
-    const found = walkForName(pkg, name);
+    const found = walkForName(pkg as unknown as PkgLike, name);
     if (found) return found;
   }
   for (const sm of model.stateMachines) {
@@ -524,7 +524,9 @@ export function shortNameFromNodeId(
   const map: Record<string, string> = {
     'pd:': 'partDef',
     'pu:': 'partUsage',
+    // `portdef:` 必须排在 `port:` 前面 —— 两条前缀互不为前缀，留着顺序是为了读起来不误会
     'portdef:': 'portDef',
+    'port:': 'portUsage',
     'state:': 'stateDef',
     'action:': 'actionDef',
     'req:': 'requirement',
@@ -548,6 +550,7 @@ export function kindFromNodeId(nodeId: string): string | undefined {
     'pd:': 'partDef',
     'pu:': 'partUsage',
     'portdef:': 'portDef',
+    'port:': 'portUsage',
     'state:': 'stateDef',
     'action:': 'actionDef',
     'req:': 'requirement',
@@ -566,6 +569,8 @@ interface PkgLike {
     kind: string;
     id: string;
     name?: string;
+    /** part 的成员（端口、属性挂在这里，不在 members 里） */
+    body?: Array<{ kind: string; id: string; name?: string; redefines?: string }>;
     states?: Array<{ id: string; name: string }>;
     actions?: Array<{ id: string; name: string }>;
   }>;
@@ -598,7 +603,9 @@ function walkForShortName(
   kind: string,
 ): string | undefined {
   for (const pkg of model.packages) {
-    const r = walkPkgForShortName(pkg as PkgLike, astId, kind);
+    // 经 unknown 中转：NamespaceMember 是联合类型，其中 CommentBlock 的 body 是
+    // string，与 PkgLike 的 body（成员数组）没有足够重叠，直接断言会报错。
+    const r = walkPkgForShortName(pkg as unknown as PkgLike, astId, kind);
     if (r) return r;
   }
   for (const sm of model.stateMachines) {
@@ -622,6 +629,17 @@ function walkPkgForShortName(
 ): string | undefined {
   for (const m of pkg.members) {
     if (m.id === astId && m.kind === kind && m.name) return m.name;
+    // 端口挂在 part 的 body 里（不在 pkg.members），要下潜一层。
+    // 返回 `owner.port` 带点形式 —— 文法里端点必须带点，裸 `powerOut`
+    // 解析不出「哪个 part 的端口」。
+    if (kind === 'portUsage' && (m.kind === 'partDef' || m.kind === 'partUsage')) {
+      for (const b of m.body ?? []) {
+        if (b.kind === 'portUsage' && b.id === astId) {
+          const portName = b.name || b.redefines;
+          if (m.name && portName) return `${m.name}.${portName}`;
+        }
+      }
+    }
     if (m.kind === 'package') {
       const r = walkPkgForShortName(m as unknown as PkgLike, astId, kind);
       if (r) return r;

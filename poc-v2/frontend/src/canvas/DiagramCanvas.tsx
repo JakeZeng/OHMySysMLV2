@@ -39,12 +39,18 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   isVerticalSide,
-  portAttachSide,
   portDirectionArrows,
   portLabelOffset,
-  snapPortToBorder,
+  resolvePortPlacement,
   type PortSide,
 } from '../lib/portSide';
+import {
+  anchorFromPoint,
+  boxCenter,
+  normalizeAnchor,
+  type Anchor,
+  type AnchorBox,
+} from '../lib/anchor';
 
 // ─── 节点类型定义（保持 M10 不变） ────────────────────────────
 
@@ -54,6 +60,13 @@ interface BaseNodeData {
   location?: { line: number; column: number };
   /** M17：端口贴在所属 part 的哪条边，由 stableNodes 按几何注入 */
   attachSide?: PortSide;
+  /**
+   * M17：端口在 owner 边框上的挂点（来自 layoutStore，经 pipeline 下发）。
+   *
+   * 这是端口位置的**唯一事实来源** —— `position` 只是重绘前的初值。
+   * 父元素被拖动/拉伸后，锚点不变、边框变，徽标跟着边框走。
+   */
+  attach?: Anchor;
   [key: string]: unknown;
 }
 
@@ -67,6 +80,31 @@ const FALLBACK_NODE_H = 80;
 /** 端口徽标的兜底尺寸 —— 徽标只装方向箭头，约 14~22px；端口名不占盒子。 */
 const FALLBACK_PORT_W = 18;
 const FALLBACK_PORT_H = 14;
+
+/**
+ * 取一个已渲染节点在画布上的包围盒。
+ *
+ * M17：算挂点要的是**同一个坐标系**下的两个盒子（owner 与端口），所以这里
+ * 统一从 stableNodes 上取 —— 它已经带上了 `measured`，且坐标就是画布绝对坐标。
+ *
+ * @param posOverride 覆盖坐标（拖动时用 change 里的新坐标，否则读到的是上一帧）
+ */
+function nodeBoxOf(
+  node: Node | undefined,
+  posOverride?: { x: number; y: number; width?: number; height?: number },
+): AnchorBox | null {
+  if (!node) return null;
+  const isPort = node.type === 'sysmlPort';
+  const m = (node as { measured?: { width: number; height: number } }).measured;
+  return {
+    x: posOverride?.x ?? node.position?.x ?? 0,
+    y: posOverride?.y ?? node.position?.y ?? 0,
+    width:
+      posOverride?.width ?? m?.width ?? (isPort ? FALLBACK_PORT_W : FALLBACK_NODE_W),
+    height:
+      posOverride?.height ?? m?.height ?? (isPort ? FALLBACK_PORT_H : FALLBACK_NODE_H),
+  };
+}
 
 const PartDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
@@ -418,7 +456,16 @@ export interface DiagramCanvasProps {
   onEdgeDelete?: (edgeId: string) => void;
   onNodesDelete?: (nodeIds: string[]) => void;
   onEdgesDelete?: (edgeIds: string[]) => void;
-  onNodePositionChange?: (nodeId: string, x: number, y: number) => void;
+  /**
+   * 节点位置变化。`attach` 仅端口传 —— 端口的挂点才是事实，x/y 是由它推导的
+   * 结果（见 handleNodesChange）。普通元素不带这个参数。
+   */
+  onNodePositionChange?: (
+    nodeId: string,
+    x: number,
+    y: number,
+    attach?: Anchor,
+  ) => void;
   onSelectionChange?: (node: Node | null) => void;
   highlightNodeIds?: string[];
   nodeCount?: number;
@@ -674,16 +721,25 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         }
       }
     }
-    // M17：先给所有「可作为端口宿主」的节点量出绝对包围盒，供下面算吸附边。
+    // M17：先给所有「可作为端口宿主」的节点量出绝对包围盒，供下面算挂点。
     // 端口自身的盒子在 map 回调里现算（measured 可能刚拿到）。
+    //
+    // ⚠️ 盒子必须取 `internals.positionAbsolute`（画布绝对坐标），**不能**用
+    // pipeline 给的 `n.position`：父元素被拖动时 React Flow 会更新内部节点，
+    // 但我们交出去的 user node 还停在旧值 —— 用旧值算，锚点推导出来的徽标位置
+    // 会整体滞后一帧，表现为「拖着 owner，端口不跟」。
+    // 内部节点还没有时（首帧）才回落到 pipeline 的 position。
     const boxes = new Map<string, { x: number; y: number; width: number; height: number }>();
     for (const n of nodes) {
       if (n.type === 'sysmlPort') continue;
-      const m = (n as { measured?: { width: number; height: number } }).measured
+      const internal = inst?.getInternalNode(String(n.id));
+      const m = internal?.measured
+        ?? (n as { measured?: { width: number; height: number } }).measured
         ?? prevMeasured.get(String(n.id));
+      const abs = internal?.internals.positionAbsolute;
       boxes.set(String(n.id), {
-        x: n.position?.x ?? 0,
-        y: n.position?.y ?? 0,
+        x: abs?.x ?? n.position?.x ?? 0,
+        y: abs?.y ?? n.position?.y ?? 0,
         width: m?.width ?? FALLBACK_NODE_W,
         height: m?.height ?? FALLBACK_NODE_H,
       });
@@ -703,8 +759,11 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         const isDef = /sysml.*Def$/.test(nodeType) || /sysml.*Definition$/.test(nodeType);
         cls.push(isDef ? 'rf-palette-drop-ok' : 'rf-palette-drop-bad');
       }
-      // M17：端口按几何算「贴的是 part 的哪条边」→ 灌进 data.attachSide，
-      // 并把徽标位置吸到那条边框上（名字飘在框外，见 PortNode）。
+      // M17：端口的摆放一律交给 `resolvePortPlacement` ——
+      // 有 `attach`（来自 layoutStore）就由锚点单向推导位置，没有就按几何
+      // 吸附并顺手反推出锚点。改造前这里是「按坐标反推边 → 吸到那条边上」的
+      // 两步环，角上会互相拉扯，而且结果只存在于渲染期局部变量里、存不进 store。
+      //
       // 端口的 parentId 在 Node 顶层（自定义字段，React Flow 不认），
       // 详见 lib/portSide.ts 的说明。
       const parentId = (n as { parentId?: string }).parentId;
@@ -713,16 +772,22 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       if (n.type === 'sysmlPort' && parentId) {
         const parent = boxes.get(parentId);
         if (parent) {
-          const self = {
-            x: n.position?.x ?? 0,
-            y: n.position?.y ?? 0,
-            width: measured?.width ?? FALLBACK_PORT_W,
-            height: measured?.height ?? FALLBACK_PORT_H,
+          // 端口自己的盒子也走内部节点：拖动时只有它是实时的
+          const selfInternal = inst?.getInternalNode(idStr);
+          const selfAbs = selfInternal?.internals.positionAbsolute;
+          const self: AnchorBox = {
+            x: selfAbs?.x ?? n.position?.x ?? 0,
+            y: selfAbs?.y ?? n.position?.y ?? 0,
+            width: selfInternal?.measured?.width ?? measured?.width ?? FALLBACK_PORT_W,
+            height: selfInternal?.measured?.height ?? measured?.height ?? FALLBACK_PORT_H,
           };
-          const side = portAttachSide(self, parent);
-          if (data.attachSide !== side) data = { ...data, attachSide: side };
-          const snapped = snapPortToBorder(self, parent, side);
-          if (snapped.x !== self.x || snapped.y !== self.y) position = snapped;
+          const placement = resolvePortPlacement(self, parent, data.attach);
+          if (data.attachSide !== placement.side) {
+            data = { ...data, attachSide: placement.side };
+          }
+          if (placement.position.x !== self.x || placement.position.y !== self.y) {
+            position = placement.position;
+          }
         }
       }
       return {
@@ -806,7 +871,37 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         // 父组件不回写就没有人更新坐标。先前只认 `dragging === false`，
         // 拖动过程里节点纹丝不动，只有松手那一帧才跳到终点。
         if (c.type === 'position' && c.position && onNodePositionChange) {
-          onNodePositionChange(String(c.id), c.position.x, c.position.y);
+          const idStr = String(c.id);
+          // M17：端口拖动时落点不能直接用原始坐标 —— 必须换算成 owner 边框上的
+          // 锚点，再把**推导出的**位置连同锚点一起写回。
+          // 写原始坐标的话，锚点与坐标各说各话：下次重绘时 stableNodes 按锚点
+          // 算出一个位置，而 store 里存的是另一个，端口就会在松手瞬间弹一下。
+          const hit = stableNodes.find((n) => String(n.id) === idStr);
+          const parentId = (hit as { parentId?: string } | undefined)?.parentId;
+          const parentNode = parentId
+            ? stableNodes.find((n) => String(n.id) === parentId)
+            : undefined;
+          const parentBox = parentNode ? nodeBoxOf(parentNode) : null;
+          if (parentBox) {
+            const selfBox = nodeBoxOf(hit, {
+              x: c.position.x,
+              y: c.position.y,
+            });
+            if (!selfBox) {
+              onNodePositionChange(idStr, c.position.x, c.position.y);
+              continue;
+            }
+            const anchor = normalizeAnchor(anchorFromPoint(boxCenter(selfBox), parentBox));
+            const placement = resolvePortPlacement(selfBox, parentBox, anchor);
+            onNodePositionChange(
+              idStr,
+              placement.position.x,
+              placement.position.y,
+              placement.anchor,
+            );
+          } else {
+            onNodePositionChange(idStr, c.position.x, c.position.y);
+          }
         }
         if (c.type === 'remove' && onNodeDelete) {
           onNodeDelete(String(c.id));

@@ -19,6 +19,7 @@ import type {
   PortUsage,
   AttributeUsage,
   Connection,
+  EndpointRef,
   ImportStatement,
   NamespaceMember,
   StateMachine,
@@ -304,9 +305,11 @@ function serializeAttributeUsage(usage: AttributeUsage, indent: number, out: str
 function serializeConnection(conn: Connection, indent: number, out: string[]): void {
   const pad = '  '.repeat(indent);
   const name = conn.name ? `${conn.name} : ` : '';
-  out.push(
-    `${pad}${name}connect ${conn.source.partName}.${conn.source.portName} to ${conn.target.partName}.${conn.target.portName};`
-  );
+  // 裸端点（portName 为 undefined）不能写成 `A.` —— 那是残缺文本，
+  // 存回去就再也解析不回来。必须原样写成 `connect A to B;`。
+  const ep = (e: EndpointRef): string =>
+    e.portName ? `${e.partName}.${e.portName}` : e.partName;
+  out.push(`${pad}${name}connect ${ep(conn.source)} to ${ep(conn.target)};`);
 }
 
 // ─── M5: State Machine ──────────────────────────────────────────────

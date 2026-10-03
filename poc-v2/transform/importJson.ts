@@ -391,12 +391,24 @@ function validateConnection(raw: unknown, path: string, errors: ImportError[]): 
   const src = obj.source as Record<string, unknown>;
   const tgt = obj.target as Record<string, unknown>;
 
-  if (typeof src.partName !== 'string' || typeof src.portName !== 'string') {
-    errors.push({ path: `${path}.source`, message: 'source.partName 和 source.portName 必须是字符串' });
+  // portName 允许缺失 —— 裸端点（`connect A to B;`）本就没有端口。
+  // 给了但不是字符串则仍报错（拼写错误之类，不该静默吞掉）。
+  if (typeof src.partName !== 'string') {
+    errors.push({ path: `${path}.source`, message: 'source.partName 必须是字符串' });
     return null;
   }
-  if (typeof tgt.partName !== 'string' || typeof tgt.portName !== 'string') {
-    errors.push({ path: `${path}.target`, message: 'target.partName 和 target.portName 必须是字符串' });
+  if (typeof tgt.partName !== 'string') {
+    errors.push({ path: `${path}.target`, message: 'target.partName 必须是字符串' });
+    return null;
+  }
+  const srcPort = src.portName;
+  const tgtPort = tgt.portName;
+  if (srcPort !== undefined && typeof srcPort !== 'string') {
+    errors.push({ path: `${path}.source`, message: 'source.portName 必须是字符串' });
+    return null;
+  }
+  if (tgtPort !== undefined && typeof tgtPort !== 'string') {
+    errors.push({ path: `${path}.target`, message: 'target.portName 必须是字符串' });
     return null;
   }
 
@@ -406,12 +418,12 @@ function validateConnection(raw: unknown, path: string, errors: ImportError[]): 
     name: typeof obj.name === 'string' ? obj.name : undefined,
     source: {
       partName: src.partName as string,
-      portName: src.portName as string,
+      portName: srcPort as string | undefined,
       location: validateLocation(src.location, `${path}.source.location`, errors),
     },
     target: {
       partName: tgt.partName as string,
-      portName: tgt.portName as string,
+      portName: tgtPort as string | undefined,
       location: validateLocation(tgt.location, `${path}.target.location`, errors),
     },
     location,

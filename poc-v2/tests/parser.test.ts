@@ -13,6 +13,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
+import { validate } from '../validator/validator';
+import { serialize } from '../transform/serializer';
 
 describe('Parser - 基础语法', () => {
   it('1. 解析空 package', () => {
@@ -298,6 +300,87 @@ describe('Parser - Connect 语句', () => {
     const r2 = parse(`package P { part def A { port p : T; } part def B { port p : T; } part a : A; part b : B; connect a . p to b . p; }`);
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
+  });
+});
+
+/**
+ * M17 S3：裸端点 `connect A to B;`。
+ *
+ * 改造前 EndpointExpr 强制要求至少一个 `.`，`connect A to B;` 解析不了 ——
+ * 而 `modelStore.addConnection` 生成的**正是**这个形式。也就是说用户今天在
+ * 画布上拉任何一条线，都会往模型里插一段解析错误文本。
+ */
+describe('M17 S3: Parser - 裸端点 connect', () => {
+  const SRC = `package P {
+    part def A { }
+    part def B { }
+    connect A to B;
+  }`;
+
+  it('裸标识符端点可解析（此前报 `Expected "." but "t" found`）', () => {
+    const r = parse(SRC);
+    expect(r.errors).toHaveLength(0);
+    expect(r.ok).toBe(true);
+    const conns = r.model.packages[0].members.filter((m: any) => m.kind === 'connection');
+    expect(conns).toHaveLength(1);
+    expect((conns[0] as any).source.partName).toBe('A');
+    expect((conns[0] as any).source.portName).toBeUndefined();
+    expect((conns[0] as any).target.partName).toBe('B');
+    expect((conns[0] as any).target.portName).toBeUndefined();
+  });
+
+  it('裸端点的 portName 是 undefined 而不是空串', () => {
+    // 空串会撞上匿名端口 `port :>> x;` 的名字，下游查端口表会误命中
+    const r = parse(SRC);
+    const conns = r.model.packages[0].members.filter((m: any) => m.kind === 'connection');
+    expect((conns[0] as any).source.portName).not.toBe('');
+  });
+
+  it('混合形态：裸端点 ↔ 带端口端点', () => {
+    const r = parse(`package P {
+      part def A { }
+      part def B { port p : T; }
+      connect A to B.p;
+      connect B.p to A;
+    }`);
+    expect(r.errors).toHaveLength(0);
+    const conns = r.model.packages[0].members.filter((m: any) => m.kind === 'connection');
+    expect(conns).toHaveLength(2);
+    expect((conns[0] as any).source.portName).toBeUndefined();
+    expect((conns[0] as any).target.portName).toBe('p');
+    expect((conns[1] as any).source.portName).toBe('p');
+    expect((conns[1] as any).target.portName).toBeUndefined();
+  });
+
+  it('带点端点仍按原样解析（未被裸分支抢走）', () => {
+    const r = parse(`package P {
+      part def A { port p : T; }
+      part def B { port p : T; }
+      part a : A;
+      part b : B;
+      connect a.p to b.p;
+    }`);
+    const conns = r.model.packages[0].members.filter((m: any) => m.kind === 'connection');
+    expect((conns[0] as any).source.partName).toBe('a');
+    expect((conns[0] as any).source.portName).toBe('p');
+  });
+
+  it('裸端点不产生验证错误（曾误报「没有端口 undefined」）', () => {
+    const r = parse(SRC);
+    const v = validate(r.model);
+    expect(v.issues.filter((i) => i.code.startsWith('E10'))).toHaveLength(0);
+  });
+
+  it('往返一致：解析 → 序列化 → 再解析，裸端点不被写成 `A.`', () => {
+    const r = parse(SRC);
+    const text = serialize(r.model);
+    expect(text).toContain('connect A to B;');
+    expect(text).not.toContain('A.');
+    const again = parse(text);
+    expect(again.errors).toHaveLength(0);
+    const conns = again.model.packages[0].members.filter((m: any) => m.kind === 'connection');
+    expect(conns).toHaveLength(1);
+    expect((conns[0] as any).source.portName).toBeUndefined();
   });
 });
 

@@ -14,6 +14,7 @@ import type { ParseError, SysMLModel } from '@ast/model';
 import type { ValidationIssue } from '@validator/validator';
 import type { Node, Edge } from '@xyflow/react';
 import type { NodePosition } from '../stores/layoutStore';
+import { stableKeyOf } from '@transform/stableKey';
 
 export interface PipelineResult {
   parseErrors: ParseError[];
@@ -88,12 +89,27 @@ export function runPipeline(
     ];
   }
 
-  // 应用用户位置覆盖（保留拖动结果）；跳过带 parentId 的子节点
+  // 应用用户位置覆盖（保留拖动结果）
+  //
+  // M17：按 **stableKey** 查表，不是按 node.id —— node.id 是解析器计数器，
+  // 任何一次文本编辑都会让它整体平移，按它查等于每次编辑都把用户拖的位置丢掉。
+  //
+  // 端口（带 parentId）**不再跳过**：改造前这里 return n，把端口的用户坐标整个
+  // 丢掉，是「端口位置存不住」的直接原因。锚点由 DiagramCanvas 从 owner 的实时
+  // 盒子推导，这里存的 x/y 只是重绘前的初值。
   if (userPositions) {
     nodes = nodes.map((n) => {
-      if ((n as { parentId?: string }).parentId) return n;
-      const up = userPositions[String(n.id)];
-      return up ? { ...n, position: up } : n;
+      const up = userPositions[stableKeyOf(n.data, String(n.id))];
+      if (!up) return n;
+      // 只取坐标 —— NodePosition 带 attach，直接塞进 position 会多出字段
+      const next: Node = { ...n, position: { x: up.x, y: up.y } };
+      if (up.attach) {
+        // 锚点随节点下发，DiagramCanvas 才能由锚点反推位置（不必自己去 store 查）。
+        // 存进 data 而不是 position：position 的语义是「坐标」，多塞字段会让
+        // React Flow 的 adoptUserNodes 按脏数据重建内部节点。
+        next.data = { ...n.data, attach: up.attach };
+      }
+      return next;
     });
   }
 

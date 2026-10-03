@@ -33,6 +33,13 @@ import type {
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
+import {
+  StableKeys,
+  joinQName,
+  elementKeyBase,
+  portKeyBase,
+  connKeyBase,
+} from './stableKey';
 
 // ─── 输出类型 ──────────────────────────────────────────────────────────
 
@@ -70,6 +77,18 @@ interface LayoutFn {
 }
 
 /**
+ * M17：收集期携带的 (元素, 限定名)。
+ *
+ * AST 没有 qualifiedName（见 ast/model.ts），限定名只能在 namespace 递归时
+ * 逐层拼出来 —— 收集完就丢了，之后想给 stableKey 用只能靠位置反推，那正是
+ * 本模块要消灭的「依赖出现次序」。见 transform/stableKey.ts。
+ */
+interface Q<T> {
+  node: T;
+  qname: string;
+}
+
+/**
  * M16 P4（Q14=A 合成视图画布）：跨包暴露元素以「幽灵节点」呈现。
  * 来源 = 后端 computeExposed 的解析结果（M16 P3 后端 filter 求值）；
  * owned（view body 内）成员照常可编辑；exposed 仅展示、不可拖拽 / 删除。
@@ -90,14 +109,18 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   const edges: Edge[] = [];
 
   // 1. 收集
-  const partDefs: PartDefinition[] = [];
-  const portDefs: PortDefinition[] = [];
-  const partUsages: PartUsage[] = [];
-  const connections: Connection[] = [];
-  const stateMachines: StateMachine[] = [];
-  const activities: Activity[] = [];
-  const requirements: Requirement[] = [];
-  const constraintBlocks: ConstraintBlock[] = [];
+  //
+  // M17：收集到的每个元素都带**限定名**（namespace 递归时逐层拼出）。
+  // AST 里没有 qualifiedName 字段，不在收集时带上就再也补不回来 ——
+  // 而 stableKey 正是靠它跨文本编辑保持稳定（见 transform/stableKey.ts）。
+  const partDefs: Q<PartDefinition>[] = [];
+  const portDefs: Q<PortDefinition>[] = [];
+  const partUsages: Q<PartUsage>[] = [];
+  const connections: Q<Connection>[] = [];
+  const stateMachines: Q<StateMachine>[] = [];
+  const activities: Q<Activity>[] = [];
+  const requirements: Q<Requirement>[] = [];
+  const constraintBlocks: Q<ConstraintBlock>[] = [];
 
   for (const pkg of model.packages) {
     collectMembers(pkg, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
@@ -110,41 +133,60 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   for (const vp of model.viewpoints ?? []) {
     collectMembers(vp, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
-  connections.push(...model.connections);
-  stateMachines.push(...model.stateMachines);
-  activities.push(...model.activities);
-  requirements.push(...model.requirements);
-  constraintBlocks.push(...model.constraintBlocks);
+  // 顶层平铺集合（模型根上的元素）：限定名就是短名。
+  // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
+  // 这是**既有行为**（stableKey 的 #n 消歧正好能兜住同名重复）。
+  connections.push(...model.connections.map((c) => ({ node: c, qname: c.name || '' })));
+  stateMachines.push(...model.stateMachines.map((m) => ({ node: m, qname: m.name || '' })));
+  activities.push(...model.activities.map((a) => ({ node: a, qname: a.name || '' })));
+  requirements.push(...model.requirements.map((r) => ({ node: r, qname: r.name || '' })));
+  constraintBlocks.push(...model.constraintBlocks.map((c) => ({ node: c, qname: c.name || '' })));
+
+  // M17：稳定键分配器，一次 pipeline 重建一张图的键
+  const keys = new StableKeys();
 
   // 2. name → nodeId
   const nameToPartId = new Map<string, string>();
+  // M17：name → 该 part 自身的限定名。连线端点用它拼键 —— 不能拿 connect 语句
+  // 所在的路径去拼：connect 写在模型根上引用包里的 part 时，两者是不同的前缀。
+  const nameToQName = new Map<string, string>();
   const partToPortIds = new Map<string, Map<string, string>>();
 
   // 3. 节点构造（结构视图）
-  for (const pd of partDefs) {
+  for (const { node: pd, qname } of partDefs) {
     const id = `pd:${pd.id}`;
     nameToPartId.set(pd.name, id);
-    nodes.push(makePartDefNode(id, pd));
-    partToPortIds.set(id, collectPortNodes(nodes, pd.body, id));
+    nameToQName.set(pd.name, qname);
+    nodes.push(makePartDefNode(id, pd, keys.alloc(elementKeyBase('partDef', qname))));
+    partToPortIds.set(id, collectPortNodes(nodes, pd.body, id, qname, keys));
   }
-  for (const pu of partUsages) {
+  for (const { node: pu, qname } of partUsages) {
     const id = `pu:${pu.id}`;
     nameToPartId.set(pu.name, id);
-    nodes.push(makePartUsageNode(id, pu));
-    partToPortIds.set(id, collectPortNodes(nodes, pu.body, id));
+    nameToQName.set(pu.name, qname);
+    nodes.push(makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))));
+    partToPortIds.set(id, collectPortNodes(nodes, pu.body, id, qname, keys));
   }
-  for (const portDef of portDefs) {
+  for (const { node: portDef, qname } of portDefs) {
     const id = `portdef:${portDef.id}`;
-    nodes.push(makePortDefNode(id, portDef));
+    nodes.push(makePortDefNode(id, portDef, keys.alloc(elementKeyBase('portDef', qname))));
   }
 
   // 3b. 节点构造（M5 状态机）
-  for (const sm of stateMachines) {
+  for (const { node: sm, qname } of stateMachines) {
     const stateNameToId = new Map<string, string>();
     for (const s of sm.states) {
       const id = `state:${s.id}`;
       stateNameToId.set(s.name, id);
-      nodes.push(makeStateNode(id, s.name, !!s.isInitial, !!s.isFinal));
+      nodes.push(
+        makeStateNode(
+          id,
+          s.name,
+          !!s.isInitial,
+          !!s.isFinal,
+          keys.alloc(elementKeyBase('state', joinQName([qname], s.name))),
+        ),
+      );
     }
     for (const t of sm.transitions) {
       const srcId = stateNameToId.get(t.source);
@@ -158,18 +200,32 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
           label: [t.trigger, t.guard ? `[${t.guard}]` : ''].filter(Boolean).join(' '),
           animated: false,
           style: { stroke: '#722ed1', strokeWidth: 2 },
+          data: {
+            location: (t as { location?: unknown }).location,
+            stableKey: keys.alloc(
+              connKeyBase(joinQName([qname], t.source), joinQName([qname], t.target)),
+            ),
+          },
         });
       }
     }
   }
 
   // 3c. 节点构造（M5 活动）
-  for (const act of activities) {
+  for (const { node: act, qname } of activities) {
     const actionNameToId = new Map<string, string>();
     for (const a of act.actions) {
       const id = `action:${a.id}`;
       actionNameToId.set(a.name, id);
-      nodes.push(makeActionNode(id, a.name, !!a.isInitial, !!a.isFinal));
+      nodes.push(
+        makeActionNode(
+          id,
+          a.name,
+          !!a.isInitial,
+          !!a.isFinal,
+          keys.alloc(elementKeyBase('action', joinQName([qname], a.name))),
+        ),
+      );
     }
     for (const f of act.flows) {
       const srcId = actionNameToId.get(f.source);
@@ -183,6 +239,12 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
           label: f.guard ? `[${f.guard}]` : undefined,
           animated: true,
           style: { stroke: '#13c2c2', strokeWidth: 2, strokeDasharray: '6 3' },
+          data: {
+            location: (f as { location?: unknown }).location,
+            stableKey: keys.alloc(
+              connKeyBase(joinQName([qname], f.source), joinQName([qname], f.target)),
+            ),
+          },
         });
       }
     }
@@ -191,16 +253,16 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // 3d. 节点构造（M5 需求）
   // name -> requirement node id 映射（用于 trace 边）
   const reqNameToId = new Map<string, string>();
-  for (const req of requirements) {
+  for (const { node: req, qname } of requirements) {
     const id = `req:${req.id}`;
     reqNameToId.set(req.name, id);
-    nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text));
+    nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text, keys.alloc(elementKeyBase('req', qname))));
   }
 
   // 3e. 节点构造（M5 约束块）
-  for (const cb of constraintBlocks) {
+  for (const { node: cb, qname } of constraintBlocks) {
     const id = `cb:${cb.id}`;
-    nodes.push(makeConstraintBlockNode(id, cb.name, cb.constraint));
+    nodes.push(makeConstraintBlockNode(id, cb.name, cb.constraint, keys.alloc(elementKeyBase('constraint', qname))));
   }
 
   // 3f. 追溯边（M5）— 修复：trace links 现在生成实际边
@@ -231,13 +293,17 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         label: trace.relation,
         animated: false,
         style: { stroke: strokeColor, strokeWidth: 1.5, strokeDasharray: '4 4' },
+        data: {
+          location: trace.location,
+          stableKey: keys.alloc(connKeyBase(trace.source, trace.target)),
+        },
       });
     }
   }
 
   // 4. 边（结构视图的 connect）
-  for (const conn of connections) {
-    const edge = makeEdge(conn, nameToPartId, partToPortIds);
+  for (const { node: conn } of connections) {
+    const edge = makeEdge(conn, nameToPartId, nameToQName, partToPortIds, keys);
     if (edge) edges.push(edge);
   }
 
@@ -261,6 +327,8 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
           sourcePackage,
           ghost: true,
           readOnly: true,
+          // 幽灵节点的 id 本来就用 qualifiedName（比 AST id 稳），stableKey 同理
+          stableKey: `exposed:${ext.qualifiedName}`,
         },
       });
     }
@@ -425,7 +493,7 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
 
 // ─── 节点构造 ──────────────────────────────────────────────────────────
 
-function makePartDefNode(id: string, pd: PartDefinition): Node {
+function makePartDefNode(id: string, pd: PartDefinition, stableKey: string): Node {
   return {
     id,
     type: 'sysmlPartDef',
@@ -437,11 +505,12 @@ function makePartDefNode(id: string, pd: PartDefinition): Node {
       portCount: pd.body.filter((b) => b.kind === 'portUsage').length,
       attrCount: pd.body.filter((b) => b.kind === 'attributeUsage').length,
       location: pd.location,
+      stableKey,
     },
   };
 }
 
-function makePartUsageNode(id: string, pu: PartUsage): Node {
+function makePartUsageNode(id: string, pu: PartUsage, stableKey: string): Node {
   return {
     id,
     type: 'sysmlPartUsage',
@@ -453,11 +522,12 @@ function makePartUsageNode(id: string, pu: PartUsage): Node {
       portCount: pu.body.filter((b) => b.kind === 'portUsage').length,
       attrCount: pu.body.filter((b) => b.kind === 'attributeUsage').length,
       location: pu.location,
+      stableKey,
     },
   };
 }
 
-function makePortDefNode(id: string, pd: PortDefinition): Node {
+function makePortDefNode(id: string, pd: PortDefinition, stableKey: string): Node {
   return {
     id,
     type: 'sysmlPortDef',
@@ -467,6 +537,7 @@ function makePortDefNode(id: string, pd: PortDefinition): Node {
       kind: 'portDef',
       direction: pd.direction,
       location: pd.location,
+      stableKey,
     },
   };
 }
@@ -474,20 +545,22 @@ function makePortDefNode(id: string, pd: PortDefinition): Node {
 function collectPortNodes(
   out: Node[],
   body: PartDefinition['body'] | PartUsage['body'],
-  parentId: string
+  parentId: string,
+  ownerQName: string,
+  keys: StableKeys
 ): Map<string, string> {
   const portIds = new Map<string, string>();
   for (const m of body) {
     if (m.kind === 'portUsage') {
       const portId = `port:${m.id}`;
       portIds.set(m.name ?? '', portId);
-      out.push(makePortNode(portId, m, parentId));
+      out.push(makePortNode(portId, m, parentId, keys.alloc(portKeyBase(ownerQName, m.name, m.redefines))));
     }
   }
   return portIds;
 }
 
-function makePortNode(id: string, p: PortUsage, parentId: string): Node {
+function makePortNode(id: string, p: PortUsage, parentId: string, stableKey: string): Node {
   return {
     id,
     type: 'sysmlPort',
@@ -501,6 +574,7 @@ function makePortNode(id: string, p: PortUsage, parentId: string): Node {
       typeRef: p.typeRef,
       redefines: p.redefines,
       location: p.location,
+      stableKey,
     },
   };
 }
@@ -510,15 +584,26 @@ function makePortNode(id: string, p: PortUsage, parentId: string): Node {
 function makeEdge(
   conn: Connection,
   nameToPartId: Map<string, string>,
-  partToPortIds: Map<string, Map<string, string>>
+  nameToQName: Map<string, string>,
+  partToPortIds: Map<string, Map<string, string>>,
+  keys: StableKeys
 ): Edge | null {
   const srcPartId = nameToPartId.get(conn.source.partName);
   const tgtPartId = nameToPartId.get(conn.target.partName);
   if (!srcPartId || !tgtPartId) return null;
   const srcPortMap = partToPortIds.get(srcPartId);
   const tgtPortMap = partToPortIds.get(tgtPartId);
-  const srcPortId = srcPortMap?.get(conn.source.portName);
-  const tgtPortId = tgtPortMap?.get(conn.target.portName);
+  // 裸端点（`connect A to B;`）没有端口名 —— 不能拿 undefined 去查端口表，
+  // 更不能让它落到空串上（空串是匿名端口的名字，会误命中）。
+  const srcPortId = conn.source.portName ? srcPortMap?.get(conn.source.portName) : undefined;
+  const tgtPortId = conn.target.portName ? tgtPortMap?.get(conn.target.portName) : undefined;
+  // 端点标识：连到端口时是 `<owner 限定名>::<端口名>`，连到 part 时是 part 限定名。
+  // 取的是**端点自身**的限定名（nameToQName），不是 connect 语句所在包的路径 ——
+  // 后者在 connect 写在模型根、part 在包里时会算错。
+  const endpoint = (partName: string, portName: string | undefined): string => {
+    const owner = nameToQName.get(partName) || partName;
+    return portName ? joinQName([owner], portName) : owner;
+  };
   return {
     id: `edge:${conn.id}`,
     source: srcPortId ?? srcPartId,
@@ -527,7 +612,15 @@ function makeEdge(
     label: conn.name,
     animated: false,
     style: { stroke: '#1890ff', strokeWidth: 2 },
-    data: { location: conn.location },
+    data: {
+      location: conn.location,
+      stableKey: keys.alloc(
+        connKeyBase(
+          endpoint(conn.source.partName, conn.source.portName),
+          endpoint(conn.target.partName, conn.target.portName),
+        ),
+      ),
+    },
   };
 }
 
@@ -540,44 +633,49 @@ function makeEdge(
  * 都满足，所以按结构取而不是按 `Package` 取。
  */
 function collectMembers(
-  ns: { members: any[] },
-  partDefs: PartDefinition[],
-  portDefs: PortDefinition[],
-  partUsages: PartUsage[],
-  connections: Connection[],
-  stateMachines?: StateMachine[],
-  activities?: Activity[],
-  requirements?: Requirement[],
-  constraintBlocks?: ConstraintBlock[]
+  ns: { name?: string; members: any[] },
+  partDefs: Q<PartDefinition>[],
+  portDefs: Q<PortDefinition>[],
+  partUsages: Q<PartUsage>[],
+  connections: Q<Connection>[],
+  stateMachines?: Q<StateMachine>[],
+  activities?: Q<Activity>[],
+  requirements?: Q<Requirement>[],
+  constraintBlocks?: Q<ConstraintBlock>[],
+  path: string[] = []
 ): void {
+  // M17：path 是本 namespace 的限定名前缀，每下潜一层包就追加一段。
+  // 隐式根包 name 为空串，joinQName 会把它过滤掉，键里不会留下多余的 `::`。
+  const nextPath = ns.name ? [...path, ns.name] : path;
   for (const m of ns.members) {
+    const qname = joinQName(nextPath, m.name);
     switch (m.kind) {
       case 'partDef':
-        partDefs.push(m);
+        partDefs.push({ node: m, qname });
         break;
       case 'portDef':
-        portDefs.push(m);
+        portDefs.push({ node: m, qname });
         break;
       case 'partUsage':
-        partUsages.push(m);
+        partUsages.push({ node: m, qname });
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+        collectMembers(m, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
         break;
       case 'connection':
-        connections.push(m);
+        connections.push({ node: m, qname });
         break;
       case 'stateMachine':
-        stateMachines?.push(m);
+        stateMachines?.push({ node: m, qname });
         break;
       case 'activity':
-        activities?.push(m);
+        activities?.push({ node: m, qname });
         break;
       case 'requirement':
-        requirements?.push(m);
+        requirements.push({ node: m, qname });
         break;
       case 'constraintBlock':
-        constraintBlocks?.push(m);
+        constraintBlocks?.push({ node: m, qname });
         break;
       case 'enumDef':
       case 'comment':
@@ -589,7 +687,13 @@ function collectMembers(
 
 // ─── M5: 状态机构造 ────────────────────────────────────────────────
 
-function makeStateNode(id: string, name: string, isInitial: boolean, isFinal: boolean): Node {
+function makeStateNode(
+  id: string,
+  name: string,
+  isInitial: boolean,
+  isFinal: boolean,
+  stableKey: string
+): Node {
   return {
     id,
     type: 'sysmlState',
@@ -599,11 +703,18 @@ function makeStateNode(id: string, name: string, isInitial: boolean, isFinal: bo
       kind: 'stateDef',
       isInitial,
       isFinal,
+      stableKey,
     },
   };
 }
 
-function makeActionNode(id: string, name: string, isInitial: boolean, isFinal: boolean): Node {
+function makeActionNode(
+  id: string,
+  name: string,
+  isInitial: boolean,
+  isFinal: boolean,
+  stableKey: string
+): Node {
   return {
     id,
     type: 'sysmlAction',
@@ -613,11 +724,18 @@ function makeActionNode(id: string, name: string, isInitial: boolean, isFinal: b
       kind: 'actionDef',
       isInitial,
       isFinal,
+      stableKey,
     },
   };
 }
 
-function makeRequirementNode(id: string, name: string, reqId?: string, text?: string): Node {
+function makeRequirementNode(
+  id: string,
+  name: string,
+  reqId: string | undefined,
+  text: string | undefined,
+  stableKey: string
+): Node {
   return {
     id,
     type: 'sysmlRequirement',
@@ -627,11 +745,17 @@ function makeRequirementNode(id: string, name: string, reqId?: string, text?: st
       kind: 'requirement',
       reqId,
       text,
+      stableKey,
     },
   };
 }
 
-function makeConstraintBlockNode(id: string, name: string, constraint?: string): Node {
+function makeConstraintBlockNode(
+  id: string,
+  name: string,
+  constraint: string | undefined,
+  stableKey: string
+): Node {
   return {
     id,
     type: 'sysmlConstraint',
@@ -640,6 +764,7 @@ function makeConstraintBlockNode(id: string, name: string, constraint?: string):
       label: name,
       kind: 'constraintBlock',
       constraint,
+      stableKey,
     },
   };
 }

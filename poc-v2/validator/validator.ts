@@ -1153,9 +1153,11 @@ function checkConnection(
       severity: 'error',
     });
   } else {
+    // 裸端点（`connect A to B;`）不指定端口 —— 不查端口表，否则会误报
+    // 「没有端口 `undefined`」。端口存在性检查与方向检查都只对带端口的端点做。
     const srcPorts = collectVisiblePorts(scope, src);
-    const srcPort = srcPorts.get(conn.source.portName);
-    if (!srcPort) {
+    const srcPort = conn.source.portName ? srcPorts.get(conn.source.portName) : undefined;
+    if (conn.source.portName && !srcPort) {
       issues.push({
         code: 'E106_CONNECT_PORT_NOT_FOUND',
         message: `源端 \`${conn.source.partName}\` 上没有端口 \`${conn.source.portName}\`（自身 + 继承链中均未找到）`,
@@ -1176,8 +1178,8 @@ function checkConnection(
       });
     } else {
       const tgtPorts = collectVisiblePorts(scope, tgt);
-      const tgtPort = tgtPorts.get(conn.target.portName);
-      if (!tgtPort) {
+      const tgtPort = conn.target.portName ? tgtPorts.get(conn.target.portName) : undefined;
+      if (conn.target.portName && !tgtPort) {
         issues.push({
           code: 'E106_CONNECT_PORT_NOT_FOUND',
           message: `目标端 \`${conn.target.partName}\` 上没有端口 \`${conn.target.portName}\`（自身 + 继承链中均未找到）`,

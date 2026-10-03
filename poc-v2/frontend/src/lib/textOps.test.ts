@@ -15,6 +15,8 @@ import {
   insertSnippetIntoElement,
   nodeKindHasBody,
   canNestIntoBody,
+  shortNameFromNodeId,
+  kindFromNodeId,
 } from './textOps';
 import { parse } from '../../../parser/parser';
 
@@ -342,5 +344,65 @@ describe('insertSnippetIntoElement', () => {
     const bLine = r.content.split('\n').find((l) => l.includes('part def B') && !l.includes('A'))!;
     expect(aLine).toBe('  part def A;');
     expect(bLine).toBe('  part def B;');
+  });
+});
+// ─── M17 S3：端口级 connect 的端点反查 ──────────────────────────────────
+//
+// 改造前 `shortNameFromNodeId` / `kindFromNodeId` 的前缀表里没有 `port:`，
+// 从端口画线一律返回 undefined → toast「源/目标节点找不到短名」。
+describe('M17 S3: 端口端点反查', () => {
+  const SRC = `package P {
+    part def Car { port powerOut : Power; }
+    part def Engine { port fuelIn : Fuel; }
+    part carA : Car;
+  }`;
+
+  function model() {
+    const r = parse(SRC);
+    expect(r.errors).toHaveLength(0);
+    return r.model;
+  }
+
+  function portAstId(m: any, partName: string, portName: string): string {
+    const part = m.packages[0].members.find((x: any) => x.name === partName);
+    return part.body.find((b: any) => b.name === portName).id;
+  }
+
+  it('kindFromNodeId 认得 port: 前缀', () => {
+    expect(kindFromNodeId('port:whatever')).toBe('portUsage');
+  });
+
+  it('portdef: 不被 port: 误吞', () => {
+    expect(kindFromNodeId('portdef:whatever')).toBe('portDef');
+  });
+
+  it('既有前缀不受影响', () => {
+    expect(kindFromNodeId('pd:1')).toBe('partDef');
+    expect(kindFromNodeId('pu:1')).toBe('partUsage');
+    expect(kindFromNodeId('state:1')).toBe('stateDef');
+    expect(kindFromNodeId('nope:1')).toBeUndefined();
+  });
+
+  it('端口短名是 `owner.port` 带点形式（文法要求端点带点）', () => {
+    const m = model();
+    const id = portAstId(m, 'Car', 'powerOut');
+    expect(shortNameFromNodeId(m, `port:${id}`)).toBe('Car.powerOut');
+    expect(shortNameFromNodeId(m, `port:${portAstId(m, 'Engine', 'fuelIn')}`)).toBe(
+      'Engine.fuelIn',
+    );
+  });
+
+  it('part 与 port 的短名共存互不干扰', () => {
+    const m = model();
+    const car = m.packages[0].members.find((x: any) => x.name === 'Car')!;
+    expect(shortNameFromNodeId(m, `pd:${car.id}`)).toBe('Car');
+    expect(shortNameFromNodeId(m, `port:${portAstId(m, 'Car', 'powerOut')}`)).toBe('Car.powerOut');
+  });
+
+  it('匿名端口 `port :>> fuelIn;` 也能反查到名字', () => {
+    const r = parse(`package P { part def Sub { port :>> fuelIn; } }`);
+    expect(r.errors).toHaveLength(0);
+    const sub = r.model.packages[0].members[0] as any;
+    expect(shortNameFromNodeId(r.model, `port:${sub.body[0].id}`)).toBe('Sub.fuelIn');
   });
 });

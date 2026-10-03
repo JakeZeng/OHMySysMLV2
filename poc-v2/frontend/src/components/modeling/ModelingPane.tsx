@@ -23,6 +23,7 @@ import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { generateUniqueName } from '../../lib/naming';
 import { canNestIntoBody, nodeKindHasBody, insertSnippetIntoElement } from '../../lib/textOps';
+import type { Anchor } from '../../lib/anchor';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
@@ -61,7 +62,8 @@ export interface ModelingAdapter {
   renameNode: (id: string, newName: string) => void;
   deleteNode: (id: string) => void;
   deleteConnection: (edgeId: string) => void;
-  setNodePosition: (id: string, x: number, y: number) => void;
+  /** `attach` 仅端口传：owner 边框上的挂点，由 DiagramCanvas 算好后一并给出 */
+  setNodePosition: (id: string, x: number, y: number, attach?: Anchor) => void;
   createNodeFromPalette: (
     snippet: string,
     name: string,

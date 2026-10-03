@@ -180,7 +180,13 @@ export interface Connection extends SysMLNode {
 
 export interface EndpointRef {
   partName: string;            // "carA"
-  portName: string;            // "powerPort"
+  /**
+   * 端口名。**裸端点**（`connect A to B;`）没有端口，此时为 undefined。
+   *
+   * 刻意不用空串：空串与匿名端口 `port :>> x;` 的名字相同，下游拿它去查
+   * 端口表会误命中那个匿名端口。
+   */
+  portName?: string;           // "powerPort"
   location: SourceLocation;
 }
 

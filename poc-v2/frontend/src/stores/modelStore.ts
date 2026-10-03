@@ -12,11 +12,12 @@
  */
 
 import { create } from 'zustand';
+import type { Node } from '@xyflow/react';
 import { renameNode as editRename, deleteNode as editDelete, deleteConnection as editDeleteConn } from '@transform/textEdit';
 import { modelToFlowLayouted } from '@transform/modelToFlow';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
-import { useLayoutStore } from './layoutStore';
+import { useLayoutStore, type NodePosition } from './layoutStore';
 import { useCollabStore } from './collabStore';
 import {
   EMPTY_PIPELINE,
@@ -24,6 +25,8 @@ import {
   type PipelineResult,
 } from '../lib/pipeline';
 import { insertSnippetScoped, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
+import { stableKeyOf, renameStableKey } from '@transform/stableKey';
+import type { Anchor } from '../lib/anchor';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
@@ -122,7 +125,7 @@ interface ModelState {
   renameNode: (nodeId: string, newName: string) => void;
   deleteNode: (nodeId: string) => void;
   deleteConnection: (edgeId: string) => void;
-  setNodePosition: (nodeId: string, x: number, y: number) => void;
+  setNodePosition: (nodeId: string, x: number, y: number, attach?: Anchor) => void;
   applyElkLayout: () => Promise<void>;
 
   // M11 拖拽建模
@@ -138,8 +141,13 @@ interface ModelState {
   cancelAiCheck: () => void;
 }
 
-/** 从 layoutStore 读当前作用域的节点位置 */
-function currentPositions(scopeId: string | null): Record<string, { x: number; y: number }> | undefined {
+/**
+ * 从 layoutStore 读当前作用域的节点位置（按 stableKey 索引）。
+ *
+ * 返回类型是 NodePosition 而不是 {x,y}：M17 端口还要带 attach，ELK 合并时
+ * 不能把它连同坐标一起丢掉。
+ */
+function currentPositions(scopeId: string | null): Record<string, NodePosition> | undefined {
   if (!scopeId) return undefined;
   return useLayoutStore.getState().getScope(scopeId);
 }
@@ -216,10 +224,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
       const laid = await modelToFlowLayouted(pipeline.model);
       const positions = currentPositions(scopeId) ?? {};
       // 用户拖动过的节点保留用户位置，未拖动的采用 ELK 坐标
+      //
+      // M17：查表用 stableKey，且**不再跳过端口**（带 parentId 的）。
+      // 改造前这里对端口直接 return n，配合 pipeline.ts 的同名守卫，端口坐标
+      // 每次重排都被打回默认值 —— 这就是「端口位置存不住」的两个来源之一。
       const merged = laid.nodes.map((n) => {
-        if ((n as { parentId?: string }).parentId) return n;
-        const up = positions[String(n.id)];
-        return up ? { ...n, position: up } : n;
+        const up = positions[stableKeyOf(n.data, String(n.id))];
+        if (!up) return n;
+        const next: Node = { ...n, position: { x: up.x, y: up.y } };
+        // 同 pipeline：锚点随节点下发，DiagramCanvas 由它反推位置
+        if (up.attach) next.data = { ...n.data, attach: up.attach };
+        return next;
       });
       const ms = performance.now() - t0;
       set({
@@ -525,8 +540,18 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const { content, pipeline, scopeId } = get();
     const result = editRename(content, pipeline.model, nodeId, newName);
     if (result.text === content) return; // no-op
-    // 重命名会改变 AST id → 旧位置记录失效，清掉该作用域
-    if (scopeId) useLayoutStore.getState().clearScope(scopeId);
+    // M17：改名要改 stableKey，但**位置不该丢**。改造前是 clearScope(scopeId) ——
+    // 改个名字把作用域内所有元素的位置一起抹掉。
+    //
+    // 迁移必须在 runPipeline **之前**做：新图按 stableKey 查位置，键还没搬过去
+    // 就跑 pipeline，节点会先回落到自动布局，搬完之后坐标也已经定了、追不回来。
+    const node = pipeline.nodes.find((n) => String(n.id) === nodeId);
+    const oldKey = stableKeyOf(node?.data, String(nodeId));
+    const oldName = String((node?.data as { label?: string } | undefined)?.label ?? '');
+    const newKey = renameStableKey(oldKey, oldName, newName);
+    if (scopeId && newKey !== oldKey) {
+      useLayoutStore.getState().migrateKey(scopeId, oldKey, newKey);
+    }
     set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
   },
@@ -547,13 +572,25 @@ export const useModelStore = create<ModelState>((set, get) => ({
     get().runPipeline(result.text);
   },
 
-  setNodePosition(nodeId, x, y) {
+  setNodePosition(nodeId, x, y, attach) {
     const { scopeId, pipeline } = get();
-    if (scopeId) useLayoutStore.getState().setPosition(scopeId, nodeId, x, y);
-    // 立即更新 pipeline.nodes 中的 position，避免 React Flow 跳回
-    const nodes = pipeline.nodes.map((n) =>
-      String(n.id) === nodeId ? { ...n, position: { x, y } } : n
+    // M17：存的是 stableKey。nodeId 是解析器计数器产物，改一次文本就失效，
+    // 按它存等于用户拖的位置从来存不下来。
+    const key = stableKeyOf(
+      pipeline.nodes.find((n) => String(n.id) === nodeId)?.data,
+      String(nodeId),
     );
+    if (scopeId) useLayoutStore.getState().setPosition(scopeId, key, x, y, attach);
+    // 立即更新 pipeline.nodes 中的 position，避免 React Flow 跳回。
+    // attach 也要同步落到 data 上：画布是靠 data.attach 由锚点反推位置的，
+    // 只写进 layoutStore 的话，要等到下一次 pipeline 重跑（改文本/自动布局）
+    // 才看得见锚点 —— 表现为「刚拖完看着对，一动别的元素端口就弹回去」。
+    const nodes = pipeline.nodes.map((n) => {
+      if (String(n.id) !== nodeId) return n;
+      const next: Node = { ...n, position: { x, y } };
+      if (attach) next.data = { ...n.data, attach };
+      return next;
+    });
     set({ pipeline: { ...pipeline, nodes } });
     // M16 P5/Q10：拖动后防抖 800ms 推送到后端（fire-and-forget；离线时 localStorage 兜底）
     scheduleLayoutFlush();
