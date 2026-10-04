@@ -228,6 +228,21 @@ async function blankPoint(page: Page): Promise<{ x: number; y: number }> {
   return { x: box.x + box.width * 0.28, y: box.y + box.height * 0.82 };
 }
 
+/**
+ * 预览线**实际画在屏幕上的**包围盒。
+ *
+ * ⚠️ 必须读渲染位置，不能读 path 的 `d`：`d` 一直是正确的（画布坐标），
+ * 初版那个 bug 是把 `<svg>` 挂在了 `.react-flow__pane` 而不是 viewport 里，
+ * 于是同一串坐标被当成屏幕坐标画 —— `d` 看着没毛病，线却不在鼠标那儿。
+ * 只有屏幕包围盒能判出「线到底出现在哪」。
+ */
+async function previewScreenBox(page: Page): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const path = page.locator('[data-testid="connect-preview"] path');
+  if ((await path.count()) === 0) return null;
+  const box = await path.boundingBox();
+  return box ?? null;
+}
+
 // ─── 用例 ────────────────────────────────────────────────────
 
 test.use({ viewport: { width: 1680, height: 900 } });
@@ -375,6 +390,71 @@ test.describe('M17 画布交互', () => {
       Math.abs(start!.y - (wheelModelNow!.y + flowH * 0.3)),
       '起点 y 不在 Wheel 左边界 30% 高度处',
     ).toBeLessThan(flowH * 0.08);
+  });
+
+  /**
+   * M17 S5 回归锁：预览线必须**跟着鼠标走**。
+   *
+   * 初版的 bug 是把预览 `<svg>` 挂在 `<ReactFlow>` 的普通 children 位置 ——
+   * FlowRenderer 把 children 放进 `.react-flow__pane`，**不在** viewport 里。
+   * path 的 `d` 是画布坐标，被当成屏幕坐标画出来，于是线钉在画板左上角、
+   * 完全不跟鼠标（而且要等鼠标拖到流坐标足够大才「突然」出现在屏幕里）。
+   *
+   * A4 只断言了预览**出现**，没断言它出现在**哪**，所以放过了这个 bug。
+   * 本用例补上位置维度：预览线的屏幕包围盒必须同时罩住「按下的那一点」和
+   * 「当前鼠标所在的那一点」。
+   */
+  test('A5. 预览线跟着鼠标走（不是钉在画板左上角）', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17preview');
+    await injectAuth(page, auth);
+    await gotoVehicleCanvas(page, auth);
+
+    const wheel = nodeByLabel(page, 'Wheel');
+    await expect(wheel).toBeVisible({ timeout: 15_000 });
+
+    // 判据的前提：视口不是恒等变换，否则「画布坐标 == 屏幕坐标」，
+    // 挂错层也看不出差别，用例就废了。
+    const off = await viewportOffset(page);
+    const scale = await viewportScale(page);
+    expect(
+      Math.abs(off.x) + Math.abs(off.y) + Math.abs(scale - 1),
+      '视口是恒等变换，本用例判不出挂错层',
+    ).toBeGreaterThan(0.01);
+
+    const from = await stripPoint(wheel, 'left', 0.3);
+    const blank = await blankPoint(page);
+
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await expect(page.locator('[data-testid="connect-preview"]')).toHaveCount(1);
+
+    // 拖到空白处：此时没有目标图元，预览线末端就等于光标位置。
+    await page.mouse.move(blank.x, blank.y, { steps: 12 });
+
+    const box = await previewScreenBox(page);
+    expect(box, '拖动中读不到预览线的屏幕包围盒').toBeTruthy();
+    // 屏幕包围盒要罩住起点与当前鼠标位置（各留 2px 余量给描边/几何误差）
+    const slack = 2;
+    expect(
+      box!.x,
+      `预览线左边界没罩住按下的点 x=${from.x.toFixed(1)}（实际 ${box!.x.toFixed(1)}）`,
+    ).toBeLessThanOrEqual(from.x + slack);
+    expect(
+      box!.x + box!.width,
+      `预览线右边界没罩住鼠标位置 x=${blank.x.toFixed(1)}`,
+    ).toBeGreaterThanOrEqual(blank.x - slack);
+    expect(
+      box!.y + box!.height,
+      `预览线下边界没罩住鼠标位置 y=${blank.y.toFixed(1)}`,
+    ).toBeGreaterThanOrEqual(blank.y - slack);
+
+    // 再钉一道：线必须**离开**画板左上角。初版 bug 下它就落在那儿。
+    await page.mouse.up();
+    await expect(page.locator('[data-testid="connect-preview"]')).toHaveCount(0);
+    expect(
+      Math.min(box!.x, box!.y),
+      '预览线还贴在画板左上角 —— svg 又被挂回 pane 层了',
+    ).toBeGreaterThan(-1);
   });
 
   /**

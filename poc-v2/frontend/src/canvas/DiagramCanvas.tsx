@@ -28,6 +28,7 @@ import {
   MiniMap,
   Handle,
   Position,
+  ViewportPortal,
   getBezierPath,
   type NodeProps,
   type Node,
@@ -1402,33 +1403,44 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         />
         {/*
           M17 S5：连线预览线。
-          作为 `<ReactFlow>` 的子节点渲染 —— FlowRenderer 会把自己的 children
-          放进 `.react-flow__viewport`（带平移/缩放 transform 的那层），
-          于是 path 里的坐标可以直接用画布坐标，不用自己维护视口变换。
-          `overflow: visible` 是必须的：viewport 层的尺寸是屏幕尺寸，
+
+          必须挂进 `<ViewportPortal>`，也就是 `.react-flow__viewport`（带平移/
+          缩放 transform 的那一层）—— path 的 `d` 是**画布坐标**，
+          只有在这一层里才成立。
+
+          ⚠️ 别把它当成 `<ReactFlow>` 的普通 children：FlowRenderer 把 children
+          放进的是 `.react-flow__pane`，**不在** viewport 里。那里坐标系是屏幕
+          坐标，于是 (220, 300) 会被画成「距画板左上角 220px / 300px」，
+          完全无视视口变换 —— 表现就是预览线不跟鼠标走，而是钉在画板左上角，
+          且要等鼠标拖到流坐标足够大时才「突然」出现在屏幕内。
+          这正是初版写错的那一层。
+
+          `overflow: visible` 仍然要保留：viewport 层的盒子是屏幕尺寸，
           而画布坐标可以远在屏幕之外。
         */}
         {connectPreviewPath && (
-          <svg
-            data-testid="connect-preview"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              overflow: 'visible',
-              pointerEvents: 'none',
-            }}
-          >
-            <path
-              d={connectPreviewPath}
-              fill="none"
-              stroke="#1890ff"
-              strokeWidth={2}
-              strokeDasharray="6 3"
-            />
-          </svg>
+          <ViewportPortal>
+            <svg
+              data-testid="connect-preview"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                overflow: 'visible',
+                pointerEvents: 'none',
+              }}
+            >
+              <path
+                d={connectPreviewPath}
+                fill="none"
+                stroke="#1890ff"
+                strokeWidth={2}
+                strokeDasharray="6 3"
+              />
+            </svg>
+          </ViewportPortal>
         )}
       </ReactFlow>
       </AnchorStripProvider>
