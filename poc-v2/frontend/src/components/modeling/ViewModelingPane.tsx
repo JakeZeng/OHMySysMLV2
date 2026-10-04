@@ -10,6 +10,7 @@ import { ModelingPane, type ModelingAdapter } from './ModelingPane';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { useViewContent } from '../../hooks/useViewContent';
 import { useModelStore } from '../../stores/modelStore';
+import { useScopeEdgeAnchors } from '../../hooks/useScopeEdgeAnchors';
 import { TemplateChooserModal } from '../modals/TemplateChooserModal';
 import { AIGenerateModal } from '../modals/AIGenerateModal';
 import { downloadText, downloadJson } from '../../lib/download';
@@ -46,6 +47,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
   const setNodePosition = useModelStore((s) => s.setNodePosition);
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
   const addConnection = useModelStore((s) => s.addConnection);
+  const edgeAnchors = useScopeEdgeAnchors();
 
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [aiOpen, setAiOpen] = React.useState(false);
@@ -72,6 +74,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
       setNodePosition,
       createNodeFromPalette,
       addConnection,
+      edgeAnchors,
       selectedNode,
       onSelectNode,
       onOpenTemplate: () => setTemplateOpen(true),
@@ -92,7 +95,7 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
       },
       enableSimulation: true,
     }),
-    [name, description, view, selectedNode, onSelectNode, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, showToast],
+    [name, description, view, selectedNode, onSelectNode, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, edgeAnchors, showToast],
   );
 
   return (

@@ -122,3 +122,14 @@
 [data-space-pan='1'] .react-flow__pane:active {
   cursor: grabbing;
 }
+
+/* M17 S5: 边框带 —— 按住即可从该点发起连线
+   指针用 crosshair 而不是 move/grab：这是「这里能拉线」的唯一视觉提示，
+   而边框带本身是透明的（否则会盖住节点正文）。 */
+.sysml-anchor-strip {
+  cursor: crosshair;
+}
+/* 边框带要压在节点边框之上，但不吃节点的 hover 高亮 */
+.sysml-anchor-strip:hover {
+  background: rgba(24, 144, 255, 0.12);
+}

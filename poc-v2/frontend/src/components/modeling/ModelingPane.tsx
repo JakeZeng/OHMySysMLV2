@@ -24,6 +24,7 @@ import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { generateUniqueName } from '../../lib/naming';
 import { canNestIntoBody, nodeKindHasBody, insertSnippetIntoElement } from '../../lib/textOps';
 import type { Anchor } from '../../lib/anchor';
+import type { EdgeAnchors } from '../../lib/edgeAnchor';
 import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
@@ -69,7 +70,16 @@ export interface ModelingAdapter {
     name: string,
     dropXY?: { x: number; y: number }
   ) => { ok: boolean; newNodeId?: string; reason?: string };
-  addConnection: (source: string, target: string) => { ok: boolean; reason?: string };
+  addConnection: (
+    source: string,
+    target: string,
+    anchors?: EdgeAnchors,
+  ) => { ok: boolean; reason?: string };
+  /**
+   * M17 S5：当前 scope 已存的边锚点（edge stableKey → 两端锚点）。
+   * 整张传给 DiagramCanvas —— 画布自己不碰 store，和节点位置的处理方式一致。
+   */
+  edgeAnchors: Record<string, EdgeAnchors>;
   /** 选中的画布节点（向上抛给父组件以渲染 ElementFormPanel） */
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
@@ -253,8 +263,8 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
   );
 
   const handleConnectCreate = React.useCallback(
-    (sourceId: string, targetId: string) => {
-      const r = adapter.addConnection(sourceId, targetId);
+    (sourceId: string, targetId: string, anchors?: EdgeAnchors) => {
+      const r = adapter.addConnection(sourceId, targetId, anchors);
       if (!r.ok) showToast({ title: '连接失败', description: r.reason, variant: 'error' });
     },
     [adapter, showToast],
@@ -357,6 +367,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
                 onPaletteDrop={handlePaletteDrop}
                 onPaneDoubleClick={handlePaneDoubleClick}
                 onConnectCreate={handleConnectCreate}
+                edgeAnchors={adapter.edgeAnchors}
               />
             </div>
             <ErrorPanel

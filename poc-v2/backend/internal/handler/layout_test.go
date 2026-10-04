@@ -273,6 +273,213 @@ func TestLayout_AttachSanitized(t *testing.T) {
 	}
 }
 
+// ─── M17 S5：边锚点（任意点连线）与新旧存储格式兼容 ────────────────────
+
+// 边锚点存 → 取，必须两端原样回来。
+//
+// 边锚点与节点坐标是**两张不同的表**：键分别是 conn:A->B 和 partDef:X，
+// 混在一张 map 里迟早出现同名键互相覆盖。
+func TestLayout_EdgeAnchorsRoundTrip(t *testing.T) {
+	r, authHeader, projectID := setupLayoutTest(t, "LayoutEdges")
+	pkgID := createLayoutPkg(t, r, authHeader, projectID, "EdgesPkg", "package EdgesPkg {\n  part def A;\n}")
+
+	body := jsonBody(gin.H{
+		"nodes": map[string]any{
+			"partDef:V::Car": map[string]float64{"x": 10, "y": 20},
+		},
+		"edges": map[string]any{
+			"conn:V::Car->V::Engine": map[string]any{
+				"source": map[string]any{"side": "bottom", "ratio": 0.25},
+				"target": map[string]any{"side": "top", "ratio": 0.75},
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/layouts/package/"+pkgID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/layouts/package/"+pkgID, nil)
+	req.Header.Set("Authorization", authHeader)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+
+	edges, ok := data["edges"].(map[string]any)
+	if !ok {
+		t.Fatalf("edges 缺失或不是对象：%v", data)
+	}
+	ent, ok := edges["conn:V::Car->V::Engine"].(map[string]any)
+	if !ok {
+		t.Fatalf("边锚点条目丢了：%v", edges)
+	}
+	src := ent["source"].(map[string]any)
+	tgt := ent["target"].(map[string]any)
+	if src["side"] != "bottom" || src["ratio"].(float64) != 0.25 {
+		t.Errorf("source = %v, want {bottom, 0.25}", src)
+	}
+	if tgt["side"] != "top" || tgt["ratio"].(float64) != 0.75 {
+		t.Errorf("target = %v, want {top, 0.75}", tgt)
+	}
+	// 节点坐标不能被边锚点挤掉
+	if nodes, ok := data["nodes"].(map[string]any); !ok || nodes["partDef:V::Car"] == nil {
+		t.Errorf("nodes = %v, want 含 partDef:V::Car", data["nodes"])
+	}
+}
+
+// 没存过布局时，GET 必须返回两个非 nil 的空对象。
+//
+// 前端 layoutStore.mergeServerScope / mergeServerEdgeScope 会直接遍历返回的
+// map；返回 null 会让 `Object.entries(null)` 抛错，白屏。
+func TestLayout_GetMissingReturnsEmptyObjects(t *testing.T) {
+	r, authHeader, projectID := setupLayoutTest(t, "LayoutMissing")
+	pkgID := createLayoutPkg(t, r, authHeader, projectID, "MissingPkg", "package MissingPkg {\n  part def A;\n}")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/layouts/package/"+pkgID, nil)
+	req.Header.Set("Authorization", authHeader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	data := parseJSON(t, w.Body.Bytes())["data"].(map[string]any)
+	nodes, ok := data["nodes"].(map[string]any)
+	if !ok || nodes == nil || len(nodes) != 0 {
+		t.Errorf("nodes = %#v, want 空对象", data["nodes"])
+	}
+	edges, ok := data["edges"].(map[string]any)
+	if !ok || edges == nil || len(edges) != 0 {
+		t.Errorf("edges = %#v, want 空对象", data["edges"])
+	}
+}
+
+func TestNormalizeLayoutEdgeAnchors(t *testing.T) {
+	ok := func(side string, ratio float64) *LayoutAnchor {
+		return &LayoutAnchor{Side: side, Ratio: ratio}
+	}
+	cases := []struct {
+		name     string
+		in       LayoutEdgeAnchors
+		wantOK   bool
+		wantSide [2]string
+		wantRat  [2]float64
+	}{
+		{"合法两端原样保留",
+			LayoutEdgeAnchors{Source: ok("bottom", 0.25), Target: ok("top", 0.75)},
+			true, [2]string{"bottom", "top"}, [2]float64{0.25, 0.75}},
+		{"缺 target → 整条丢弃",
+			LayoutEdgeAnchors{Source: ok("left", 0.5)},
+			false, [2]string{}, [2]float64{}},
+		{"缺 source → 整条丢弃",
+			LayoutEdgeAnchors{Target: ok("left", 0.5)},
+			false, [2]string{}, [2]float64{}},
+		{"两端都缺 → 整条丢弃",
+			LayoutEdgeAnchors{},
+			false, [2]string{}, [2]float64{}},
+		{"source.side 非法 → 整条丢弃（不能只丢一端，留半条）",
+			LayoutEdgeAnchors{Source: ok("diagonal", 0.5), Target: ok("top", 0.75)},
+			false, [2]string{}, [2]float64{}},
+		{"target.side 非法 → 整条丢弃",
+			LayoutEdgeAnchors{Source: ok("bottom", 0.25), Target: ok("", 0.5)},
+			false, [2]string{}, [2]float64{}},
+		{"ratio 越界夹取（两端都夹）",
+			LayoutEdgeAnchors{Source: ok("left", 42), Target: ok("right", -7)},
+			true, [2]string{"left", "right"}, [2]float64{1, 0}},
+		{"NaN ratio → 0.5",
+			LayoutEdgeAnchors{Source: ok("left", math.NaN()), Target: ok("right", 0.5)},
+			true, [2]string{"left", "right"}, [2]float64{0.5, 0.5}},
+		{"Inf ratio → 1",
+			LayoutEdgeAnchors{Source: ok("left", math.Inf(1)), Target: ok("right", 0.5)},
+			true, [2]string{"left", "right"}, [2]float64{1, 0.5}},
+	}
+	for _, c := range cases {
+		got, gotOK := normalizeLayoutEdgeAnchors(c.in)
+		if gotOK != c.wantOK {
+			t.Errorf("%s: ok = %v, want %v", c.name, gotOK, c.wantOK)
+			continue
+		}
+		if !c.wantOK {
+			if got.Source != nil || got.Target != nil {
+				t.Errorf("%s: 丢弃时应返回空结构，实际 %+v", c.name, got)
+			}
+			continue
+		}
+		if got.Source.Side != c.wantSide[0] || got.Target.Side != c.wantSide[1] {
+			t.Errorf("%s: side = {%v, %v}, want {%v, %v}",
+				c.name, got.Source.Side, got.Target.Side, c.wantSide[0], c.wantSide[1])
+		}
+		if got.Source.Ratio != c.wantRat[0] || got.Target.Ratio != c.wantRat[1] {
+			t.Errorf("%s: ratio = {%v, %v}, want {%v, %v}",
+				c.name, got.Source.Ratio, got.Target.Ratio, c.wantRat[0], c.wantRat[1])
+		}
+	}
+}
+
+// decodeStoredLayout 必须同时吃下两种历史格式。
+//
+// S5 之前库里存的是裸节点表 `{"pd:partDef_1":{"x":1,"y":2}}`，之后是
+// `{"nodes":{...},"edges":{...}}`。这里最危险的一点是 Go 会静默忽略未知字段：
+// 拿老格式去 unmarshal 到 storedLayout 是**成功**的，只是 Nodes 为 nil。
+// 所以判别必须看顶层键，否则每次上线后所有人的节点坐标都会被读成空。
+func TestDecodeStoredLayout(t *testing.T) {
+	t.Run("新格式", func(t *testing.T) {
+		raw := `{"nodes":{"pd:1":{"x":1,"y":2}},"edges":{"conn:a->b":{"source":{"side":"top","ratio":0.25},"target":{"side":"bottom","ratio":0.75}}}}`
+		got := decodeStoredLayout(raw)
+		if len(got.Nodes) != 1 || got.Nodes["pd:1"].X != 1 {
+			t.Errorf("nodes = %+v, want pd:1{x:1}", got.Nodes)
+		}
+		if len(got.Edges) != 1 {
+			t.Fatalf("edges = %+v, want 1 项", got.Edges)
+		}
+		if got.Edges["conn:a->b"].Source.Side != "top" {
+			t.Errorf("source = %+v", got.Edges["conn:a->b"].Source)
+		}
+	})
+
+	t.Run("新格式但没有 edges 段", func(t *testing.T) {
+		got := decodeStoredLayout(`{"nodes":{"pd:1":{"x":3,"y":4}}}`)
+		if len(got.Nodes) != 1 || got.Nodes["pd:1"].Y != 4 {
+			t.Errorf("nodes = %+v, want pd:1{y:4}", got.Nodes)
+		}
+		if len(got.Edges) != 0 {
+			t.Errorf("edges = %+v, want 空", got.Edges)
+		}
+	})
+
+	t.Run("老格式（裸节点表）坐标必须保住", func(t *testing.T) {
+		got := decodeStoredLayout(`{"pd:partDef_1":{"x":10,"y":20},"pd:partDef_2":{"x":0,"y":0}}`)
+		if len(got.Nodes) != 2 {
+			t.Fatalf("nodes = %+v, want 2 项", got.Nodes)
+		}
+		if p := got.Nodes["pd:partDef_1"]; p.X != 10 || p.Y != 20 {
+			t.Errorf("pd:partDef_1 = %+v, want {10,20}", p)
+		}
+	})
+
+	t.Run("类型不匹配的新格式 → 整条丢弃，不返回半真半假的条目", func(t *testing.T) {
+		// Go 遇到类型错误会继续解，返回「解出来的一半 + 剩下的零值」。
+		// 那批零值节点会让所有图元叠在原点，看起来像程序坏了 —— 比整张图
+		// 回落自动布局糟得多。
+		got := decodeStoredLayout(`{"nodes":{"pd:1":42}}`)
+		if len(got.Nodes) != 0 {
+			t.Errorf("nodes = %+v, want 空（宁可回落自动布局也不能给零值坐标）", got.Nodes)
+		}
+	})
+
+	t.Run("空串 / 非法 JSON → 空结构，不 panic", func(t *testing.T) {
+		for _, raw := range []string{"", "not-json", "[]", "null"} {
+			got := decodeStoredLayout(raw)
+			if got.Nodes != nil || got.Edges != nil {
+				t.Errorf("decodeStoredLayout(%q) = %+v, want 零值", raw, got)
+			}
+		}
+	})
+}
+
 func TestNormalizeLayoutPosition(t *testing.T) {
 	cases := []struct {
 		name string

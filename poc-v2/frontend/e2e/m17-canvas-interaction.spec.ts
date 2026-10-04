@@ -135,7 +135,9 @@ async function gotoVehicleCanvas(page: Page, auth: Auth): Promise<Locator> {
   }
   await page.waitForTimeout(900);
 
-  const vehRow = page.locator('[data-testid^="tree-row-elem-"][data-testid$=":Vehicle"]').first();
+  // 元素行的 encodedId 是 `elem:<pkgId>:<name>`（treeStore.ts），所以前缀是
+  // `tree-row-elem:` —— 写成 `tree-row-elem-`（连字符）永远匹配不上。
+  const vehRow = page.locator('[data-testid^="tree-row-elem:"][data-testid$=":Vehicle"]').first();
   await expect(vehRow).toBeVisible({ timeout: 15_000 });
   await vehRow.click({ button: 'right' });
   await page.locator('[data-testid="ctx-element-goto-canvas"]').click();
@@ -167,6 +169,56 @@ async function modelPos(locator: Locator): Promise<{ x: number; y: number } | nu
 
 async function countNodes(page: Page): Promise<number> {
   return page.locator('.react-flow__node').count();
+}
+
+async function countEdges(page: Page): Promise<number> {
+  return page.locator('.react-flow__edge').count();
+}
+
+/** 按名字取画布上的顶层图元（排除「同名但更外层」的那个，比如 Vehicle vs VehicleModel） */
+function nodeByLabel(page: Page, label: string, exclude?: string): Locator {
+  let l = page.locator('.react-flow__node').filter({ hasText: label });
+  if (exclude) l = l.filter({ hasNotText: exclude });
+  return l.first();
+}
+
+/**
+ * 边框带上一个点（屏幕坐标）。
+ *
+ * `insetRatio` 是沿边位置：left/right 边按高度、top/bottom 边按宽度。
+ * `depth` 是从边框线往节点**内部**的距离 —— 边框带厚 8px 且铺在盒子内侧，
+ * 所以 depth=4 正好落在带子正中，depth=0 是边框线本身。
+ */
+async function stripPoint(
+  node: Locator,
+  side: 'left' | 'right' | 'top' | 'bottom',
+  insetRatio: number,
+  depth = 4,
+): Promise<{ x: number; y: number }> {
+  const b = (await node.boundingBox())!;
+  if (side === 'left') return { x: b.x + depth, y: b.y + b.height * insetRatio };
+  if (side === 'right') return { x: b.x + b.width - depth, y: b.y + b.height * insetRatio };
+  if (side === 'top') return { x: b.x + b.width * insetRatio, y: b.y + depth };
+  return { x: b.x + b.width * insetRatio, y: b.y + b.height - depth };
+}
+
+/** 画布缩放比（viewport 的 inline transform 里的 scale） */
+async function viewportScale(page: Page): Promise<number> {
+  const style = (await page.locator('.react-flow__viewport').getAttribute('style')) ?? '';
+  const m = /scale\(\s*(-?[\d.]+)\s*\)/.exec(style);
+  return m && Number(m[1]) > 0 ? Number(m[1]) : 1;
+}
+
+/**
+ * 一条边的路径起点（贝塞尔 `d` 里的第一个 M），画布绝对坐标。
+ *
+ * `d` 在 `.react-flow__edge`（一个 `<g>`）**里面的** `<path>` 上，
+ * 直接对 `.react-flow__edge` 取属性只会拿到 null。
+ */
+async function edgeStartPoint(edge: Locator): Promise<{ x: number; y: number } | null> {
+  const d = (await edge.locator('path').first().getAttribute('d')) ?? '';
+  const m = /^M\s*(-?[\d.]+)[ ,]+(-?[\d.]+)/.exec(d);
+  return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
 }
 
 /** 画布上一块确定是空白的坐标（避开右上角控件 / 缩略图 / 左下角图例） */
@@ -238,6 +290,124 @@ test.describe('M17 画布交互', () => {
     const after = await modelPos(node);
     expect(after!.x).not.toBeCloseTo(before!.x, 0);
     expect(after!.y).not.toBeCloseTo(before!.y, 0);
+  });
+
+  /**
+   * M17 S5：从边框带发起的连线。
+   *
+   * 抓住 Wheel 的**左边** 30% 处拖到 Engine 的**左边** 70% 处。两端都不是
+   * 默认锚点（默认是「源右中 / 目标左中」），所以除了边数 +1，还必须验端点
+   * 真的落在了用户按的那两个位置上 —— 只断边数的话，一个恒定走默认锚点的
+   * 实现也能过。
+   */
+  test('A4. 从边框带拖出一条连线，端点落在按下的位置（不是默认锚点）', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17anchor');
+    await injectAuth(page, auth);
+    await gotoVehicleCanvas(page, auth);
+
+    const wheel = nodeByLabel(page, 'Wheel');
+    // Playwright 的 hasText / hasNotText 对字符串是**大小写不敏感**的，
+    // 所以不能靠 hasNotText: 'engine' 排除同名子节点 —— 画布上这三个图元
+    // 本身就没有子节点，直接按文本取即可。
+    const engine = nodeByLabel(page, 'Engine');
+    await expect(wheel).toBeVisible({ timeout: 15_000 });
+    await expect(engine).toBeVisible({ timeout: 15_000 });
+
+    // 边框带存在（每个可连线图元 4 条）
+    await expect(wheel.locator('[data-testid="anchor-strip"]')).toHaveCount(4);
+
+    // 需求 1：左右两个固定锚点不该再看得见。
+    // 注意是「不可见」不是「不存在」—— 它们必须继续注册，否则从端口徽标
+    // 拖出的连线落不到普通图元上（见 DiagramCanvas.LEGACY_HANDLE_HIDE）。
+    //
+    // 断言 computed style 而不是 toBeHidden()：Playwright 的可见性判定只看
+    // 包围盒非空 + visibility，opacity:0 仍算 visible。而且这里**不能**用
+    // display:none —— 那样 getBoundingClientRect 归零，RF 注册的 handleBounds
+    // 也就废了，「端口 → 部件」的落点会失效。
+    const legacyHandles = wheel.locator('.react-flow__handle');
+    await expect(legacyHandles).toHaveCount(2);
+    for (let i = 0; i < 2; i++) {
+      const style = await legacyHandles.nth(i).evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { opacity: cs.opacity, pointerEvents: cs.pointerEvents, display: cs.display };
+      });
+      expect(style.opacity, `第 ${i} 个固定锚点仍然可见`).toBe('0');
+      expect(style.pointerEvents, `第 ${i} 个固定锚点仍能发起连线`).toBe('none');
+      expect(style.display).not.toBe('none');
+    }
+
+    const before = await countEdges(page);
+    const wheelBox = (await wheel.boundingBox())!;
+
+    // 起点取 Wheel 的**左边** 30%，终点取 Engine 的**上边**正中。
+    // 刻意不用「左 → 左」：实测 ELK 把这三个图元排成同一列，左右两条边
+    // x 坐标完全重合，那样的用例退化成一条竖线，判不出端点判边是否正确。
+    const from = await stripPoint(wheel, 'left', 0.3);
+    const to = await stripPoint(engine, 'top', 0.5);
+
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    // 中途应当出现连线预览
+    await expect(page.locator('[data-testid="connect-preview"]')).toHaveCount(1);
+    await page.mouse.move(to.x, to.y, { steps: 16 });
+    await page.mouse.up();
+
+    await expect.poll(() => countEdges(page), { timeout: 15_000 }).toBe(before + 1);
+    await expect(page.locator('[data-testid="connect-preview"]')).toHaveCount(0);
+
+    // 端点确实在 Wheel 的左边 30% 高度处，而不是默认的「源右中」。
+    //
+    // ⚠️ Wheel 的坐标必须在**边出现之后**再读：addConnection 会触发异步
+    // applyElkLayout 重排整张图，拖之前读到的 modelPos 是旧值（实测差 80px）。
+    //
+    // 路径 `d` 与 modelPos 都是**画布坐标**，可直接相减；但 boundingBox 是
+    // 屏幕坐标（被 zoom 缩放过），拿来当高度会差一个 scale —— 必须先换算。
+    const scale = await viewportScale(page);
+    const flowH = wheelBox.height / scale;
+    const wheelModelNow = await modelPos(wheel);
+    expect(wheelModelNow, '读不到 Wheel 的画布坐标').toBeTruthy();
+    const edge = page.locator('.react-flow__edge').last();
+    const start = await edgeStartPoint(edge);
+    expect(start, '没读到新边的路径起点').toBeTruthy();
+    expect(Math.abs(start!.x - wheelModelNow!.x), '起点 x 不在 Wheel 左边界').toBeLessThan(2);
+    // 容差取高度的 8%：锚点量化步长是 1/48（≈2%），留足放大余量
+    expect(
+      Math.abs(start!.y - (wheelModelNow!.y + flowH * 0.3)),
+      '起点 y 不在 Wheel 左边界 30% 高度处',
+    ).toBeLessThan(flowH * 0.08);
+  });
+
+  /**
+   * M17 S5 的**代价**回归锁：边框带不能吃掉节点拖拽。
+   *
+   * A2 从节点正中拖，只要边框带没长到节点中心就发现不了问题。这里专门在
+   * 「上边框内侧 10px」处下手 —— 边框带厚 8px，10px 刚好越过它的内沿。
+   * 哪天有人把带子加宽到 10px 以上、或图省事改成 `inset:0` 铺满整节点，
+   * 本用例立刻红。
+   */
+  test('A3. 紧贴上边框内侧（越过 8px 边框带）拖拽仍然移动节点', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17strip');
+    await injectAuth(page, auth);
+    const node = await gotoVehicleCanvas(page, auth);
+
+    const before = await modelPos(node);
+    expect(before).toBeTruthy();
+    const box = (await node.boundingBox())!;
+    // 上边框内侧 10px：不在 8px 边框带里，也不是任何 Handle（Handle 只在左右中点）
+    const grab = { x: box.x + box.width / 2, y: box.y + 10 };
+
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    await page.mouse.move(grab.x + 90, grab.y + 70, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+
+    const after = await modelPos(node);
+    expect(after!.x, '节点没动 —— 边框带把内部拖拽吃了').not.toBeCloseTo(before!.x, 0);
+    expect(after!.y).not.toBeCloseTo(before!.y, 0);
+
+    // 这一下是**拖节点**，不是画线：不该凭空多出连线
+    expect(await countEdges(page)).toBe(0);
   });
 
   test('B. 点画布空白 → 右栏从元素属性回退到包属性', async ({ page, request }) => {

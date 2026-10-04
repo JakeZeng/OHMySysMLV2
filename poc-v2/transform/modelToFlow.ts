@@ -608,7 +608,12 @@ function makeEdge(
     id: `edge:${conn.id}`,
     source: srcPortId ?? srcPartId,
     target: tgtPortId ?? tgtPartId,
-    type: 'smoothstep',
+    // M17 S5：结构连线走自定义边，端点由锚点算（frontend/src/canvas/AnchoredEdge.tsx）。
+    // 不能用 RF 内置类型：它们只认已注册的 <Handle>，而 handle 解析要么落在
+    // 固定小点上、要么在节点滚出视口（handleBounds 消失）时整条边不渲染。
+    // 顺带说明：这里的路径形状从 smoothstep 的正交折线变成了 bezier ——
+    // 端点可以落在任意位置后，正交折线会绕出一堆无意义的台阶。
+    type: 'anchored',
     label: conn.name,
     animated: false,
     style: { stroke: '#1890ff', strokeWidth: 2 },

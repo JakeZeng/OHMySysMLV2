@@ -481,9 +481,19 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 | Pre-dev 步骤 4 Invariant test fixture 设计(2026-10-02) | **完成**;12 个 fixture F1–F12 + 不变式保证已写入 §8.3 |
 | **M17 启动决策**(2026-10-02 用户拍板) | ① **worktree 隔离**(`m17/view-modeling` 分支) ② **切片逐个 commit** ③ **B / D 单独 PR review** ④ **切片 B 完成时全量回归**(`npm test` + `frontend npm test` + `go test ./...` + `k6 perf`) + **拍 baseline 截图** |
 | 切片 G 拆 G1/G2(摸底修正 2026-10-02) | 已写入 §8.2 |
+
+**S5 实施期摸到的既有 bug（非 S5 引入，A/B 已确认；建议单开 issue）**
+
+| bug | 症状 | 证据 |
+|---|---|---|
+| 空白拖拽清选中态 | 在画布空白处拉一下框选，选中态被清掉、右侧属性面板从元素属性回退到包属性 | `m17-canvas-interaction` B2；改动前后同样失败 |
+| 双击空白不新建元素 | `page.mouse.dblclick` 空白处，节点数不变 | 同上 C2；改动前后同样失败 |
+| 平移后视口偏移 2.85px | 空格拖拽平移后，viewport transform 的 y 与预期差 2.85px（`316.783` vs `313.933`） | 同上 A；改动前后同样数值 |
+| m17 spec 自身不隔离 | 每条用例各自 bootstrap 项目，但树定位取 `.first()`，同一次运行里前一条建的项目会挤进来，导致后一条挂在准备步骤 | A2+A3 一起跑时 A3 挂在 `gotoVehicleCanvas`，单跑即过 |
+
 ---
 
-## 12. 画布锚点（2026-10-04 起，commit 110775a）
+## 12. 画布锚点（2026-10-04 起，S1–S4 commit 110775a，S5 见 12.3）
 
 ### 12.1 需求
 
@@ -503,36 +513,88 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 
 四片互相咬合（S2 是 S4 前置，共享 modelToFlow.ts / layoutStore.ts），故合并为一个提交。
 
-### 12.3 未完成：切片 S5 任意点连线（需求 1）
+### 12.3 切片 S5 任意点连线（需求 1）—— 已完成
 
-**动代码前必读的四条源码复核结论**（读 @xyflow/react 12.4.4 装好的源码得出，与直觉相反，是为避免返工）：
+**动代码前必读的四条源码复核结论**（读装好的源码得出，与直觉相反，是为避免返工）：
 
 | 坑 | 结论 | 对策 |
 |---|---|---|
-| 边端点不能走 RF handle 解析 | `getEdgePosition` 遇缺 `sourceHandle`/`targetHandle` 返回 **null**，`EdgeWrapper` 拿到 null **整条边不渲染**（不是回退节点中心）；且 `onlyRenderVisibleElements={true}` 下节点滚出视口即卸载 → 无 handleBounds → **边凭空消失** | 注册自定义 edge 类型，自行从 `(anchor, internals.positionAbsolute, measured)` 算路径渲染 `<BaseEdge>`；edge 对象上**绝不**设 `sourceHandle`/`targetHandle` |
-| `loose` 模式给不了任意点终点 | `onPointerMove` 用 `getClosestHandle(radius=20)` 在**已存在的 handle** 里找最近，点在节点正文会静默吸附到某个边中点 | 连线手势**自己实现**，不用 RF 的 `onConnect` |
-| `Handle` 必须在下压之前就存在 | `HandleComponent` 绑的是 React `onMouseDown`（`index.mjs:1886`），非全局监听；按下后才 mount 的 Handle 收不到那次事件 | 锚点由 **hover（mousemove）**驱动；`nodrag` 由 `<Handle>` 自带，不用手动传给 ReactFlow |
-| handle 定位取的是矩形**边**不是中心 | `getHandlePosition`（`system/index.mjs:1489`） | `transform` 必须按边分四种，否则每个端点往节点内偏半个 handle 尺寸 |
+| 边端点不能走 RF handle 解析 | `getEdgePosition` 只有在**完全拿不到 handleBounds** 时才返回 null（`EdgeWrapper` 拿到就整条边不渲染）；但 12.11.6 的 `getHandle$1` 在 edge 上**没写 handleId** 时返回 `bounds[0]`（第一个 handle），不是 null —— 也就是说**默认能画，但端点被静默钉死在第一个 Handle 上**。真正致命的是 `onlyRenderVisibleElements={true}`：节点滚出视口即卸载 → 无 handleBounds → 边凭空消失 | 注册自定义 edge 类型 `anchored`，自行从 `(anchor, internals.positionAbsolute, measured)` 算路径渲染 `<BaseEdge>`；edge 对象上**绝不**设 `sourceHandle`/`targetHandle` |
+| `loose` 模式给不了任意点终点 | `onPointerMove` 用 `getClosestHandle(radius=20)` 在**已存在的 handle** 里找最近，点在节点正文会静默吸附到某个边中点 | 连线手势**自己实现**（`onPointerDown` + document 级 move/up） |
+| `Handle` 必须在下压之前就存在 | `HandleComponent` 绑的是 React `onMouseDown`，非全局监听；按下后才 mount 的 Handle 收不到那次事件 | 起点由 `onPointerDown` 那一刻的指针位置直接算，不等 mount |
+| handle 定位取的是矩形**边**不是中心 | `getHandlePosition` | `transform` 必须按边分四种，否则每个端点往节点内偏半个 handle 尺寸 |
 
-**待做清单**
+> ⚠️ 上表第 1 条在初稿里写成「缺 handleId → `getEdgePosition` 返回 null → 整条边不渲染」，那是照着 **12.4.4** 的印象写的，实装版本是 **12.11.6**（`@xyflow/system` 0.0.82），行为已变。结论方向不变（必须自定义 edge），但原因从「画不出来」变成「静默钉死在固定 Handle 上」—— 后者更隐蔽，也正是需求 1 说的「还是只有左右两侧各一个锚点」。
 
-- [ ] `<AnchorStrips>`：节点内部组件，4 条绝对定位 `nodrag` 细带（贴边框线）。⚠️ **不要做成一个 `inset:0` 的整圈** —— 否则吃掉所有内部 mousedown，直接打破既有 e2e 用例 A2。`cursor: crosshair` 写进 `styles/index.css`（该文件目前**没有任何** `.react-flow__handle` / `.react-flow__node` 规则）。加进 `NON_PANE_SELECTOR`（`DiagramCanvas.tsx:401`）。
-- [ ] 连线手势：strip 上 `onPointerDown` → document 级 pointermove/pointerup → `document.elementFromPoint` 找光标下节点 → `anchorFromPoint` 实时算目标锚点 → 松手回调 `onConnectCreate(sourceId, targetId, {sourceAnchor, targetAnchor})`。移除 RF 的 `onConnect`/`handleConnect`（:867）。
-- [ ] 自定义边 `anchored`：`BaseEdge` + `useStore(s => s.nodeLookup.get(edge.source)?.internals)`。`nodeLookup` 里所有节点常驻（不随渲染卸载），故离屏边不会消失。
-- [ ] 结构连线改 bezier：`transform/modelToFlow.ts` 的 `makeEdge`（:522）`type: 'smoothstep'` → `'bezier'`。状态机 transition 边（:153）保持 smoothstep。
-- [ ] 边锚点持久化：layoutStore 平行 map `edgeAnchors`（按 stableKey）→ `layoutApi.save` 第二个字段 → Go `layoutPayload.Edges`。
-- [ ] `addConnection` 全同步（插文本 → runPipeline → 同步出边），故调用前后做一次 edge id 集合差 + `(source,target)` 校验即可精确拿到新边 id 把锚点挂上，**不需要 TTL 或重试**。
+**落地清单**
+
+- [x] `<AnchorStrips>`（`canvas/AnchorStrips.tsx`）：节点内部组件，4 条绝对定位 `nodrag nopan` 细带（厚 `ANCHOR_BAND = 8`）。⚠️ **没有做成一个 `inset:0` 的整圈** —— 否则吃掉所有内部 mousedown，直接打破既有 e2e 用例 A2。`cursor: crosshair` 写进 `styles/index.css`。挂载在 7 个可连线节点里（PartDef / PartUsage / PortDef / State / Action / Requirement / ConstraintBlock），经 `AnchorStripProvider` 传 enabled + handler（走 context 而非 props，因为 7 个组件都是 `React.FC<NodeProps>` 且被 `React.memo` 包着）。
+- [x] 连线手势（`DiagramCanvas.tsx`）：strip 上 `onPointerDown` → document 级 pointermove/pointerup → `document.elementFromPoint` 找光标下节点 → 目标锚点实时算 → 松手回调 `onConnectCreate(sourceId, targetId, {source, target})`。拖拽中用一张 `pointerEvents:none` 的 svg 画虚线预览。
+- [x] 自定义边 `anchored`（`canvas/AnchoredEdge.tsx`）：`useInternalNode` + `internalNodeBox`（读 `internals.positionAbsolute` + **顶层** `measured` —— `internals.measured` 在 12.11.6 不存在）→ `edgeEndpoints` → `getBezierPath` → `BaseEdge`。
+- [x] 结构连线改 bezier：`transform/modelToFlow.ts` 的 `makeEdge` `type: 'smoothstep'` → `'anchored'`（自定义边就是 bezier；RF 内置 `'bezier'` 拿不到任意端点）。状态机 transition 边保持 smoothstep。
+- [x] 边锚点持久化：layoutStore 平行 map `edgeAnchors`（按 stableKey，独立 localStorage 键 `sysmlv2.layout.edges.<projectId>`）→ `layoutApi.save` 第二字段 `edges` → Go `layoutPayload.Edges` + `storedLayout`。**没有**混进节点 `LayoutMap`：两张表键空间不同（`conn:A->B` vs `partDef:X`），混在一张 map 里迟早同名键互相覆盖。
+- [x] `addConnection` 全同步（插文本 → `runPipeline` → 同步出边），调用前后做差集当场抓新边把锚点挂上，**不需要 TTL 或重试**。
+- [x] `lib/anchor.ts` 补 `anchorOnSide(pt, box, side)`：边框带上已经知道用户按的是哪条边，四角附近不能再让「最近的边」说了算，否则线会从腰上长出来。
+
+**三处与原计划不同的决定**
+
+1. **RF 的 `onConnect` 保留**（原计划移除）。那对可见小 Handle 是**端口徽标**唯一的连线入口，删了会让端口级 connect 直接不可用。边框带是它们之外的**补充通道**，不是替代。
+2. **`.sysml-anchor-strip` 没有加进 `NON_PANE_SELECTOR`**。它已经带 `nodrag`，而 XYDrag 的过滤器是 `hasSelector(target, '.nodrag', domNode)` —— 这正是唯一有效的挡拖拽手段；`React` 合成事件的 `stopPropagation` 跑不过挂在节点 DOM 上的 d3 原生监听器。再往 `NON_PANE_SELECTOR` 里加一份是冗余。
+3. **角上四条带互相压住，不做回避**。终点由**收到事件的那个元素**决定（`data-side`），指哪条是哪条，`anchorOnSide` 强制吸附到这条边，不依赖 z 序推断。
+
+**实现期踩到并修掉的真 bug**
+
+- 差集**不能按 `edge.id` 算**。`sysml.pegjs` 的 `nextId` 是全局计数器，插入一行文本会让**所有** connection 的 id 重新编号（实测 `conn_8` → `conn_13`），于是「旧的」边在差集里也是新的 —— 连第二条线都定位不到新边。必须按 `stableKey` 比。与 S2 里节点 id 平移是同一个坑。
+- Go 侧 `storedLayout.Edges` 一开始带 `omitempty`，空 map 被整个省略 → GET 返回里没有 `edges` 键，前端拿到 `undefined` 而不是 `{}`。两张表现在都不带 `omitempty`。
+- Go 侧两种历史格式（老的裸节点表 vs 新的 `{nodes,edges}`）的判别**不能靠 unmarshal 成不成功**：Go 静默忽略未知字段，老格式反序列化到 `storedLayout` 是成功的且 `Nodes == nil`。改成先摊平成 `map[string]json.RawMessage` 看顶层有没有 `nodes`。另外解析失败时**不能返回部分结果** —— Go 遇类型错误会继续解，返回「一半真值 + 一批零值节点」，那批零值会让所有图元叠在原点，比整张图回落自动布局糟得多。
 
 ### 12.4 S5 的验证清单
 
-**e2e**（需前后端已起；本机 Playwright chromium 尚未装好）
-- `e2e/m17-canvas-interaction.spec.ts` 追加 **A3 内部拖动仍移动节点**（守住 8px 带不误伤，A2 作基线）、**A4 边框带拖动发起连线**。
-- `e2e/m16-p5-screenshots.spec.ts` 追加**端口拖到上边 → 刷新 → 仍在原位**（复用已有 `gotoCanvasNode`/`modelPos`/1600ms 防抖）。
-- 必须回归且不能挂：m17 的 A/A2/B/B2/C/C2、m16 的 `09-10`（断言刷新前后坐标完全一致，用 `expectAllNodesVisible` 守 M16 P5 的 `measured` 回归）。
-- 截图：bezier 会改全部模型的结构连线外观，需重跑 `m16-p5-screenshots.spec.ts` 重新归档并确认无意外位移。
+**单元测试（已跑，全绿）**
+
+- `src/lib/edgeAnchor.test.ts` —— 25 条：不可信输入校验（半条锚点 / 非法 side / NaN / 越界 / 量化）、`edgeEndpoints`（默认锚点 = S5 之前那两个 Handle 的位置、任意点、盒子平移、零尺寸不产 NaN）、`internalNodeBox`（缺 `measured` / 缺 `positionAbsolute` / NaN / Infinity）。
+- `src/lib/anchor.test.ts` —— `anchorOnSide` 4 条（与 `anchorFromPoint` 的区别正是 S5 需要的：指定边优先于几何判边）。
+- `src/stores/layoutStore.test.ts` —— 13 条：键空间隔离、改名时边锚点跟着迁（两端 / 端口限定名）、`clearScope` 连边一起清、localStorage 重载、`mergeServerEdgeScope` 逐条校验。
+- `src/stores/modelStore.test.ts` —— 6 条：`addConnection` 把锚点挂到**新生成的那条边**上（stableKey 差集）、两条同端点边各自独立、端口端点连线同样挂得上、失败时不写。
+- `backend/internal/handler/layout_test.go` —— 边锚点往返、缺失布局返回两个非 nil 空对象、`normalizeLayoutEdgeAnchors` 9 组、`decodeStoredLayout` 两种历史格式 + 类型不匹配不返回半成品。
+
+**e2e（已执行，2026-10-04）**
+
+跑法上的两个坑，结论先写在这儿以免下次重踩：
+
+1. 本机装的是完整 chromium，**没装 headless shell**（`chromium_headless_shell-1243` 缺失），所以必须 `--headed`。先前「S5 无法在本机验证」的判断是错的。
+2. 后端限流 **60 req/min/IP**，一条 e2e 大约烧 15 个 API 调用 —— 连续跑两条以上必然 429。**每条之间要隔 ~70s，或按 `-g` 单跑。**
+
+`e2e/m17-canvas-interaction.spec.ts` 追加 **A3**（在上边框内侧 10px 处拖拽仍移动节点 —— A2 从节点正中拖，边框带没长到中心就发现不了问题；A3 专门在越过 8px 带内沿的地方下手）、**A4**（从 Wheel 左边框 30% 拖到 Engine 上边框 50%，验边数 +1 **且**起点 x ≈ Wheel 左边框、y ≈ 边框 30% 处，而不只是默认锚点）。
+
+顺带修掉一个**既有 spec bug**：元素行 `data-testid` 前缀写的是 `tree-row-elem-`（连字符），而 `treeStore.ts:60` 生成的是 `elem:`（冒号）—— 这个前缀永远匹配不上，意味着**整个 m17 spec 从写下来那天起一次都没真正跑过**。
+
+执行结果（`--headed`，逐条单跑）：
+
+| 用例 | S5 树 | 改动前基线 | 判定 |
+|---|---|---|---|
+| A4 任意点连线 | ✅ 通过 | — | **S5 核心判据，通过** |
+| A2 不按空格仍拖节点 | ✅ 通过 | — | 通过 |
+| A3 越过边框带仍拖节点 | ✅ 通过 | — | 通过 |
+| B 点空白回退到包属性 | ✅ 通过 | — | 通过 |
+| C 双击已有元素 | ✅ 通过 | ✅ 通过 | 通过 |
+| A 空格平移 | ❌ 2.85px 漂移 | ❌ **同样 2.85px 漂移** | 既有问题，非回归 |
+| B2 框选后选中态不被清 | ❌ 空白拖拽清了选中 | ❌ **同样失败** | 既有问题，非回归 |
+| C2 双击空白新建元素 | ❌ 节点数没变 | ❌ **同样失败** | 既有问题，非回归 |
+
+A / B2 / C2 三条都做了 A/B：把全部 22 个改动 `git stash` 掉、只保留那一行选择器修复，在改动前的干净树上跑，**失败点与数值完全一致**。所以它们既不是 S5 引入的，也不在本次修复范围内 —— 但都是真 bug（尤其 B2「空白拖拽会清掉选中态」和 C2「双击空白不新建元素」是用户能直接感知的），已记入 §11.3 跟踪项。
+
+另注：A3 与 A2 一起跑时会挂在 `gotoVehicleCanvas` 的准备步骤（找不到 `tree-row-elem:…:Vehicle`），单跑就过 —— 每条用例各自 bootstrap 一个项目，而 `tree-row-pkg:` / `tree-row-elem:` 取的是 `.first()`，同一次运行里前面的用例建的项目会挤进树里。**这是 spec 自身的隔离缺陷，不是 S5 的问题**，但要跑整份 spec 就得先修它。
+
+**仍未做**
+- `e2e/m16-p5-screenshots.spec.ts` 待追加：端口拖到上边 → 刷新 → 仍在原位（复用已有 `gotoCanvasNode`/`modelPos`/1600ms 防抖）。
+- 截图：结构连线改 bezier 会改全部模型的外观，需重跑 `m16-p5-screenshots.spec.ts` 重新归档并确认无意外位移。`m16-p5/` 下已归档的图全部作废。
+- m16 的 `09-10` 刷新前后坐标一致性回归未跑。
 
 **已知遗留**
 - 旧 localStorage 布局数据因键名变更失效一次（刷新后回到自动布局一次），属预期。
 - hexagon 约束块的 clipPath 是六边形，上下边框带会伸出角外，纯视觉瑕疵，未加分支。
+- `PortNode` **刻意没有**边框带：徽标只有 ~18×14px，8px 带会整个盖住它，端口既连不上也拖不动。
+- 端口的**终点**锚点由 `anchorFromPoint` 自由判边（用户没「按在某条边上」这个明确意图），与起点用 `anchorOnSide` 强制吸附不同 —— 目标节点上有子节点/徽标时判出来的边可能不是用户心理预期的那条。
 - 明确不做：端口改 RF 真子节点（`parentNode`）—— 方向正确但需同时改 `layoutEngine.toElkChild`、两处 pipeline 守卫、DiagramCanvas 盒子算法，建议 S5 之后单独 PR。注意 `extent: 'parent'` 会把子节点夹进父框，与「徽标骑在边框上」矛盾，届时须用坐标 extent。
 - `sysmlGhost` 没注册进 `nodeTypes`（产出但未注册），属既有缺口，非本次引入。

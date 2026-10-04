@@ -28,6 +28,7 @@ import {
   MiniMap,
   Handle,
   Position,
+  getBezierPath,
   type NodeProps,
   type Node,
   type Edge,
@@ -46,11 +47,31 @@ import {
 } from '../lib/portSide';
 import {
   anchorFromPoint,
+  anchorOnSide,
+  anchorPoint,
   boxCenter,
   normalizeAnchor,
+  sameAnchor,
   type Anchor,
   type AnchorBox,
+  type AnchorSide,
+  type Point,
 } from '../lib/anchor';
+import {
+  internalNodeBox,
+  type EdgeAnchors,
+} from '../lib/edgeAnchor';
+import { AnchorStripProvider, AnchorStrips } from './AnchorStrips';
+import AnchoredEdge from './AnchoredEdge';
+import { stableKeyOf } from '@transform/stableKey';
+
+/** 锚点边 → React Flow 的 Position（自带边的贝塞尔控制点方向要用）。 */
+const SIDE_TO_POSITION: Record<AnchorSide, Position> = {
+  left: Position.Left,
+  right: Position.Right,
+  top: Position.Top,
+  bottom: Position.Bottom,
+};
 
 // ─── 节点类型定义（保持 M10 不变） ────────────────────────────
 
@@ -80,6 +101,30 @@ const FALLBACK_NODE_H = 80;
 /** 端口徽标的兜底尺寸 —— 徽标只装方向箭头，约 14~22px；端口名不占盒子。 */
 const FALLBACK_PORT_W = 18;
 const FALLBACK_PORT_H = 14;
+
+/**
+ * M17 S5：普通图元上那对「左中 / 右中」固定 Handle 的可见性。
+ *
+ * S5 之前它们是**唯一**的连线入口；边框带（AnchorStrips）上线后它们就是冗余的
+ * 两个固定锚点了 —— 而「图元只有左右两个点能连」正是需求 1 要消灭的东西。
+ *
+ * ## 为什么是「不可见」而不是「删掉」
+ *
+ * RF 判定一次连线是否合法的依据是 `handleBounds`（注册进 store 的矩形），
+ * **不是**命中测试。所以在端口徽标那侧拖出一条线、落到普通图元上时，
+ * 普通图元必须有一个已注册的 Handle 才能接住 —— 直接删掉会让
+ * 「端口 → 部件」这类连线全部失效（端口徽标自己没有边框带，详见 AnchorStrips）。
+ * 于是保留注册、只去掉可见性与命中：
+ *   - `opacity: 0` 让用户看不见那两个点
+ *   - `pointerEvents: 'none'` 让用户不可能从它们**发起**连线（只能当终点）
+ *
+ * 尺寸保持 8×8 不变：改尺寸会连带改注册进 store 的 bounds，落在上面的
+ * 「端口 → 部件」落点判定会偏。
+ */
+const LEGACY_HANDLE_HIDE: React.CSSProperties = {
+  opacity: 0,
+  pointerEvents: 'none',
+};
 
 /**
  * 取一个已渲染节点在画布上的包围盒。
@@ -122,12 +167,13 @@ const PartDefNode: React.FC<NodeProps> = ({ data, selected }) => {
         transition: 'background 0.1s',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#1890ff', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#1890ff', width: 8, height: 8 }} />
       <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
         «part def»
       </div>
       <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
-      <Handle type="source" position={Position.Right} style={{ background: '#1890ff', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#1890ff', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -149,12 +195,13 @@ const PartUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
         transition: 'background 0.1s',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#fa8c16', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
       <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
         «part» : {String(d.typeRef ?? '')}
       </div>
       <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
-      <Handle type="source" position={Position.Right} style={{ background: '#fa8c16', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -176,12 +223,13 @@ const PortDefNode: React.FC<NodeProps> = ({ data, selected }) => {
         transition: 'background 0.1s',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#52c41a', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#52c41a', width: 8, height: 8 }} />
       <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
         «port def»{d.direction ? ` (${String(d.direction)})` : ''}
       </div>
       <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
-      <Handle type="source" position={Position.Right} style={{ background: '#52c41a', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#52c41a', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -259,6 +307,13 @@ const PortNode: React.FC<NodeProps> = ({ data, selected }) => {
 
   return (
     <div style={badgeStyle}>
+      {/*
+        M17 S5：**端口徽标不挂边框带。**
+        徽标只有 ~14×18px，边框带厚 8px —— 四条带铺上去等于把整个徽标盖死，
+        端口就再也拖不动了（S4 的任意贴边能力当场作废）。
+        端口作为连线端点仍走下面这对可见小 Handle（`nodesConnectable` 开着，
+        RF 的 onConnect 保留），所以端口级 connect 不受影响。
+      */}
       <Handle type="target" position={inbound} style={{ ...handleStyle, ...nudge(inbound) }} />
       <span style={arrowsStyle}>{glyphs.map((g) => <span key={g}>{g}</span>)}</span>
       <Handle type="source" position={outbound} style={{ ...handleStyle, ...nudge(outbound) }} />
@@ -291,7 +346,8 @@ const StateNode: React.FC<NodeProps> = ({ data, selected }) => {
           width: 8, height: 8, borderRadius: '50%', background: '#722ed1',
         }} />
       )}
-      <Handle type="target" position={Position.Left} style={{ background: '#722ed1', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 8, height: 8 }} />
       <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
       {d.isFinal && (
         <div style={{
@@ -302,7 +358,7 @@ const StateNode: React.FC<NodeProps> = ({ data, selected }) => {
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#722ed1' }} />
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={{ background: '#722ed1', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -330,7 +386,8 @@ const ActionNode: React.FC<NodeProps> = ({ data, selected }) => {
           width: 8, height: 8, borderRadius: '50%', background: '#08979c',
         }} />
       )}
-      <Handle type="target" position={Position.Left} style={{ background: '#13c2c2', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#13c2c2', width: 8, height: 8 }} />
       <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
       {d.isFinal && (
         <div style={{
@@ -341,7 +398,7 @@ const ActionNode: React.FC<NodeProps> = ({ data, selected }) => {
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#08979c' }} />
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={{ background: '#13c2c2', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#13c2c2', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -363,7 +420,8 @@ const RequirementNode: React.FC<NodeProps> = ({ data, selected }) => {
         fontSize: '13px',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#faad14', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#faad14', width: 8, height: 8 }} />
       {d.reqId && (
         <div style={{
           display: 'inline-block',
@@ -383,7 +441,7 @@ const RequirementNode: React.FC<NodeProps> = ({ data, selected }) => {
           {d.text}
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={{ background: '#faad14', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#faad14', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -405,14 +463,15 @@ const ConstraintBlockNode: React.FC<NodeProps> = ({ data, selected }) => {
         clipPath: 'polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#f5222d', width: 8, height: 8 }} />
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#f5222d', width: 8, height: 8 }} />
       <div style={{ fontWeight: 600, color: '#262626', textAlign: 'center' }}>{d.label}</div>
       {d.constraint && (
         <div style={{ fontSize: '11px', color: '#8c8c8c', textAlign: 'center', marginTop: '2px' }}>
           {d.constraint}
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={{ background: '#f5222d', width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#f5222d', width: 8, height: 8 }} />
     </div>
   );
 };
@@ -428,6 +487,37 @@ const nodeTypes = {
   sysmlRequirement: MemoRequirementNode,
   sysmlConstraint: MemoConstraintBlockNode,
 };
+
+/**
+ * M17 S5：结构连线（`connect A to B`）走自定义边，端点由锚点算。
+ *
+ * 状态机 transition / 活动 flow / 追溯边仍用 RF 自带类型 —— 它们今天就能正常
+ * 渲染（RF 会回落到第一个 handle），S5 不动它们，避免把改动面撑到行为视图上。
+ */
+const edgeTypes = {
+  anchored: AnchoredEdge,
+};
+
+/**
+ * M17 S5：连线手势进行中的草稿。
+ *
+ * 为什么自己实现而不复用 RF 的 `onConnect`：RF 的 `onPointerMove` 会用
+ * `getClosestHandle(radius=20)` 在**已注册的 handle** 里找最近的一个 ——
+ * 指针停在节点正文上时它会静默吸到某个固定小点上，用户完全感知不到
+ * 「这里其实不是你想连的点」。要做任意点，只能自己算终点。
+ *
+ * `cursor` 与 `targetId/targetAnchor` 分开存：光标每帧都在动，而终点只在
+ * 跨过节点边框时才变 —— 预览线用 cursor，锚点用 targetAnchor。
+ */
+interface ConnectDraft {
+  sourceId: string;
+  sourceAnchor: Anchor;
+  /** 指针当前所在的画布坐标；还没动过时就是起点本身 */
+  cursor: Point;
+  /** 指针下的节点 id；null = 悬在空白处，松手不连线 */
+  targetId: string | null;
+  targetAnchor: Anchor | null;
+}
 
 // ─── 回调接口 ─────────────────────────────────────────
 
@@ -483,8 +573,21 @@ export interface DiagramCanvasProps {
   ) => void;
   /** M11: 双击画布空白处按当前视图类型创建回调 */
   onPaneDoubleClick?: (flowPosition: { x: number; y: number }) => void;
-  /** M11: 节点之间画线创建连接（drag 模式） */
-  onConnectCreate?: (sourceId: string, targetId: string) => void;
+  /**
+   * 节点之间画线创建连接（drag 模式）。
+   *
+   * M17 S5：`anchors` 是用户按下的那个点算出来的边端点 —— 起点来自边框带，
+   * 终点实时跟着指针落在目标节点的哪条边上。缺省（从可见小 Handle 拉线）
+   * 时不传，宿主用默认锚点。
+   */
+  onConnectCreate?: (sourceId: string, targetId: string, anchors?: EdgeAnchors) => void;
+  /**
+   * M17 S5：已存边锚点（edge stableKey → 两端锚点）。
+   *
+   * 由宿主从 layoutStore 取好传进来 —— 画布自己不碰 store，和它对节点
+   * 位置的处理保持一致（位置也是宿主通过 pipeline 下发的）。
+   */
+  edgeAnchors?: Record<string, EdgeAnchors>;
 }
 
 /** 暴露给父组件的操作接口 */
@@ -513,6 +616,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   onPaletteDrop,
   onPaneDoubleClick,
   onConnectCreate,
+  edgeAnchors,
 }, ref) => {
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -535,6 +639,23 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
    * value：节点 id → 节点身份（type + label）
    */
   const selectedRef = React.useRef<Map<string, { type?: string; label?: string }>>(new Map());
+
+  /**
+   * M17 S5：任意点连线手势的草稿。
+   *
+   * state 与 ref 成对：state 驱动预览线渲染，ref 给 document 级监听器读
+   * （监听器只注册一次，不能闭包捕获 state）。
+   */
+  const [connectDraft, setConnectDraft] = React.useState<ConnectDraft | null>(null);
+  const connectDraftRef = React.useRef<ConnectDraft | null>(null);
+  /**
+   * 手势收尾时要用到最新的 `interactive` / `onConnectCreate`，但监听器不能
+   * 重新注册（见 handleStripPointerDown 下方的说明），所以走 ref 同步。
+   */
+  const connectCfgRef = React.useRef({ interactive: true, onConnectCreate: undefined as DiagramCanvasProps['onConnectCreate'] });
+  connectCfgRef.current = { interactive, onConnectCreate };
+  /** `boxOfNode` 要读最新的节点池，但它注册在 [] 依赖上，只能走 ref */
+  const stableNodesRef = React.useRef<Node[]>([]);
 
   /**
    * M17: 是否正按住空格（= 平移手势激活）。
@@ -801,9 +922,21 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       };
     });
   }, [nodes, highlightedNodeId, highlightNodeIds, selectedNodeIds, hoveredPaletteDropNodeId]);
+  // 手势期间要按 id 反查节点盒子，而 `boxOfNode` 注册在 [] 依赖上 —— 用 ref 把
+  // 最新一版节点池喂进去，避免闭包冻在首帧的空数组上。
+  stableNodesRef.current = stableNodes;
   const stableEdges = useMemo(
-    () => edges.map((e) => ({ ...e, id: String(e.id) })),
-    [edges]
+    () =>
+      edges.map((e) => {
+        const idStr = String(e.id);
+        const anchors = edgeAnchors?.[stableKeyOf(e.data, idStr)];
+        // 没有存过锚点的边不下发这个字段，让 AnchoredEdge 用默认锚点兜底 ——
+        // 空对象会让「有锚点 / 无锚点」两种态看起来一模一样，排查时分不出来。
+        return anchors
+          ? { ...e, id: idStr, data: { ...e.data, anchors } }
+          : { ...e, id: idStr };
+      }),
+    [edges, edgeAnchors]
   );
 
   // 双击节点 → 选中 + 请右栏聚焦「名称」输入框（不再弹 window.prompt）
@@ -958,11 +1091,172 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [onEdgesDelete]
   );
 
-  // M11: 连接创建
+  // M11: 连接创建（从可见小 Handle 拉线）
+  //
+  // M17 S5：**没有删掉这条路径**，尽管任意点连线自己实现了手势。端口徽标
+  // （sysmlPort）没有边框带（贴上去就盖死整个徽标、端口拖不动了），它作为
+  // 连线端点只能靠这里这对小 Handle；删掉等于让端口级 connect 不可用。
+  // 两条路径合流到同一个 onConnectCreate，边框带那条多带锚点。
   const handleConnect = useCallback((c: Connection) => {
     if (!interactive || !onConnectCreate) return;
     if (c.source && c.target) onConnectCreate(c.source, c.target);
   }, [interactive, onConnectCreate]);
+
+  // ─── M17 S5：任意点连线手势 ───────────────────────────────────────────
+
+  /**
+   * 取节点的画布绝对包围盒（锚点坐标系）。
+   *
+   * 优先读 React Flow 内部节点：它带 `internals.positionAbsolute`，父元素被
+   * 拖动时会同步更新；首帧还没建内部节点时才回落到 `stableNodes` 上的
+   * position + 兜底尺寸。**不能**反过来只用 stableNodes —— 那是上一帧的值，
+   // 拖动中用它算出来的锚点会整体滞后一帧（端口挂点已经踩过这个坑）。
+   */
+  const boxOfNode = useCallback((id: string): AnchorBox | null => {
+    const live = internalNodeBox(rfInstanceRef.current?.getInternalNode(id));
+    if (live) return live;
+    const hit = stableNodesRef.current.find((n) => String(n.id) === id);
+    return hit ? nodeBoxOf(hit) : null;
+  }, []);
+
+  /** 指针位置 → 画布坐标 */
+  const toFlowPoint = useCallback((clientX: number, clientY: number): Point | null => {
+    const inst = rfInstanceRef.current;
+    return inst ? inst.screenToFlowPosition({ x: clientX, y: clientY }) : null;
+  }, []);
+
+  /**
+   * 边框带按下 → 起一条草稿线。
+   *
+   * 起点用 `anchorOnSide`（强制吸附到**这条带**）而不是 `anchorFromPoint`
+   * （自己判最近的边）：四角附近两条带互相压住，判边会选错，线就从腰上长出来。
+   *
+   * `stopPropagation` 挡的是 React 层的冒泡（pane 的框选手势 / onPaneClick）；
+   * 挡不住 d3 挂在节点 DOM 上的原生监听器 —— 那个靠 `nodrag` 类，见 AnchorStrips。
+   */
+  const handleStripPointerDown = useCallback(
+    (side: AnchorSide, e: React.PointerEvent<HTMLDivElement>) => {
+      if (!interactive || !onConnectCreate) return;
+      if (spacePan) return; // 空格 = 平移手势，不该被边框带抢走
+      if (e.button !== 0) return;
+      const nodeEl = (e.currentTarget as HTMLElement).closest(
+        '.react-flow__node',
+      ) as HTMLElement | null;
+      const nodeId = nodeEl?.getAttribute('data-id');
+      if (!nodeId) return;
+      const box = boxOfNode(nodeId);
+      const pt = toFlowPoint(e.clientX, e.clientY);
+      if (!box || !pt) return;
+
+      e.stopPropagation();
+      e.preventDefault();
+      const draft: ConnectDraft = {
+        sourceId: nodeId,
+        sourceAnchor: normalizeAnchor(anchorOnSide(pt, box, side)),
+        cursor: pt,
+        targetId: null,
+        targetAnchor: null,
+      };
+      connectDraftRef.current = draft;
+      setConnectDraft(draft);
+    },
+    [interactive, onConnectCreate, spacePan, boxOfNode, toFlowPoint],
+  );
+
+  // 手势期间 document 级的指针监听：**只注册一次**，回调里读 ref。
+  // 每次渲染重新注册会让 pointermove 在两次 remove/add 之间丢事件，
+  // 表现为「快速划过时预览线卡一下」。
+  //
+  // 三个监听都走**捕获阶段**：React 17+ 把合成事件的委托挂在 root 容器上，
+  // 任何一层组件调 `stopPropagation()` 都会连带把原生事件挡在 document 之前。
+  // 一旦 pointerup 被吞掉，草稿线就永远挂着（下次按边框带会接上次的起点）。
+  useEffect(() => {
+    const CAPTURE = { capture: true } as const;
+
+    const move = (e: PointerEvent) => {
+      const draft = connectDraftRef.current;
+      if (!draft) return;
+      const pt = toFlowPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      // 光标下的节点：elementFromPoint 拿真实 DOM，比 RF 的 handle 命中判定
+      // 宽得多 —— 整个节点盒子都算「在节点上」。
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const targetId = el?.closest('.react-flow__node')?.getAttribute('data-id') ?? null;
+      const tBox = targetId ? boxOfNode(targetId) : null;
+      const targetAnchor = tBox
+        ? normalizeAnchor(anchorFromPoint(pt, tBox))
+        : null;
+
+      // ref 是唯一事实来源，state 只是它的镜像。
+      //
+      // ⚠️ 早先只 setConnectDraft、不动 ref，于是 pointerup 里读到的永远是
+      // pointerdown 那一刻的草稿（targetId 还是 null）→ 松手必 bail，
+      // 表现正是「能拉出预览线、但怎么松手都连不上」。两者必须同步写。
+      const prev = connectDraftRef.current;
+      if (!prev) return;
+      const nextTargetId = targetAnchor ? targetId : null;
+      const next =
+        prev.targetId === nextTargetId && sameAnchor(prev.targetAnchor, targetAnchor)
+          ? // 目标没变就别重建对象，减少下游 memo 的无谓失效
+            prev.cursor === pt
+            ? prev
+            : { ...prev, cursor: pt }
+          : { ...prev, cursor: pt, targetId: nextTargetId, targetAnchor };
+      connectDraftRef.current = next;
+      setConnectDraft(next);
+    };
+
+    const finish = () => {
+      const draft = connectDraftRef.current;
+      connectDraftRef.current = null;
+      setConnectDraft(null);
+      if (!draft) return;
+      const cfg = connectCfgRef.current;
+      if (!cfg.interactive || !cfg.onConnectCreate) return;
+      if (!draft.targetId || !draft.targetAnchor) return;
+      // 拖回自己身上 = 取消。不拦的话会一路走到 addConnection 被拒，
+      // 用户看到的是一条莫名其妙的「连接失败」提示。
+      if (draft.targetId === draft.sourceId) return;
+      cfg.onConnectCreate(draft.sourceId, draft.targetId, {
+        source: draft.sourceAnchor,
+        target: draft.targetAnchor,
+      });
+    };
+
+    document.addEventListener('pointermove', move, CAPTURE);
+    document.addEventListener('pointerup', finish, CAPTURE);
+    // 指针被系统接管（右键菜单、拖出窗口）时没有 pointerup，必须在这里收尾，
+    // 否则草稿线永远挂着、下次按下边框带会接着上一次的起点。
+    document.addEventListener('pointercancel', finish, CAPTURE);
+    return () => {
+      document.removeEventListener('pointermove', move, CAPTURE);
+      document.removeEventListener('pointerup', finish, CAPTURE);
+      document.removeEventListener('pointercancel', finish, CAPTURE);
+    };
+  }, [boxOfNode, toFlowPoint]);
+
+  /** 预览线路径；没有草稿时为 null */
+  const connectPreviewPath = useMemo(() => {
+    if (!connectDraft) return null;
+    const sBox = boxOfNode(connectDraft.sourceId);
+    if (!sBox) return null;
+    const from = anchorPoint(connectDraft.sourceAnchor, sBox);
+    const tBox = connectDraft.targetAnchor ? boxOfNode(connectDraft.targetId!) : null;
+    const to = tBox ? anchorPoint(connectDraft.targetAnchor!, tBox) : connectDraft.cursor;
+    return getBezierPath({
+      sourceX: from.x,
+      sourceY: from.y,
+      targetX: to.x,
+      targetY: to.y,
+      sourcePosition: SIDE_TO_POSITION[connectDraft.sourceAnchor.side],
+      targetPosition: SIDE_TO_POSITION[connectDraft.targetAnchor?.side ?? 'left'],
+    })[0];
+  }, [connectDraft, boxOfNode]);
+
+  // 组件卸载时清掉草稿，避免外部还持有一条「幽灵连线」
+  useEffect(() => () => {
+    connectDraftRef.current = null;
+  }, []);
 
   const handleInit = useCallback((instance: any) => {
     rfInstanceRef.current = instance as ReactFlowInstance;
@@ -1033,6 +1327,15 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     [interactive, onPaneDoubleClick],
   );
 
+  /**
+   * 边框带的 context 值。必须 memo —— 每次渲染换新对象会让全部 7 个
+   * `React.memo` 节点一起重渲染（context 变化无视 memo）。
+   */
+  const anchorStripCtx = useMemo(
+    () => ({ enabled: interactive, onStripPointerDown: handleStripPointerDown }),
+    [interactive, handleStripPointerDown],
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -1045,10 +1348,12 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       data-mode={interactive ? 'drag' : 'text'}
       data-space-pan={spacePan ? '1' : undefined}
     >
+      <AnchorStripProvider value={anchorStripCtx}>
       <ReactFlow
         nodes={stableNodes}
         edges={stableEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onNodesDelete={handleNodesDelete}
@@ -1095,7 +1400,38 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
             }
           }}
         />
+        {/*
+          M17 S5：连线预览线。
+          作为 `<ReactFlow>` 的子节点渲染 —— FlowRenderer 会把自己的 children
+          放进 `.react-flow__viewport`（带平移/缩放 transform 的那层），
+          于是 path 里的坐标可以直接用画布坐标，不用自己维护视口变换。
+          `overflow: visible` 是必须的：viewport 层的尺寸是屏幕尺寸，
+          而画布坐标可以远在屏幕之外。
+        */}
+        {connectPreviewPath && (
+          <svg
+            data-testid="connect-preview"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              overflow: 'visible',
+              pointerEvents: 'none',
+            }}
+          >
+            <path
+              d={connectPreviewPath}
+              fill="none"
+              stroke="#1890ff"
+              strokeWidth={2}
+              strokeDasharray="6 3"
+            />
+          </svg>
+        )}
       </ReactFlow>
+      </AnchorStripProvider>
       {/* 模式徽章 */}
       <div
         data-testid="canvas-mode-badge"

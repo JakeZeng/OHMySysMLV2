@@ -1493,9 +1493,84 @@ func normalizeLayoutPosition(p LayoutPosition) LayoutPosition {
 	return out
 }
 
-// layoutPayload 布局请求体：nodeId → 坐标。
+// LayoutEdgeAnchors 一条边的两端锚点（M17 S5「任意点连线」存的就是它）。
+//
+// 两端都必须合法才保留整条 —— 半条锚点没有意义，前端拿到也只能整体丢弃，
+// 不如在入库前就丢掉，避免「有边锚点但恒为空」的记录混进库里。
+type LayoutEdgeAnchors struct {
+	Source *LayoutAnchor `json:"source,omitempty"`
+	Target *LayoutAnchor `json:"target,omitempty"`
+}
+
+// normalizeLayoutEdgeAnchors 清洗客户端送来的边锚点；任一端不合法则整条丢弃。
+func normalizeLayoutEdgeAnchors(e LayoutEdgeAnchors) (LayoutEdgeAnchors, bool) {
+	if e.Source == nil || e.Target == nil {
+		return LayoutEdgeAnchors{}, false
+	}
+	var out LayoutEdgeAnchors
+	src := normalizeLayoutPosition(LayoutPosition{Attach: e.Source})
+	tgt := normalizeLayoutPosition(LayoutPosition{Attach: e.Target})
+	if src.Attach == nil || tgt.Attach == nil {
+		return LayoutEdgeAnchors{}, false
+	}
+	out.Source = src.Attach
+	out.Target = tgt.Attach
+	return out, true
+}
+
+// layoutPayload 布局请求体：nodeId → 坐标，以及（可选）边 → 两端锚点。
 type layoutPayload struct {
 	Nodes map[string]LayoutPosition `json:"nodes"`
+	Edges map[string]LayoutEdgeAnchors `json:"edges,omitempty"`
+}
+
+// storedLayout 是**入库**格式，也是 GET 的响应格式。S5 之前库里存的是裸的
+// `{"pd:partDef_1":{"x":1,"y":2}}`，之后是 `{"nodes":{...},"edges":{...}}`。
+// 读的时候靠「顶层有没有 nodes 键」区分，见 decodeStoredLayout。
+//
+// 两张表都**不带 omitempty**：响应里必须永远出现 nodes / edges 两个键。
+// 带 omitempty 时空 map 会被整个省略，前端拿到的是 undefined 而不是 {}，
+// `Object.entries(undefined)` 直接抛错，整张画布白屏。
+type storedLayout struct {
+	Nodes map[string]LayoutPosition   `json:"nodes"`
+	Edges map[string]LayoutEdgeAnchors `json:"edges"`
+}
+
+// decodeStoredLayout 兼容两种历史格式。
+//
+// 判别方式不能是「Unmarshal 到 storedLayout 成功与否」：Go 会**静默忽略**
+// 未知字段，所以旧的裸节点表反序列化到 storedLayout 是成功的、且 Nodes 为 nil
+// —— 真按「Nodes == nil 就算老格式」判，第一次读任何一条正常的新数据都会
+// 被误当成老格式，节点坐标直接清空。必须先摊平成 map 看顶层键。
+//
+// 两种格式解析失败都返回空结构（= 没有布局，前端回落自动布局）。不能返回
+// 部分结果：Go 遇到类型错误会继续往下解，返回的是「一半真值 + 一批零值节点」，
+// 后者会让所有图元叠在原点，比整张图重排更让人以为程序坏了。
+//
+// 已知歧义：顶层裸键 `nodes` 会被当成新格式。实际不可能出现 —— 老格式的键一律是
+// `<kind>:<qname>`（stableKey.ts 生成，kind 取值里没有 "nodes"），裸键只可能来自
+// 被人手改过的库。
+func decodeStoredLayout(raw string) storedLayout {
+	var out storedLayout
+	if raw == "" {
+		return out
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return out
+	}
+	if _, isNew := probe["nodes"]; isNew {
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			return storedLayout{}
+		}
+		return out
+	}
+	// 老格式：整个 JSON 就是节点表
+	out.Nodes = map[string]LayoutPosition{}
+	if err := json.Unmarshal([]byte(raw), &out.Nodes); err != nil {
+		return storedLayout{}
+	}
+	return out
 }
 
 // SaveLayout PUT /layouts/:kind/:id
@@ -1523,13 +1598,19 @@ func (h *Handler) SaveLayout(c *gin.Context) {
 		badRequest(c, "请求参数无效", err.Error())
 		return
 	}
-	if req.Nodes == nil {
-		req.Nodes = map[string]LayoutPosition{}
+	stored := storedLayout{
+		Nodes: map[string]LayoutPosition{},
+		Edges: map[string]LayoutEdgeAnchors{},
 	}
 	for k, p := range req.Nodes {
-		req.Nodes[k] = normalizeLayoutPosition(p)
+		stored.Nodes[k] = normalizeLayoutPosition(p)
 	}
-	b, err := json.Marshal(req.Nodes)
+	for k, e := range req.Edges {
+		if norm, ok := normalizeLayoutEdgeAnchors(e); ok {
+			stored.Edges[k] = norm
+		}
+	}
+	b, err := json.Marshal(stored)
 	if err != nil {
 		badRequest(c, "布局序列化失败", err.Error())
 		return
@@ -1543,7 +1624,8 @@ func (h *Handler) SaveLayout(c *gin.Context) {
 
 // GetLayout GET /layouts/:kind/:id
 //
-// 返回 {nodes: {...}}；不存在时 nodes 为空对象（前端回落 ELK 自动布局）。
+// 返回 {nodes: {...}, edges: {...}}；不存在时两者都是空对象
+// （前端回落 ELK 自动布局 + 默认边锚点）。
 func (h *Handler) GetLayout(c *gin.Context) {
 	kind := c.Param("kind")
 	if kind != "package" && kind != "view" {
@@ -1565,11 +1647,14 @@ func (h *Handler) GetLayout(c *gin.Context) {
 		serverError(c, "读取布局失败", err)
 		return
 	}
-	nodes := map[string]LayoutPosition{}
-	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &nodes)
+	stored := decodeStoredLayout(raw)
+	if stored.Nodes == nil {
+		stored.Nodes = map[string]LayoutPosition{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"nodes": nodes}})
+	if stored.Edges == nil {
+		stored.Edges = map[string]LayoutEdgeAnchors{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": stored})
 }
 
 // isUniqueViolation 判定 SQLite 唯一约束冲突。

@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useModelStore } from './modelStore';
 import { useLayoutStore } from './layoutStore';
+import type { EdgeAnchors } from '../lib/edgeAnchor';
 
 beforeEach(() => {
   useAuthStore_clearAuth();
@@ -345,5 +346,100 @@ describe('M17 S3：addConnection 生成的语句必须能解析', () => {
     openSession(SRC);
     const r = useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Car'));
     expect(r.ok).toBe(false);
+  });
+});
+
+/**
+ * M17 S5：画线时带上的两端锚点必须落到**新生成的那条边**上。
+ *
+ * 难点在定位：文本一改，解析器的 `edge.id` 计数器就整体平移，所以锚点不能
+ * 按 id 记，必须在 addConnection 内部用「调用前后的边 id 差集」当场抓出来，
+ * 再按 stableKey 写进 layoutStore。
+ */
+describe('M17 S5：addConnection 把锚点挂到新边上', () => {
+  const SRC = `package Vehicle {
+  part def Car { port powerOut : Power; }
+  part def Engine;
+}`;
+  const ANCHORS = {
+    source: { side: 'bottom', ratio: 0.25 },
+    target: { side: 'top', ratio: 0.75 },
+  } as const satisfies EdgeAnchors;
+
+  it('锚点写进 layoutStore，且键是新边的 stableKey', () => {
+    openSession(SRC);
+    useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'), ANCHORS);
+
+    const edges = useModelStore.getState().pipeline.edges;
+    expect(edges).toHaveLength(1);
+    const key = String((edges[0].data as { stableKey?: string }).stableKey);
+    expect(key).toMatch(/^conn:/);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg1')).toEqual({ [key]: ANCHORS });
+  });
+
+  it('缺 anchors（从可见小 Handle 拉线）时不动边锚点表', () => {
+    openSession(SRC);
+    useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'));
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg1')).toEqual({});
+  });
+
+  it('第二条边的锚点不覆盖第一条的（两条同端点的边各自独立）', () => {
+    openSession(SRC);
+    useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'), ANCHORS);
+    const other = {
+      source: { side: 'left', ratio: 0 },
+      target: { side: 'right', ratio: 1 },
+    } as const satisfies EdgeAnchors;
+    // 同一对节点再连一次：StableKeys.alloc 会给第二条加 #2 后缀，两条锚点并存。
+    // 节点 id 必须重取 —— 上一条 connect 刚把解析器计数器推前了。
+    useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'), other);
+    const anchors = useLayoutStore.getState().getEdgeAnchors('pkg1');
+    expect(Object.keys(anchors).sort()).toEqual([
+      'conn:Vehicle::Car->Vehicle::Engine',
+      'conn:Vehicle::Car->Vehicle::Engine#2',
+    ]);
+    expect(Object.values(anchors)).toEqual(
+      expect.arrayContaining([ANCHORS, other]),
+    );
+  });
+
+  it('端口端点的连线同样能挂锚点', () => {
+    openSession(`package Vehicle {
+  part def Car { port powerOut : Power; }
+  part def Engine { port fuelIn : Fuel; }
+}`);
+    const ports = useModelStore.getState().pipeline.nodes.filter((n) => n.type === 'sysmlPort');
+    const powerOut = ports.find((p) => (p.data as { label?: string }).label === 'powerOut')!;
+    const fuelIn = ports.find((p) => (p.data as { label?: string }).label === 'fuelIn')!;
+    useModelStore
+      .getState()
+      .addConnection(String(powerOut.id), String(fuelIn.id), ANCHORS);
+    const edges = useModelStore.getState().pipeline.edges;
+    const key = String((edges[edges.length - 1].data as { stableKey?: string }).stableKey);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg1')[key]).toEqual(ANCHORS);
+  });
+
+  it('连接失败（同一节点）时不写任何锚点', () => {
+    openSession(SRC);
+    const car = nodeIdOf('Car');
+    useModelStore.getState().addConnection(car, car, ANCHORS);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg1')).toEqual({});
+  });
+
+  it('锚点存在时，后续文本编辑让 edge.id 平移也不影响锚点（按 stableKey 存）', () => {
+    openSession(SRC);
+    useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'), ANCHORS);
+    const key = Object.keys(useLayoutStore.getState().getEdgeAnchors('pkg1'))[0];
+    const idBefore = useModelStore.getState().pipeline.edges[0].id;
+
+    // 在包体开头插一行 —— 解析器计数器整体 +1，edge.id 必然变
+    const edited = useModelStore.getState().content.replace(
+      'part def Car',
+      'attribute mass : Real;\n  part def Car',
+    );
+    useModelStore.getState().setContent(edited);
+
+    expect(useModelStore.getState().pipeline.edges[0].id).not.toBe(idBefore);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg1')[key]).toEqual(ANCHORS);
   });
 });

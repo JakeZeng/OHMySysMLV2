@@ -114,6 +114,30 @@ export function anchorFromPoint(pt: Point, box: AnchorBox): Anchor {
 }
 
 /**
+ * 强制把点吸附到**指定的**那条边上。
+ *
+ * `anchorFromPoint` 会按归一化偏移自己判边，落在角附近时判出来的边未必是
+ * 用户按着的那条 —— 连线手势里这很要命：手指按在节点的**上边框**上，却因为
+ * 横轴偏移只差一点点而算出 left，线就从腰上长出来了。
+ *
+ * 边框带（AnchorStrips）按下时已经知道是哪条边了，直接指定即可：
+ * 先把点投影到那条边的法线上（边上的点不需要投影，ratio 仍按切向坐标算），
+ * ratio 用切向分母 —— 上下边按 width 归一，左右边按 height 归一。
+ */
+export function anchorOnSide(pt: Point, box: AnchorBox, side: AnchorSide): Anchor {
+  const w = span(box.width);
+  const h = span(box.height);
+  switch (side) {
+    case 'left':
+    case 'right':
+      return clampAnchor({ side, ratio: (pt.y - box.y) / h });
+    case 'top':
+    case 'bottom':
+      return clampAnchor({ side, ratio: (pt.x - box.x) / w });
+  }
+}
+
+/**
  * 锚点 → 边框上的绝对坐标。
  *
  * 与 `anchorFromPoint` 互为逆运算（角点除外，见 `anchor.test.ts` 的角点用例）。

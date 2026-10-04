@@ -8,6 +8,7 @@ import {
   clampAnchor,
   normalizeAnchor,
   quantizeRatio,
+  anchorOnSide,
   sameAnchor,
   boxCenter,
   isAnchorSide,
@@ -225,5 +226,41 @@ describe('boxCenter / anchorFromBox / anchorSideOf / isAnchorSide', () => {
     expect(isAnchorSide('bottom')).toBe(true);
     expect(isAnchorSide('middle')).toBe(false);
     expect(isAnchorSide(undefined)).toBe(false);
+  });
+});
+
+/**
+ * M17 S5：anchorOnSide —— 强制吸附到指定边。
+ *
+ * 与 anchorFromPoint 的区别正是 S5 需要的：边框带上已经知道用户按的是哪条边，
+ * 四角附近不能再让「最近的边」说了算，否则线会从腰上长出来。
+ */
+describe('anchorOnSide — 强制吸附到指定边', () => {
+  it('指定的边与几何判边冲突时，以指定的为准', () => {
+    // 点在 BOX 正右方（几何上明确属于 right），强制指定 left → 结果是 left
+    const pt = RIGHT_MID;
+    expect(anchorFromPoint(pt, BOX).side).toBe('right');
+    expect(anchorOnSide(pt, BOX, 'left')).toEqual({ side: 'left', ratio: 0.5 });
+  });
+
+  it('ratio 按切向坐标算：左右边用 height 归一，上下边用 width 归一', () => {
+    expect(anchorOnSide({ x: 100, y: 120 }, BOX, 'left')).toEqual({ side: 'left', ratio: 0.25 });
+    expect(anchorOnSide({ x: 100, y: 160 }, BOX, 'right')).toEqual({ side: 'right', ratio: 0.75 });
+    expect(anchorOnSide({ x: 150, y: 100 }, BOX, 'top')).toEqual({ side: 'top', ratio: 0.25 });
+    expect(anchorOnSide({ x: 250, y: 180 }, BOX, 'bottom')).toEqual({ side: 'bottom', ratio: 0.75 });
+  });
+
+  it('ratio 越界被夹进 [0,1]（点落在盒子外时不会算出负 ratio）', () => {
+    expect(anchorOnSide({ x: 100, y: 40 }, BOX, 'left')).toEqual({ side: 'left', ratio: 0 });
+    expect(anchorOnSide({ x: 100, y: 300 }, BOX, 'left')).toEqual({ side: 'left', ratio: 1 });
+    expect(anchorOnSide({ x: -50, y: 100 }, BOX, 'top')).toEqual({ side: 'top', ratio: 0 });
+  });
+
+  it('与 anchorPoint 互为逆运算（框内任意点）', () => {
+    for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+      const a = anchorOnSide({ x: 137, y: 149 }, BOX, side);
+      const p = anchorPoint(a, BOX);
+      expect(anchorOnSide(p, BOX, side)).toEqual(a);
+    }
   });
 });

@@ -17,6 +17,7 @@
 
 import { create } from 'zustand';
 import { isAnchorSide, type Anchor } from '../lib/anchor';
+import { normalizeEdgeAnchors, type EdgeAnchors } from '../lib/edgeAnchor';
 
 export interface NodePosition {
   x: number;
@@ -33,10 +34,27 @@ export interface NodePosition {
 /** projectId → scopeId → stableKey → {x,y} */
 type LayoutMap = Record<string, Record<string, Record<string, NodePosition>>>;
 
+/**
+ * M17 S5：边锚点，与 `LayoutMap` **平行**的一张表。
+ *
+ * 不塞进 `LayoutMap` 是因为两者的键空间不同：节点的键是 `partDef:X`，
+ * 边的键是 `conn:A->B`，混在一张表里会出现「查节点坐标却命中一条边」的
+ * 静默错误 —— 而且边的键带 `->`，冒在 `:` 分隔的元素键里很难一眼看出异常。
+ *
+ * 键同样是 stableKey（`transform/stableKey.ts`），不是 `edge.id`：
+ * 后者是解析器计数器，文本一改就整体平移。
+ */
+type EdgeAnchorMap = Record<string, Record<string, Record<string, EdgeAnchors>>>;
+
 const STORAGE_PREFIX = 'sysmlv2.layout.';
+const EDGE_STORAGE_PREFIX = 'sysmlv2.layout.edges.';
 
 function storageKey(projectId: string): string {
   return `${STORAGE_PREFIX}${projectId}`;
+}
+
+function edgeStorageKey(projectId: string): string {
+  return `${EDGE_STORAGE_PREFIX}${projectId}`;
 }
 
 function loadLayout(projectId: string): LayoutMap {
@@ -58,9 +76,42 @@ function saveLayout(projectId: string, map: LayoutMap): void {
   }
 }
 
+function loadEdgeAnchors(projectId: string): EdgeAnchorMap {
+  try {
+    const raw = localStorage.getItem(edgeStorageKey(projectId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as EdgeAnchorMap;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveEdgeAnchors(projectId: string, map: EdgeAnchorMap): void {
+  try {
+    localStorage.setItem(edgeStorageKey(projectId), JSON.stringify(map));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+/**
+ * 从 stableKey 里取出限定名部分：`partDef:Vehicle::Car` → `Vehicle::Car`。
+ *
+ * 按**第一个** `:` 切，而不是最后一个：限定名本身用 `::` 分隔，
+ * 类别前缀（`partDef` / `port` / `conn`）里不含 `:`，所以第一个 `:` 一定是分界。
+ * 没有 `:` 说明键不是元素键（不该发生），返回 null 让调用方跳过迁移。
+ */
+function qNameOfKey(key: string): string | null {
+  const i = key.indexOf(':');
+  return i >= 0 && i < key.length - 1 ? key.slice(i + 1) : null;
+}
+
 interface LayoutState {
   projectId: string | null;
   layout: LayoutMap;
+  /** M17 S5：边锚点（与 `layout` 平行，见 EdgeAnchorMap 的注释） */
+  edgeAnchors: EdgeAnchorMap;
 
   /** 切换工程：加载其布局 */
   setProject: (projectId: string) => void;
@@ -77,11 +128,22 @@ interface LayoutState {
     attach?: Anchor,
   ) => void;
   /**
+   * M17 S5：读取某 scope 的全部边锚点（按边 stableKey 索引）。
+   * 宿主把它整张传给 DiagramCanvas 的 `edgeAnchors` prop。
+   */
+  getEdgeAnchors: (scopeId: string) => Record<string, EdgeAnchors>;
+  /** 记录一条边的两端锚点（`key` 为边的 stableKey） */
+  setEdgeAnchors: (scopeId: string, key: string, anchors: EdgeAnchors) => void;
+  /**
    * M17：元素改名时把该元素的布局条目迁到新键。
    *
    * 改名会改 stableKey（键里含名字），但**位置不该丢** —— 改个名就把整张图
    * 打回自动布局是纯粹的损失。改造前 renameNode 直接 `clearScope(scopeId)`，
    * 连同作用域内其它元素的位置一起抹掉；这里只搬一个键。
+   *
+   * M17 S5：连带把**引用了这个限定名的边**的锚点一起搬。边的键是
+   * `conn:<源限定名>-><目标限定名>`，改名后两端只要有一端变了，键就变 ——
+   * 不迁的话那几条线会静默退回默认锚点。
    */
   migrateKey: (scopeId: string, oldKey: string, newKey: string) => void;
   /**
@@ -89,6 +151,8 @@ interface LayoutState {
    * loadPackage/loadView 拿到 rec.layout 后调用；localStorage 同步更新。
    */
   mergeServerScope: (scopeId: string, nodes: Record<string, NodePosition>) => void;
+  /** M17 S5：合并后端返回的边锚点（校验同上，非法条目直接丢） */
+  mergeServerEdgeScope: (scopeId: string, edges: Record<string, EdgeAnchors>) => void;
   /** 清空某 scope（如重新自动布局） */
   clearScope: (scopeId: string) => void;
   /** 清空（路由离开） */
@@ -98,10 +162,15 @@ interface LayoutState {
 export const useLayoutStore = create<LayoutState>((set, get) => ({
   projectId: null,
   layout: {},
+  edgeAnchors: {},
 
   setProject(projectId) {
     if (get().projectId === projectId) return;
-    set({ projectId, layout: loadLayout(projectId) });
+    set({
+      projectId,
+      layout: loadLayout(projectId),
+      edgeAnchors: loadEdgeAnchors(projectId),
+    });
   },
 
   getPosition(scopeId, key) {
@@ -114,6 +183,31 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const { projectId, layout } = get();
     if (!projectId) return {};
     return layout[projectId]?.[scopeId] ?? {};
+  },
+
+  getEdgeAnchors(scopeId) {
+    const { projectId, edgeAnchors } = get();
+    if (!projectId) return {};
+    return edgeAnchors[projectId]?.[scopeId] ?? {};
+  },
+
+  setEdgeAnchors(scopeId, key, anchors) {
+    const { projectId, edgeAnchors } = get();
+    if (!projectId || !key) return;
+    const clean = normalizeEdgeAnchors(anchors);
+    // 存不进去的锚点就不写：宁可让这条边回落默认锚点（观感正常），
+    // 也不要留一条「有锚点但端点算不出来」的边在渲染层抛错。
+    if (!clean) return;
+    const forProject = edgeAnchors[projectId] ?? {};
+    const next: EdgeAnchorMap = {
+      ...edgeAnchors,
+      [projectId]: {
+        ...forProject,
+        [scopeId]: { ...(forProject[scopeId] ?? {}), [key]: clean },
+      },
+    };
+    saveEdgeAnchors(projectId, next);
+    set({ edgeAnchors: next });
   },
 
   setPosition(scopeId, key, x, y, attach) {
@@ -136,20 +230,44 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   migrateKey(scopeId, oldKey, newKey) {
-    const { projectId, layout } = get();
+    const { projectId, layout, edgeAnchors } = get();
     if (!projectId || oldKey === newKey) return;
     const forScope = layout[projectId]?.[scopeId];
     const moved = forScope?.[oldKey];
-    // 没有旧条目可迁（元素本来就没被拖过）—— 不生成空条目，避免把作用域撑脏
-    if (!moved) return;
-    const forProject = { ...(layout[projectId] ?? {}) };
-    const scope = { ...forScope };
-    delete scope[oldKey];
-    scope[newKey] = moved;
-    forProject[scopeId] = scope;
-    const next: LayoutMap = { ...layout, [projectId]: forProject };
-    saveLayout(projectId, next);
-    set({ layout: next });
+    // M17 S5：边的键里嵌的是**限定名**（`partDef:X` 的 `X` 部分），先抽出来，
+    // 改名后用它去边表里做子串替换。限定名里不含 `:`，替换边界是干净的。
+    const oldQName = qNameOfKey(oldKey);
+    const newQName = qNameOfKey(newKey);
+
+    if (moved) {
+      const forProject = { ...(layout[projectId] ?? {}) };
+      const scope = { ...forScope };
+      delete scope[oldKey];
+      scope[newKey] = moved;
+      forProject[scopeId] = scope;
+      const next: LayoutMap = { ...layout, [projectId]: forProject };
+      saveLayout(projectId, next);
+      set({ layout: next });
+    }
+
+    if (oldQName && newQName && oldQName !== newQName) {
+      const edgeScope = edgeAnchors[projectId]?.[scopeId];
+      if (edgeScope && Object.keys(edgeScope).length > 0) {
+        const renamed: Record<string, EdgeAnchors> = {};
+        for (const [k, v] of Object.entries(edgeScope)) {
+          // 元素键前缀（`partDef:` / `port:`）保持不变，只换限定名那一段。
+          // 两条边都指向被改名的元素时，replace 会同时命中两端 —— 正是想要的。
+          const nextKey = k.split(oldQName).join(newQName);
+          // 替换后与别的键撞车（同名元素消歧）时，后者覆盖前者，与 collect 顺序一致
+          renamed[nextKey] = v;
+        }
+        const forEdgeProject = { ...(edgeAnchors[projectId] ?? {}) };
+        forEdgeProject[scopeId] = renamed;
+        const nextEdge: EdgeAnchorMap = { ...edgeAnchors, [projectId]: forEdgeProject };
+        saveEdgeAnchors(projectId, nextEdge);
+        set({ edgeAnchors: nextEdge });
+      }
+    }
   },
 
   mergeServerScope(scopeId, nodes) {
@@ -177,17 +295,43 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     set({ layout: next });
   },
 
+  mergeServerEdgeScope(scopeId, edges) {
+    const { projectId, edgeAnchors } = get();
+    if (!projectId || !edges || typeof edges !== 'object') return;
+    // 逐条校验（normalizeEdgeAnchors），而不是整体信任后端 payload。
+    // 半条锚点（缺一端）在这里就被丢掉，不会流到渲染层再兜底。
+    const clean: Record<string, EdgeAnchors> = {};
+    for (const [k, v] of Object.entries(edges)) {
+      const norm = normalizeEdgeAnchors(v);
+      if (k && norm) clean[k] = norm;
+    }
+    if (Object.keys(clean).length === 0) return;
+    const forProject = edgeAnchors[projectId] ?? {};
+    const next: EdgeAnchorMap = {
+      ...edgeAnchors,
+      [projectId]: { ...forProject, [scopeId]: { ...(forProject[scopeId] ?? {}), ...clean } },
+    };
+    saveEdgeAnchors(projectId, next);
+    set({ edgeAnchors: next });
+  },
+
   clearScope(scopeId) {
-    const { projectId, layout } = get();
+    const { projectId, layout, edgeAnchors } = get();
     if (!projectId) return;
     const forProject = { ...(layout[projectId] ?? {}) };
     delete forProject[scopeId];
     const next: LayoutMap = { ...layout, [projectId]: forProject };
     saveLayout(projectId, next);
-    set({ layout: next });
+    // 边锚点同属这个 scope 的「用户摆布」：重新自动布局把节点都挪走了，
+    // 留着的锚点会指向新布局下的错误位置。不一起清就等于埋了个静默 bug。
+    const forEdgeProject = { ...(edgeAnchors[projectId] ?? {}) };
+    delete forEdgeProject[scopeId];
+    const nextEdge: EdgeAnchorMap = { ...edgeAnchors, [projectId]: forEdgeProject };
+    saveEdgeAnchors(projectId, nextEdge);
+    set({ layout: next, edgeAnchors: nextEdge });
   },
 
   reset() {
-    set({ projectId: null, layout: {} });
+    set({ projectId: null, layout: {}, edgeAnchors: {} });
   },
 }));

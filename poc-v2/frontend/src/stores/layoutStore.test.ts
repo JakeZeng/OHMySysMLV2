@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useLayoutStore } from './layoutStore';
+import type { EdgeAnchors } from '../lib/edgeAnchor';
 
 const _store: Record<string, string> = {};
 const localStorageMock = {
@@ -251,6 +252,163 @@ describe('layoutStore — attach（端口挂点）', () => {
       useLayoutStore.getState().setProject('p');
       useLayoutStore.getState().mergeServerScope('pkg', { k: { x: 7, y: 8 } });
       expect(useLayoutStore.getState().getPosition('pkg', 'k')).toEqual({ x: 7, y: 8 });
+    });
+  });
+});
+
+/**
+ * M17 S5：边锚点（与节点位置平行的一张表，键是边的 stableKey）。
+ *
+ * 重点钉三件事：①键空间与节点表隔离 ②改名时边锚点跟着迁
+ * ③clearScope 必须连边锚点一起清（节点都重排了，锚点还留着就是静默 bug）。
+ */
+describe('layoutStore — M17 S5 边锚点', () => {
+  const A = {
+    source: { side: 'bottom', ratio: 0.25 },
+    target: { side: 'top', ratio: 0.75 },
+  } as const satisfies EdgeAnchors;
+
+  it('setEdgeAnchors then getEdgeAnchors round-trips', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'conn:A::Car->B::Engine', A);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({
+      'conn:A::Car->B::Engine': A,
+    });
+  });
+
+  it('键空间与节点位置表隔离：同一个字符串当节点键存不影响边表', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setPosition('pkg', 'conn:A->B', 1, 2);
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'conn:A->B', A);
+    expect(useLayoutStore.getState().getPosition('pkg', 'conn:A->B')).toEqual({ x: 1, y: 2 });
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({ 'conn:A->B': A });
+  });
+
+  it('scope 与 project 都隔离', () => {
+    useLayoutStore.getState().setProject('p1');
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'e', A);
+    useLayoutStore.getState().setEdgeAnchors('view', 'e', {
+      source: { side: 'left', ratio: 0 },
+      target: { side: 'right', ratio: 1 },
+    });
+    expect(useLayoutStore.getState().getEdgeAnchors('view')['e'].source.side).toBe('left');
+    useLayoutStore.getState().setProject('p2');
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+  });
+
+  it('非法锚点不写入（宁可回落默认，也不能留一条算不出端点的边）', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore
+      .getState()
+      .setEdgeAnchors('pkg', 'e', { source: { side: 'left', ratio: 0.5 } } as never);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+  });
+
+  it('空键不写入', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setEdgeAnchors('pkg', '', A);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+  });
+
+  it('未选 project 时所有写操作都是 no-op', () => {
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'e', A);
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+  });
+
+  it('改名时引用了该限定名的边锚点跟着迁（节点没被拖过也照迁）', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore
+      .getState()
+      .setEdgeAnchors('pkg', 'conn:A::Car->B::Engine', A);
+    useLayoutStore
+      .getState()
+      .setEdgeAnchors('pkg', 'conn:C::Wheel->B::Engine', A);
+    useLayoutStore.getState().migrateKey('pkg', 'partDef:A::Car', 'partDef:A::Automobile');
+    const got = useLayoutStore.getState().getEdgeAnchors('pkg');
+    expect(Object.keys(got).sort()).toEqual([
+      'conn:A::Automobile->B::Engine',
+      'conn:C::Wheel->B::Engine',
+    ]);
+  });
+
+  it('两端各自改名时，边键两端都跟着换', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'conn:A::Car->B::Engine', A);
+    useLayoutStore.getState().migrateKey('pkg', 'partDef:A::Car', 'partDef:A::Auto');
+    expect(
+      Object.keys(useLayoutStore.getState().getEdgeAnchors('pkg')),
+    ).toEqual(['conn:A::Auto->B::Engine']);
+    useLayoutStore.getState().migrateKey('pkg', 'partDef:B::Engine', 'partDef:B::Motor');
+    expect(
+      Object.keys(useLayoutStore.getState().getEdgeAnchors('pkg')),
+    ).toEqual(['conn:A::Auto->B::Motor']);
+  });
+
+  it('端口改名同理（键是 port:<owner>::<name>，限定名段整段换）', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore
+      .getState()
+      .setEdgeAnchors('pkg', 'conn:A::Car::fuelIn->B::Engine', A);
+    useLayoutStore.getState().migrateKey('pkg', 'port:A::Car::fuelIn', 'port:A::Car::fuelPort');
+    expect(
+      Object.keys(useLayoutStore.getState().getEdgeAnchors('pkg')),
+    ).toEqual(['conn:A::Car::fuelPort->B::Engine']);
+  });
+
+  it('migrateKey 不碰无关 scope 的边锚点', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setEdgeAnchors('view', 'conn:A::Car->B::Engine', A);
+    useLayoutStore.getState().migrateKey('pkg', 'partDef:A::Car', 'partDef:A::Auto');
+    expect(useLayoutStore.getState().getEdgeAnchors('view')).toEqual({
+      'conn:A::Car->B::Engine': A,
+    });
+  });
+
+  it('clearScope 同时清节点位置与边锚点', () => {
+    useLayoutStore.getState().setProject('p');
+    useLayoutStore.getState().setPosition('pkg', 'n', 1, 2);
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'conn:A->B', A);
+    useLayoutStore.getState().clearScope('pkg');
+    expect(useLayoutStore.getState().getScope('pkg')).toEqual({});
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+  });
+
+  it('切工程时边锚点从 localStorage 重新加载', () => {
+    useLayoutStore.getState().setProject('p1');
+    useLayoutStore.getState().setEdgeAnchors('pkg', 'e', A);
+    useLayoutStore.getState().setProject('p2');
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({});
+    useLayoutStore.getState().setProject('p1');
+    expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({ e: A });
+  });
+
+  describe('mergeServerEdgeScope', () => {
+    it('合法条目合入并覆盖同名旧值', () => {
+      useLayoutStore.getState().setProject('p');
+      useLayoutStore.getState().setEdgeAnchors('pkg', 'e', {
+        source: { side: 'left', ratio: 0.1 },
+        target: { side: 'right', ratio: 0.9 },
+      });
+      useLayoutStore.getState().mergeServerEdgeScope('pkg', { e: A });
+      expect(useLayoutStore.getState().getEdgeAnchors('pkg')['e']).toEqual(A);
+    });
+
+    it('半条锚点 / 非法 side 逐条丢弃，不影响同批的合法条目', () => {
+      useLayoutStore.getState().setProject('p');
+      useLayoutStore.getState().mergeServerEdgeScope('pkg', {
+        good: A,
+        half: { source: A.source } as never,
+        bad: { source: { side: 'nope', ratio: 0.5 }, target: A.target } as never,
+      });
+      expect(Object.keys(useLayoutStore.getState().getEdgeAnchors('pkg'))).toEqual(['good']);
+    });
+
+    it('空 / 非对象输入直接返回，不清空已有数据', () => {
+      useLayoutStore.getState().setProject('p');
+      useLayoutStore.getState().setEdgeAnchors('pkg', 'e', A);
+      useLayoutStore.getState().mergeServerEdgeScope('pkg', {} as never);
+      useLayoutStore.getState().mergeServerEdgeScope('pkg', null as never);
+      expect(useLayoutStore.getState().getEdgeAnchors('pkg')).toEqual({ e: A });
     });
   });
 });

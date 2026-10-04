@@ -27,6 +27,7 @@ import {
 import { insertSnippetScoped, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
 import { stableKeyOf, renameStableKey } from '@transform/stableKey';
 import type { Anchor } from '../lib/anchor';
+import type { EdgeAnchors } from '../lib/edgeAnchor';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
@@ -41,9 +42,10 @@ function scheduleLayoutFlush(): void {
     const s = useModelStore.getState();
     const { entityKind, entityId, scopeId } = s;
     if (!entityKind || !entityId || !scopeId) return;
-    const nodes = useLayoutStore.getState().getScope(scopeId);
-    if (Object.keys(nodes).length === 0) return;
-    void layoutApi.save(entityKind as LayoutEntityKind, entityId, nodes);
+    const scope = useLayoutStore.getState().getScope(scopeId);
+    const edgeAnchors = useLayoutStore.getState().getEdgeAnchors(scopeId);
+    if (Object.keys(scope).length === 0 && Object.keys(edgeAnchors).length === 0) return;
+    void layoutApi.save(entityKind as LayoutEntityKind, entityId, scope, edgeAnchors);
   }, 800);
 }
 
@@ -134,7 +136,11 @@ interface ModelState {
     name: string,
     dropXY?: { x: number; y: number }
   ) => { ok: boolean; newNodeId?: string; reason?: string };
-  addConnection: (sourceId: string, targetId: string) => { ok: boolean; reason?: string };
+  addConnection: (
+    sourceId: string,
+    targetId: string,
+    anchors?: EdgeAnchors,
+  ) => { ok: boolean; reason?: string };
 
   // M2 AI 语法检查
   runAiCheck: () => void;
@@ -279,6 +285,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         .fetch('package', packageId)
         .then((l) => {
           useLayoutStore.getState().mergeServerScope(packageId, l.nodes);
+          // M17 S5：边锚点一起合（老数据没有这个字段时是空表，天然无副作用）
+          if (l.edges) useLayoutStore.getState().mergeServerEdgeScope(packageId, l.edges);
         })
         .catch(() => {
           /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
@@ -321,6 +329,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         .fetch('view', viewId)
         .then((l) => {
           useLayoutStore.getState().mergeServerScope(viewId, l.nodes);
+          // M17 S5：边锚点一起合（老数据没有这个字段时是空表，天然无副作用）
+          if (l.edges) useLayoutStore.getState().mergeServerEdgeScope(viewId, l.edges);
         })
         .catch(() => {
           /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
@@ -633,9 +643,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
    * M14 自动推断：
    *   - source/target 都是 state → 生成 `transition A to B;`
    *   - 其他 → 生成 `connect A to B;`
+   *
+   * M17 S5：`anchors` 是用户按下的那个点算出来的两端锚点，必须在这一步就挂到
+   * 新边上 —— 文本一变，解析器给的 `edge.id` 就整体平移，事后再按 id 找不回来。
    */
-  addConnection(sourceId, targetId) {
-    const { content, pipeline, entityKind, name: scopeName } = get();
+  addConnection(sourceId, targetId, anchors) {
+    const { content, pipeline, entityKind, name: scopeName, scopeId } = get();
     const srcShort = shortNameFromNodeId(pipeline.model, sourceId);
     const tgtShort = shortNameFromNodeId(pipeline.model, targetId);
     if (!srcShort || !tgtShort) {
@@ -656,8 +669,35 @@ export const useModelStore = create<ModelState>((set, get) => ({
       scopeName,
       model: pipeline.model,
     });
+    // runPipeline 是**同步**的（parse → validate → modelToFlow 全在一个调用里），
+    // 所以调用前后做一次差集就能精确定位新边 —— 不需要 TTL、重试或等一拍。
+    //
+    // ⚠️ 差集必须按 **stableKey** 算，不能按 `edge.id`。第一次实现按 id 做，
+    // 结果第二条连线永远找不到新边：`sysml.pegjs` 的 nextId 是全局计数器，
+    // 插入一行文本会让**所有** connection 的 id 重新编号（实测 conn_8 → conn_13），
+    // 于是「旧的」边在差集里也是新的。这与 S2 里节点 id 平移是同一个坑。
+    const beforeKeys = new Set(
+      pipeline.edges.map((e) => stableKeyOf(e.data, String(e.id))),
+    );
     set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
+
+    if (anchors && scopeId) {
+      const fresh = get().pipeline.edges.filter(
+        (e) => !beforeKeys.has(stableKeyOf(e.data, String(e.id))),
+      );
+      // 理论上恰好一条。真出现多条（同一次编辑里插了多条 connect）时取**最后**一条：
+      // insertSnippetScoped 往作用域体末尾插，新语句在解析序上就是最后一条。
+      // 一条都取不到就不写锚点 —— 边照样按默认锚点渲染，
+      // 比把锚点挂到一条不相干的边上要好。
+      const created = fresh.length > 0 ? fresh[fresh.length - 1] : null;
+      if (created) {
+        useLayoutStore
+          .getState()
+          .setEdgeAnchors(scopeId, stableKeyOf(created.data, String(created.id)), anchors);
+        scheduleLayoutFlush();
+      }
+    }
     return { ok: true };
   },
 

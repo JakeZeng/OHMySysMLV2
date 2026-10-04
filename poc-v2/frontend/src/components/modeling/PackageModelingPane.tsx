@@ -13,6 +13,7 @@ import { ModelingPane, type ModelingAdapter } from './ModelingPane';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { usePackageContent } from '../../hooks/usePackageContent';
 import { useModelStore } from '../../stores/modelStore';
+import { useScopeEdgeAnchors } from '../../hooks/useScopeEdgeAnchors';
 import { TemplateChooserModal } from '../modals/TemplateChooserModal';
 import { AIGenerateModal } from '../modals/AIGenerateModal';
 import { downloadText, downloadJson } from '../../lib/download';
@@ -51,6 +52,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
   const setNodePosition = useModelStore((s) => s.setNodePosition);
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
   const addConnection = useModelStore((s) => s.addConnection);
+  const edgeAnchors = useScopeEdgeAnchors();
 
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [aiOpen, setAiOpen] = React.useState(false);
@@ -77,6 +79,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
       setNodePosition,
       createNodeFromPalette,
       addConnection,
+      edgeAnchors,
       selectedNode,
       onSelectNode,
       onOpenTemplate: () => setTemplateOpen(true),
@@ -95,7 +98,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
         showToast({ title: '已导出 SysML', variant: 'success' });
       },
     }),
-    [name, description, content, selectedNode, onSelectNode, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, showToast],
+    [name, description, content, selectedNode, onSelectNode, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, edgeAnchors, showToast],
   );
 
   return (
