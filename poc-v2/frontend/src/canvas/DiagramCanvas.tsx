@@ -996,13 +996,57 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
    */
   const paneDownPosRef = React.useRef<{ x: number; y: number } | null>(null);
   /**
+   * 空白手势开始前的选中态快照 —— 空框选误清后靠它恢复。
+   *
+   * 为什么要恢复：React Flow 的语义是「框选 = 用框里的节点替换当前选中」，
+   * 框里空无一物就等于「全部取消选中」。但本组件对空白手势的既定设计是
+   * 「只有单击才清选中」（见 handlePaneClick 的位移守卫）—— 两套语义打架，
+   * 于是「手滑拖了个空框」也会把右栏的选中态抹掉。
+   *
+   * 只在**框选结束时一个节点都没选中**这一种情况下恢复：真框到了节点的
+   * 时候，RF 的替换语义是对的，不能推翻。
+   */
+  const selectionSnapshotRef = React.useRef<
+    Map<string, { type?: string; label?: string }> | null
+  >(null);
+  /**
    * React Flow 没有 onPanePointerDown 这个 prop，所以起点记在外层 wrapper 上，
    * 再按 NON_PANE_SELECTOR 筛出真正的画布空白。
    */
   const handleCanvasPointerDown = useCallback((e: React.PointerEvent) => {
     const onPane = !(e.target as HTMLElement | null)?.closest(NON_PANE_SELECTOR);
     paneDownPosRef.current = onPane ? { x: e.clientX, y: e.clientY } : null;
+    selectionSnapshotRef.current = onPane ? new Map(selectedRef.current) : null;
   }, []);
+
+  /**
+   * 空白手势收尾：把「空框选误清选中态」这件事回滚掉。
+   *
+   * 挂在 wrapper 的**捕获**阶段 onPointerUp 上（RF 自己没有对应 prop）。两处
+   * 时序细节是必须的：
+   *   1. **跳过单击**（位移 ≤ 3px）：单击清选中是设计要的，由 handlePaneClick
+   *      负责。这里若不判，会把它刚清掉的选中又塞回去，用例 B 就反了。
+   *   2. **延到下一拍再判断**：RF 是拖动过程中就逐帧发 select change 的，我们
+   *      的 handleNodesChange 同步写进 selectedRef；但「框选最终选中了什么」要
+   *      等 RF 的 pointerup 收尾后才算落定，所以用 setTimeout(0) 让它先跑完。
+   */
+  const handleCanvasPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const start = paneDownPosRef.current;
+      const snapshot = selectionSnapshotRef.current;
+      selectionSnapshotRef.current = null;
+      if (!start || !snapshot || snapshot.size === 0) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 3) return;
+      window.setTimeout(() => {
+        // 框到了节点 → RF 的「用框内节点替换选中」语义照旧，不动
+        if (selectedRef.current.size > 0) return;
+        selectedRef.current = new Map(snapshot);
+        setSelectedNodeIds(new Set(snapshot.keys()));
+        onSelectionChange?.(resolveSelected(stableNodesRef.current));
+      }, 0);
+    },
+    [onSelectionChange, resolveSelected],
+  );
   const handlePaneClick = useCallback(
     (e: React.MouseEvent) => {
       const start = paneDownPosRef.current;
@@ -1365,6 +1409,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onPointerDownCapture={handleCanvasPointerDown}
+      onPointerUpCapture={handleCanvasPointerUp}
       onDoubleClick={handlePaneDoubleClick}
       data-testid="canvas-wrapper"
       data-mode={interactive ? 'drag' : 'text'}

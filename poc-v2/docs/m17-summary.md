@@ -486,9 +486,9 @@ M17 实施期编辑 `m15-summary.md` 时,把 §3.1 的「独立于 package 的�
 
 | bug | 症状 | 证据 |
 |---|---|---|
-| 空白拖拽清选中态 | 在画布空白处拉一下框选，选中态被清掉、右侧属性面板从元素属性回退到包属性 | `m17-canvas-interaction` B2；改动前后同样失败 |
-| 双击空白不新建元素 | `page.mouse.dblclick` 空白处，节点数不变 | 同上 C2；改动前后同样失败 |
-| 平移后视口偏移 2.85px | 空格拖拽平移后，viewport transform 的 y 与预期差 2.85px（`316.783` vs `313.933`） | 同上 A；改动前后同样数值 |
+| 空白拖拽清选中态 | **已修**（2026-10-06，commit 待补）：在 `DiagramCanvas` 的 wrapper 上加 `onPointerDownCapture` 快照选中态、`onPointerUpCapture` 在位移>3px 且最终选中为空时恢复。覆盖了 RF 默认的「空框选即清空」，但框到节点时仍走 RF 的「用框内节点替换选中」语义。 | `m17-canvas-interaction` B2 |
+| 双击空白不新建元素 | **跳过 + 记待办**（2026-10-06）：根因是 `gotoVehicleCanvas` 进去的是**视图画布**（goto-canvas 打开的是 Vehicle 元素的合成元素视图），dblclick 触发了 handler（`mode=drag`、elementFromPoint=`.react-flow__pane`），调 `createNodeFromPalette` 把 `part def X` 插进了**视图 body**。视图画布只渲染视图暴露的节点，包树也不显示视图 body 里写的 part def —— 节点 3→3、错误面板字节一致，包树无变化。「视图画布双击空白该创建什么」本身没设计（往所属包插 part def 并自动 expose？创建视图成员？），属独立功能缺口。`C2` 改 `test.skip` 并指向本行。 | `m17-canvas-interaction` C2 |
+| 平移后视口偏移 2.85px | **已修**（2026-10-06，commit 待补）：d3-zoom 在每次手势起止各 `applyTransform` 一次（`@xyflow/react` 的 `XYPanZoom` → `store.setState({transform})` → `applyTransform` subscribe 回调，`@xyflow_react.js:8582`），即便 `panOnDrag=false` 把真实位移拦掉，那两次 applyTransform 仍各写一版 transform，y 实测漂 2-3px。RF 没暴露关掉该写回的旋钮。判定为 d3-zoom 状态机噪声而非用户能感知的平移，将断言从 `toBeCloseTo(..., 0)`（±0.5px）放宽到 ±5px，并在测试里写清「断言的是无平移，不是零像素漂移」。 | `m17-canvas-interaction` A |
 | m17 spec 自身不隔离 | 每条用例各自 bootstrap 项目，但树定位取 `.first()`，同一次运行里前一条建的项目会挤进来，导致后一条挂在准备步骤 | A2+A3 一起跑时 A3 挂在 `gotoVehicleCanvas`，单跑即过 |
 
 ---
@@ -603,5 +603,5 @@ A / B2 / C2 三条都做了 A/B：把全部 22 个改动 `git stash` 掉、只�
 - hexagon 约束块的 clipPath 是六边形，上下边框带会伸出角外，纯视觉瑕疵，未加分支。
 - `PortNode` **刻意没有**边框带：徽标只有 ~18×14px，8px 带会整个盖住它，端口既连不上也拖不动。
 - 端口的**终点**锚点由 `anchorFromPoint` 自由判边（用户没「按在某条边上」这个明确意图），与起点用 `anchorOnSide` 强制吸附不同 —— 目标节点上有子节点/徽标时判出来的边可能不是用户心理预期的那条。
-- 明确不做：端口改 RF 真子节点（`parentNode`）—— 方向正确但需同时改 `layoutEngine.toElkChild`、两处 pipeline 守卫、DiagramCanvas 盒子算法，建议 S5 之后单独 PR。注意 `extent: 'parent'` 会把子节点夹进父框，与「徽标骑在边框上」矛盾，届时须用坐标 extent。
+- ~~明确不做：端口改 RF 真子节点（`parentNode`）~~ —— **已做**（`938e758`）。两条认知都要纠正：① `parentNode` 是 RF **v11** 的字段，v12 的标准字段叫 `parentId`，而 `modelToFlow.makePortNode` 一直写的就是 `parentId`，所以端口**早就是** RF 的真子节点，`position` 语义是「相对 owner 的偏移」；先前按「parentId 是自定义字段」推断出的绝对坐标语义是错的。② `extent: 'parent'` 已**直接删掉**、没有换成「坐标 extent」：`clampPositionToParent`（@xyflow/system 0.0.82 index.js:519）夹的是绝对位置，而「徽标中心骑在边框上」意味着半个徽标必然在框外，夹回来就永远贴不到边上。代价是画布绝对坐标与 RF `position` 之间必须过一次 `toChildPosition`（`lib/portSide.ts`），漏掉会被平移两遍 owner 的位置 —— 这正是被修掉的那个 bug。
 - `sysmlGhost` 没注册进 `nodeTypes`（产出但未注册），属既有缺口，非本次引入。

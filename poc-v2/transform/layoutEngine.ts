@@ -40,8 +40,11 @@ const LAYOUT_OPTIONS = {
 
 const DEFAULT_NODE_W = 200;
 const DEFAULT_NODE_H = 80;
-const PORT_W = 100;
-const PORT_H = 28;
+// 端口徽标的实际渲染尺寸（对齐 frontend/src/canvas/DiagramCanvas.tsx 的
+// FALLBACK_PORT_W/H）。这里必须用**真实**尺寸而不是拍脑袋的整数：端口现在
+// 嵌套在 owner 内部参与布局，尺寸给大了 ELK 会为了塞下它们把 owner 撑开。
+const PORT_W = 18;
+const PORT_H = 14;
 
 // ─── 主入口 ────────────────────────────────────────────────────────────
 
@@ -49,47 +52,35 @@ const elk = new ELK();
 
 export async function elkLayout(graph: FlowGraph): Promise<FlowGraph> {
   // ELK 接受 elkjs 自己的 ElkNode 格式（与 React Flow Node 不同）
+  //
+  // ⚠️ 端口必须**嵌套**在 owner 下面，不能与 owner 并列。并列的后果有两个，
+  // 都实测过（见 tests/layoutEngine.test.ts 的「端口不再冒充顶层节点」）：
+  //   1. ELK 把每个端口当成独立节点参与分层布局，凭空多出层级，把真正的图元
+  //      挤到别的格子上；
+  //   2. 返回的是画布绝对坐标，而端口在 React Flow 里是**子节点**（position =
+  //      相对 owner 的偏移），直接写进去就是「两遍偏移」—— 与 M17 那个
+  //      端口漂移 bug 同一类，只是换了个入口。
+  const portToOwner = new Map<string, string>();
+  for (const n of graph.nodes) {
+    const pid = parentIdOf(n);
+    if (pid) portToOwner.set(String(n.id), pid);
+  }
+
   const elkInput: ElkNode = {
     id: 'root',
     layoutOptions: LAYOUT_OPTIONS,
-    children: graph.nodes.map(toElkChild),
-    edges: graph.edges.map(toElkEdge),
+    children: toElkTree(graph.nodes),
+    edges: graph.edges.map((e) => toElkEdge(e, portToOwner)),
   };
 
   const layouted = await elk.layout(elkInput);
 
   // 把 ELK 输出映射回 React Flow Node
   const idToPos = new Map<string, { x: number; y: number }>();
-  if (layouted.children) {
-    for (const child of layouted.children) {
-      idToPos.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
-    }
-  }
+  collectElkPositions(layouted, idToPos);
 
-  // 把 port 作为 child 的 relative position 转回 absolute
-  const positionByNode = new Map<string, { x: number; y: number }>();
-  for (const node of graph.nodes) {
-    const pos = idToPos.get(node.id);
-    if (!pos) continue;
-    if (node.parentNode) {
-      const parentPos = positionByNode.get(node.parentNode);
-      if (parentPos) {
-        positionByNode.set(node.id, {
-          x: parentPos.x + pos.x,
-          y: parentPos.y + pos.y,
-        });
-      } else {
-        // 父节点尚未排好：先存相对坐标，等父节点处理完再调整
-        positionByNode.set(node.id, pos);
-      }
-    } else {
-      positionByNode.set(node.id, pos);
-    }
-  }
-
-  // 兜底：父节点没排好的 port 用相对坐标显示（React Flow 会自动处理）
   const nodes: Node[] = graph.nodes.map((n) => {
-    const pos = positionByNode.get(n.id) ?? idToPos.get(n.id) ?? { x: 0, y: 0 };
+    const pos = idToPos.get(String(n.id)) ?? { x: 0, y: 0 };
     return {
       ...n,
       position: { x: pos.x, y: pos.y },
@@ -112,39 +103,104 @@ export async function elkLayoutSync(graph: FlowGraph): Promise<FlowGraph> {
 
 // ─── 映射辅助 ──────────────────────────────────────────────────────────
 
-function toElkChild(node: Node): ElkNode {
-  // 子节点（port）必须声明 layoutOptions，否则会被作为 leaf 处理
-  if (node.parentNode) {
-    return {
-      id: String(node.id),
-      width: PORT_W,
-      height: PORT_H,
-      layoutOptions: {
-        'elk.portConstraints': 'FIXED_SIDE',
-      },
-    };
+/**
+ * 节点的父 id —— React Flow **v12** 的字段名是 `parentId`（v11 才叫
+ * `parentNode`）。`modelToFlow.makePortNode` 写的正是 `parentId`。
+ *
+ * 单拎出来一个函数，是为了让「读哪个字段」只有这一处说了算：先前
+ * `toElkChild` / 位置回填 / `computeBounds` 三处各写一遍 `node.parentNode`，
+ * 三处全是死代码，于是端口被 ELK 当成顶层节点布局（见 elkLayout 的注释）。
+ */
+function parentIdOf(node: Node): string | null {
+  const pid = (node as { parentId?: string }).parentId;
+  return pid ? String(pid) : null;
+}
+
+/**
+ * 把节点列表编成 ELK 的**嵌套**树：顶层图元挂在 root 下，端口挂进各自的
+ * owner 里。
+ *
+ * 父节点不在图里的孤儿端口退回顶层 —— 宁可布局得难看，也不能让它凭空消失
+ * （`elkLayout` 末尾按 id 回填坐标，丢掉的节点会退回 (0,0)）。
+ */
+function toElkTree(nodes: Node[]): ElkNode[] {
+  const known = new Set(nodes.map((n) => String(n.id)));
+  const portsByParent = new Map<string, Node[]>();
+  const tops: Node[] = [];
+
+  for (const n of nodes) {
+    const pid = parentIdOf(n);
+    if (pid && known.has(pid)) {
+      const list = portsByParent.get(pid);
+      if (list) list.push(n);
+      else portsByParent.set(pid, [n]);
+    } else {
+      tops.push(n);
+    }
   }
+
+  return tops.map((n) => {
+    const ports = portsByParent.get(String(n.id)) ?? [];
+    return {
+      ...toElkChild(n, false),
+      ...(ports.length > 0 ? { children: ports.map((p) => toElkChild(p, true)) } : {}),
+    };
+  });
+}
+
+function toElkChild(node: Node, isPort: boolean): ElkNode {
   return {
     id: String(node.id),
-    width: DEFAULT_NODE_W,
-    height: DEFAULT_NODE_H,
+    width: isPort ? PORT_W : DEFAULT_NODE_W,
+    height: isPort ? PORT_H : DEFAULT_NODE_H,
   };
 }
 
-function toElkEdge(edge: Edge): ElkNode {
+/**
+ * 结构连线的端点可能直接指向端口（`connect A.fuelIn to B.powerOut;` 会让
+ * edge.source 变成端口 id，见 modelToFlow.makeConnEdge）。
+ *
+ * 端口现在是 owner 的**嵌套子节点**，而 ELK 的边端点只能引用「所在节点的
+ * 子节点」—— 直接写端口 id 会变成悬空引用。所以这里把端口端点**重定向到
+ * owner**：连接本来就是两个 part 之间的连接，端口徽标只是标注，不该影响
+ * 分层布局的形状。
+ */
+function toElkEdge(edge: Edge, portToOwner: Map<string, string>): ElkNode {
+  const resolve = (id: string): string => portToOwner.get(id) ?? id;
   return {
     id: String(edge.id),
-    sources: [String(edge.source)],
-    targets: [String(edge.target)],
+    sources: [resolve(String(edge.source))],
+    targets: [resolve(String(edge.target))],
   };
+}
+
+/**
+ * 递归收集 ELK 输出的坐标。
+ *
+ * 顶层节点的坐标是画布绝对坐标；**嵌套子节点（端口）ELK 返回的就是相对父的
+ * 坐标** —— 正好是 React Flow 子节点 `position` 要的语义，直接用，**不要**
+ * 再加一次父原点（加了就是两遍偏移，见 frontend/src/lib/portSide.ts 的
+ * `toChildPosition`）。
+ *
+ * 递归顺带解决了原先那个「父节点必须先被处理」的顺序依赖：父在遍历中总是
+ * 先于自己的子节点出现。
+ */
+function collectElkPositions(
+  elkNode: ElkNode,
+  out: Map<string, { x: number; y: number }>,
+): void {
+  for (const child of elkNode.children ?? []) {
+    out.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
+    collectElkPositions(child, out);
+  }
 }
 
 function computeBounds(nodes: Node[]): { width: number; height: number } {
   let maxX = 0;
   let maxY = 0;
   for (const n of nodes) {
-    // port 在父内，跳过（不计入包围盒）
-    if (n.parentNode) continue;
+    // 端口在 owner 内部，不该把包围盒撑大
+    if (parentIdOf(n)) continue;
     const x = (n.position?.x ?? 0) + DEFAULT_NODE_W;
     const y = (n.position?.y ?? 0) + DEFAULT_NODE_H;
     if (x > maxX) maxX = x;
