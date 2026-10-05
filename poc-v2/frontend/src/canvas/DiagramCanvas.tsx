@@ -44,6 +44,7 @@ import {
   portDirectionArrows,
   portLabelOffset,
   resolvePortPlacement,
+  toChildPosition,
   type PortSide,
 } from '../lib/portSide';
 import {
@@ -128,23 +129,35 @@ const LEGACY_HANDLE_HIDE: React.CSSProperties = {
 };
 
 /**
- * 取一个已渲染节点在画布上的包围盒。
+ * 取一个已渲染节点在**画布绝对坐标系**下的包围盒。
  *
- * M17：算挂点要的是**同一个坐标系**下的两个盒子（owner 与端口），所以这里
- * 统一从 stableNodes 上取 —— 它已经带上了 `measured`，且坐标就是画布绝对坐标。
+ * M17：算挂点要的是同一个坐标系下的两个盒子（owner 与端口），所以统一在这里
+ * 把两种坐标系抹平，调用方不必再关心 RF 的父子语义：
+ *   - 顶层节点：`position` 就是画布坐标
+ *   - 端口（带 `parentId`，React Flow v12 的真子节点）：`position` 是**相对
+ *     owner 的偏移**，绝对坐标 = owner 的绝对盒子原点 + `position`
+ *     （RF 的 `calculateChildXYZ` 自己就是这么加的，见 lib/portSide.ts 开头的说明）
  *
- * @param posOverride 覆盖坐标（拖动时用 change 里的新坐标，否则读到的是上一帧）
+ * @param posOverride 覆盖坐标，**与该节点 `position` 同一坐标系**
+ *   （拖动时用 change 里的新坐标；顶层节点即画布坐标，端口即相对 owner 的偏移）
+ * @param parentBox owner 的画布绝对盒子；节点是端口时必传，否则返回 null
+ *   —— 宁可不返回，也别把相对坐标当绝对坐标用（那正是本 bug 的形态）
  */
 function nodeBoxOf(
   node: Node | undefined,
   posOverride?: { x: number; y: number; width?: number; height?: number },
+  parentBox?: AnchorBox | null,
 ): AnchorBox | null {
   if (!node) return null;
   const isPort = node.type === 'sysmlPort';
+  const isChild = Boolean((node as { parentId?: string }).parentId);
+  if (isChild && !parentBox) return null;
   const m = (node as { measured?: { width: number; height: number } }).measured;
+  const x = posOverride?.x ?? node.position?.x ?? 0;
+  const y = posOverride?.y ?? node.position?.y ?? 0;
   return {
-    x: posOverride?.x ?? node.position?.x ?? 0,
-    y: posOverride?.y ?? node.position?.y ?? 0,
+    x: isChild ? parentBox!.x + x : x,
+    y: isChild ? parentBox!.y + y : y,
     width:
       posOverride?.width ?? m?.width ?? (isPort ? FALLBACK_PORT_W : FALLBACK_NODE_W),
     height:
@@ -886,20 +899,25 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       // 吸附并顺手反推出锚点。改造前这里是「按坐标反推边 → 吸到那条边上」的
       // 两步环，角上会互相拉扯，而且结果只存在于渲染期局部变量里、存不进 store。
       //
-      // 端口的 parentId 在 Node 顶层（自定义字段，React Flow 不认），
-      // 详见 lib/portSide.ts 的说明。
+      // ⚠️ `resolvePortPlacement` 出的是**画布绝对坐标**，而端口带 `parentId`
+      // （React Flow v12 的真子节点），写回 `position` 前必须过 `toChildPosition`
+      // 减掉 owner 原点。漏掉这次换算，RF 渲染时会再加一次
+      // `parent.positionAbsolute`，徽标被平移两遍 owner 的位置 —— 拖动 owner
+      // 时它以**两倍**位移漂走。详见 lib/portSide.ts 开头的说明。
       const parentId = (n as { parentId?: string }).parentId;
       let data = n.data as BaseNodeData;
       let position = n.position;
       if (n.type === 'sysmlPort' && parentId) {
         const parent = boxes.get(parentId);
         if (parent) {
-          // 端口自己的盒子也走内部节点：拖动时只有它是实时的
+          // 端口自己的盒子也走内部节点：拖动时只有它是实时的（positionAbsolute
+          // 已经是画布绝对坐标 —— RF 把 owner 原点加过了）。
           const selfInternal = inst?.getInternalNode(idStr);
           const selfAbs = selfInternal?.internals.positionAbsolute;
           const self: AnchorBox = {
-            x: selfAbs?.x ?? n.position?.x ?? 0,
-            y: selfAbs?.y ?? n.position?.y ?? 0,
+            // 首帧还没有内部节点时回落：`position` 是相对 owner 的偏移，得加上原点
+            x: selfAbs?.x ?? parent.x + (n.position?.x ?? 0),
+            y: selfAbs?.y ?? parent.y + (n.position?.y ?? 0),
             width: selfInternal?.measured?.width ?? measured?.width ?? FALLBACK_PORT_W,
             height: selfInternal?.measured?.height ?? measured?.height ?? FALLBACK_PORT_H,
           };
@@ -907,8 +925,9 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
           if (data.attachSide !== placement.side) {
             data = { ...data, attachSide: placement.side };
           }
-          if (placement.position.x !== self.x || placement.position.y !== self.y) {
-            position = placement.position;
+          const child = toChildPosition(parent, placement.position);
+          if (child.x !== (n.position?.x ?? 0) || child.y !== (n.position?.y ?? 0)) {
+            position = child;
           }
         }
       }
@@ -1017,22 +1036,17 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
             : undefined;
           const parentBox = parentNode ? nodeBoxOf(parentNode) : null;
           if (parentBox) {
-            const selfBox = nodeBoxOf(hit, {
-              x: c.position.x,
-              y: c.position.y,
-            });
+            // `c.position` 对端口是**相对 owner 的偏移**（RF 子节点语义），
+            // nodeBoxOf 会加上 owner 原点换成画布绝对坐标；写回时再换回去。
+            const selfBox = nodeBoxOf(hit, { x: c.position.x, y: c.position.y }, parentBox);
             if (!selfBox) {
               onNodePositionChange(idStr, c.position.x, c.position.y);
               continue;
             }
             const anchor = normalizeAnchor(anchorFromPoint(boxCenter(selfBox), parentBox));
             const placement = resolvePortPlacement(selfBox, parentBox, anchor);
-            onNodePositionChange(
-              idStr,
-              placement.position.x,
-              placement.position.y,
-              placement.anchor,
-            );
+            const child = toChildPosition(parentBox, placement.position);
+            onNodePositionChange(idStr, child.x, child.y, placement.anchor);
           } else {
             onNodePositionChange(idStr, c.position.x, c.position.y);
           }
@@ -1112,12 +1126,19 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
    * 拖动时会同步更新；首帧还没建内部节点时才回落到 `stableNodes` 上的
    * position + 兜底尺寸。**不能**反过来只用 stableNodes —— 那是上一帧的值，
    // 拖动中用它算出来的锚点会整体滞后一帧（端口挂点已经踩过这个坑）。
+   *
+   * 回落分支里端口的 `position` 是相对 owner 的偏移，必须把 owner 的盒子一起
+   * 传进去（nodeBoxOf 负责换算）—— 少传就是拿相对坐标当画布坐标用。
    */
   const boxOfNode = useCallback((id: string): AnchorBox | null => {
     const live = internalNodeBox(rfInstanceRef.current?.getInternalNode(id));
     if (live) return live;
-    const hit = stableNodesRef.current.find((n) => String(n.id) === id);
-    return hit ? nodeBoxOf(hit) : null;
+    const pool = stableNodesRef.current;
+    const hit = pool.find((n) => String(n.id) === id);
+    if (!hit) return null;
+    const pid = (hit as { parentId?: string }).parentId;
+    const parent = pid ? pool.find((n) => String(n.id) === pid) : undefined;
+    return nodeBoxOf(hit, undefined, parent ? nodeBoxOf(parent) : null);
   }, []);
 
   /** 指针位置 → 画布坐标 */

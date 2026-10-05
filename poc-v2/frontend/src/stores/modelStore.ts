@@ -595,6 +595,11 @@ export const useModelStore = create<ModelState>((set, get) => ({
     // attach 也要同步落到 data 上：画布是靠 data.attach 由锚点反推位置的，
     // 只写进 layoutStore 的话，要等到下一次 pipeline 重跑（改文本/自动布局）
     // 才看得见锚点 —— 表现为「刚拖完看着对，一动别的元素端口就弹回去」。
+    //
+    // ⚠️ x/y 原样写进 `position`，不做任何坐标换算：端口带 `parentId`，是
+    // React Flow 的真子节点，DiagramCanvas 传上来的就已经是**相对 owner 的
+    // 偏移**（换算在 toChildPosition 里做）。这里若再自作聪明加一次 owner
+    // 原点，徽标就会被平移两遍。见 lib/portSide.ts 开头的说明。
     const nodes = pipeline.nodes.map((n) => {
       if (String(n.id) !== nodeId) return n;
       const next: Node = { ...n, position: { x, y } };

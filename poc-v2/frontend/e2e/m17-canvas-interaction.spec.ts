@@ -34,6 +34,20 @@ const VIEW_STRUCTURE = `view def StructureView {
 }
 `;
 
+/** 带端口的包：端口徽标骑在 owner 边框上（见用例 D） */
+const PORT_PKG = `package VehicleModel {
+  part def Vehicle {
+    attribute mass : Real;
+    part engine : Engine;
+    port fuelIn : Power;
+    port powerOut : Power;
+  }
+  part def Engine;
+  part def Wheel;
+  port def Power;
+}
+`;
+
 let csrfToken = '';
 
 interface Auth {
@@ -46,7 +60,11 @@ interface Auth {
 
 // ─── bootstrap ──────────────────────────────────────────────
 
-async function bootstrap(request: APIRequestContext, prefix: string): Promise<Auth> {
+async function bootstrap(
+  request: APIRequestContext,
+  prefix: string,
+  pkgContent = VEHICLE_PKG,
+): Promise<Auth> {
   const username = `${prefix}_${Date.now().toString(36)}`;
   const email = `${username}@example.com`;
 
@@ -78,7 +96,7 @@ async function bootstrap(request: APIRequestContext, prefix: string): Promise<Au
 
   const pkg = await request.post(`/api/v1/projects/${projectId}/packages`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { name: 'VehicleModel', content: VEHICLE_PKG, description: '' },
+    data: { name: 'VehicleModel', content: pkgContent, description: '' },
   });
   const pkb = await pkg.json();
   const packageId = pkb?.data?.id ?? pkb?.id ?? '';
@@ -241,6 +259,58 @@ async function previewScreenBox(page: Page): Promise<{ x: number; y: number; wid
   if ((await path.count()) === 0) return null;
   const box = await path.boundingBox();
   return box ?? null;
+}
+
+// ─── 端口徽标（用例 D） ───────────────────────────────────────────────
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/**
+ * 端口徽标节点。
+ *
+ * 按 `data-id^="port:"` 取（节点 id 来自 `makePortNode` 的 `port:<n>`），
+ * 比按类型 class 取更稳 —— 组件类型改名不会让本用例静默失效。
+ */
+function portBadge(page: Page): Locator {
+  return page.locator('.react-flow__node[data-id^="port:"]').first();
+}
+
+/** 徽标中心到 owner 四条边框的最小距离：0 = 正骑在边框上 */
+function borderGap(owner: Box, badge: Box): number {
+  const cx = badge.x + badge.width / 2;
+  const cy = badge.y + badge.height / 2;
+  return Math.min(
+    Math.abs(cx - owner.x),
+    Math.abs(cx - (owner.x + owner.width)),
+    Math.abs(cy - owner.y),
+    Math.abs(cy - (owner.y + owner.height)),
+  );
+}
+
+/**
+ * 等布局落定再采样。
+ *
+ * `runPipeline` 结尾会异步跑一次 ELK（modelStore.applyElkLayout），落定前
+ * 坐标还会变一版 —— 直接采一次会拿到中途值，位移断言就成了随机数。
+ * 连续两次采样一致才算稳。
+ */
+async function settled(
+  page: Page,
+  read: () => Promise<{ owner: Box; badge: Box }>,
+): Promise<{ owner: Box; badge: Box }> {
+  let prev = await read();
+  for (let i = 0; i < 15; i++) {
+    await page.waitForTimeout(400);
+    const next = await read();
+    const still =
+      Math.abs(next.owner.x - prev.owner.x) < 0.5 &&
+      Math.abs(next.owner.y - prev.owner.y) < 0.5 &&
+      Math.abs(next.badge.x - prev.badge.x) < 0.5 &&
+      Math.abs(next.badge.y - prev.badge.y) < 0.5;
+    if (still) return next;
+    prev = next;
+  }
+  return prev;
 }
 
 // ─── 用例 ────────────────────────────────────────────────────
@@ -488,6 +558,73 @@ test.describe('M17 画布交互', () => {
 
     // 这一下是**拖节点**，不是画线：不该凭空多出连线
     expect(await countEdges(page)).toBe(0);
+  });
+
+  /**
+   * 端口徽标跟随 owner —— 用户报的那个 bug 的回归锁。
+   *
+   * 端口节点带 `parentId`，是 React Flow v12 的**真子节点**：RF 渲染时算
+   * `positionAbsolute = owner.positionAbsolute + node.position`。而端口的摆放
+   * （`resolvePortPlacement`）全程用画布绝对坐标 —— 两者之间必须过一次
+   * `toChildPosition`。漏掉的话，owner 的绝对位置会被加**两遍**：徽标中心相对
+   * 边框的偏移恒等于 owner 的绝对 x，拖多远偏多远（用户看到的「拖动图元时端口
+   * pin 会随主图元位置变化而变化」）。
+   *
+   * `extent: 'parent'` 是同一根因的另一面：它把徽标**绝对位置**夹进 owner 矩形，
+   * 而骑边必然有半个徽标在框外，于是永远骑不上边框。
+   *
+   * 三条判据缺一不可：
+   *   ① 静止时徽标中心就压在边框上（骑边）
+   *   ② 拖动 owner 时徽标以**1 倍**位移跟随（不是 2 倍，也不是 0 倍）
+   *   ③ 拖完仍压在边框上（不会随拖动逐步滑进框内）
+   */
+  test('D. 拖动 owner：端口徽标 1 倍跟随，且始终骑在边框上', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17port', PORT_PKG);
+    await injectAuth(page, auth);
+    await gotoVehicleCanvas(page, auth);
+
+    const owner = nodeByLabel(page, 'Vehicle');
+    await expect(owner).toBeVisible({ timeout: 15_000 });
+    const badge = portBadge(page);
+    await expect(badge, '画布上没有端口徽标节点').toBeVisible({ timeout: 15_000 });
+
+    const read = async () => ({
+      owner: (await owner.boundingBox())!,
+      badge: (await badge.boundingBox())!,
+    });
+
+    const s1 = await settled(page, read);
+    expect(
+      borderGap(s1.owner, s1.badge),
+      `端口徽标没骑在 owner 边框上（相距 ${borderGap(s1.owner, s1.badge).toFixed(1)}px）`,
+    ).toBeLessThan(2);
+
+    // 从 owner 正中拖 —— 既不在 8px 边框带里，也不会抓到边框上的徽标
+    const b = s1.owner;
+    const from = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 150, from.y + 95, { steps: 16 });
+    await page.mouse.up();
+
+    const s2 = await settled(page, read);
+
+    const dOwner = { x: s2.owner.x - s1.owner.x, y: s2.owner.y - s1.owner.y };
+    const dBadge = { x: s2.badge.x - s1.badge.x, y: s2.badge.y - s1.badge.y };
+    expect(Math.abs(dOwner.x), 'owner 本身没被拖动，判据作废').toBeGreaterThan(40);
+    // 屏幕坐标相减，缩放自动约掉，只比位移的**倍数**
+    expect(
+      Math.abs(dBadge.x - dOwner.x),
+      `徽标横向位移 ${dBadge.x.toFixed(1)} ≠ owner 的 ${dOwner.x.toFixed(1)}（被平移了两遍？）`,
+    ).toBeLessThan(2);
+    expect(
+      Math.abs(dBadge.y - dOwner.y),
+      `徽标纵向位移 ${dBadge.y.toFixed(1)} ≠ owner 的 ${dOwner.y.toFixed(1)}（被平移了两遍？）`,
+    ).toBeLessThan(2);
+    expect(
+      borderGap(s2.owner, s2.badge),
+      `拖动后徽标掉离边框 ${borderGap(s2.owner, s2.badge).toFixed(1)}px`,
+    ).toBeLessThan(2);
   });
 
   test('B. 点画布空白 → 右栏从元素属性回退到包属性', async ({ page, request }) => {

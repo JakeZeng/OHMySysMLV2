@@ -97,6 +97,10 @@ export function runPipeline(
   // 端口（带 parentId）**不再跳过**：改造前这里 return n，把端口的用户坐标整个
   // 丢掉，是「端口位置存不住」的直接原因。锚点由 DiagramCanvas 从 owner 的实时
   // 盒子推导，这里存的 x/y 只是重绘前的初值。
+  //
+  // ⚠️ 端口的 x/y 与 `NodePosition.attach` 一样是**相对 owner 的偏移**
+  // （端口是 React Flow v12 的真子节点，RF 自己会加一次 owner 的绝对位置）。
+  // DiagramCanvas 写回时已换算成这个坐标系，这里不要再加原点。
   if (userPositions) {
     nodes = nodes.map((n) => {
       const up = userPositions[stableKeyOf(n.data, String(n.id))];

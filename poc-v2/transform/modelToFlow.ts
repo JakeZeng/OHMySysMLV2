@@ -566,7 +566,21 @@ function makePortNode(id: string, p: PortUsage, parentId: string, stableKey: str
     type: 'sysmlPort',
     position: { x: 0, y: 0 },
     parentId: parentId,
-    extent: 'parent',
+    // ⚠️ 这里**不能**设 `extent: 'parent'`。
+    //
+    // 端口带 `parentId` 就是 React Flow v12 的真子节点，`extent: 'parent'` 会让
+    // `clampPositionToParent`（@xyflow/system 0.0.82 index.js:519）把徽标的
+    // **绝对位置**夹进 owner 的矩形内 —— 而 M17 的设计是「徽标中心骑在边框上」，
+    // 半个徽标必然在框外，于是永远被夹回来贴在框内边上，骑边这个特性直接作废。
+    //
+    // 改用坐标 extent（`[[x0,y0],[x1,y1]]`，相对 owner）才能既允许骑边、
+    // 又在拖动时约束住范围，但它的边界依赖**实测**的 owner 尺寸 —— 那是渲染期
+    // 才有的数据，pipeline 造节点时拿不到。索性不设：拖动约束由
+    // `snapPortToBorder`（沿边 clamp + 法向吸边）负责，语义一样且不依赖尺寸。
+    //
+    // 顺带说明：`position` 对端口是**相对 owner 的偏移**（RF 自己会加
+    // `parent.positionAbsolute`），gridLayout 给的 (PORT_X_OFFSET, py) 就是
+    // 这个坐标系 —— 见 `toChildPosition`（lib/portSide.ts）。
     data: {
       label: p.name ?? (p.redefines ? `:>> ${p.redefines}` : '<anon>'),
       kind: 'port',

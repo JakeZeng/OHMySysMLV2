@@ -1,17 +1,30 @@
 /**
  * M17：端口「吸附边」判定 + 方向箭头排布。
  *
- * 背景：端口节点（node.type === 'sysmlPort'）在 Node 顶层带 `parentId`
- * （所属 part，见 transform/modelToFlow.ts `makePortNode`）。但 React Flow v12
- * 只认 `parentNode` 字段，`parentId` 是本项目自定义的，所以父子关系**不参与**
- * 布局引擎 —— 端口在画布上其实是与 part 平级的自由节点，坐标来自 ELK 或用户拖动。
+ * ## 端口是 React Flow 的**真子节点**（坐标是相对量，不是绝对量）
  *
- * 因此「端口贴在 part 的哪条边上」不能从数据结构读出来，只能按几何算：
- * 端口中心相对 part 中心的偏移，哪个轴的**相对偏移**更大，就贴哪条边
- * （相对而非绝对：part 有宽有高，同样 20px 对宽 part 是贴边、对高 part 不是）。
+ * 端口节点（node.type === 'sysmlPort'）在 Node 顶层带 `parentId`
+ * （所属 part，见 transform/modelToFlow.ts `makePortNode`）。⚠️ **`parentId`
+ * 不是本项目自定义字段** —— 它正是 React Flow v12 的标准字段（v11 的
+ * `parentNode` 才是旧的），RF 会照它把端口算成子节点：
  *
- * 判定结果供 DiagramCanvas 注入 `data.attachSide`，PortNode 据此决定方向箭头
- * 是横排（◀▶，左右边）还是竖排（▲▼，上下边），并把 Handle 挪到对应边上。
+ *   - `calculateChildXYZ`（@xyflow/system 0.0.82 index.js:1778）算出
+ *     `positionAbsolute = parent.positionAbsolute + node.position`
+ *   - `NodeWrapper`（@xyflow/react index.js:2361）对**所有**节点一视同仁地用
+ *     `translate(positionAbsolute)` 定位，v12 不再把子节点 DOM 嵌进父节点里
+ *
+ * 于是端口的 `position` 是**相对 owner 的偏移**，画布绝对坐标要自己加一次
+ * owner 原点。`resolvePortPlacement` 全程用画布绝对坐标（锚点 `ratio` 是相对
+ * owner 边框的），写回 RF 前必须过一次 `toChildPosition` 换算 ——
+ * 漏掉的后果不是「偏一点」，而是**偏移两遍 owner 的位置**：徽标会以两倍速度
+ * 跟着 owner 漂（用户报的现象：拖动图元时端口 pin 会随主图元位置变化）。
+ *
+ * ## 贴哪条边从锚点来，不再从坐标反推
+ *
+ * 「端口贴在 part 的哪条边上」由 layoutStore 里的锚点（`attach`）直接给出；
+ * 没有锚点（新建 / 老数据）时才回落到按几何吸附。判定结果供 DiagramCanvas
+ * 注入 `data.attachSide`，PortNode 据此决定方向箭头是横排（◀▶，左右边）
+ * 还是竖排（▲▼，上下边），并把 Handle 挪到对应边上。
  *
  * M17：判边规则已下沉到 `anchor.ts` 的 `anchorFromPoint`，本文件只保留
  * 「端口语义」的包装 —— 连线端点与端口贴边共用同一套几何，避免两套竞争规则。
@@ -23,6 +36,7 @@ import {
   boxCenter,
   normalizeAnchor,
   type Anchor,
+  type Point,
 } from './anchor';
 
 export type PortSide = 'left' | 'right' | 'top' | 'bottom';
@@ -123,7 +137,11 @@ export function snapPortToBorder(
  * 位置是结果。分开存、分开算就会在角上互相拉扯（见本文件开头的说明）。
  */
 export interface PortPlacement {
-  /** 徽标节点自身的左上角坐标 */
+  /**
+   * 徽标节点自身的左上角坐标 —— **画布绝对坐标**。
+   *
+   * 要写进 React Flow 的 `position` 得先过一次 `toChildPosition`（端口是子节点）。
+   */
   position: { x: number; y: number };
   /** 在 parent 边框上的挂点（可持久化） */
   anchor: Anchor;
@@ -183,6 +201,22 @@ export function resolvePortPlacement(
   return anchor
     ? placePortByAnchor(port, parent, anchor)
     : placePortByGeometry(port, parent);
+}
+
+/**
+ * 画布绝对坐标 → React Flow 子节点的 `position`（相对 owner 的偏移）。
+ *
+ * 方向不能反：RF 渲染时自己会加一次 `parent.positionAbsolute`，所以我们这边
+ * 只能**减**。漏掉这次换算，徽标就会被平移两遍 owner 的位置 —— 拖动 owner
+ * 时它以两倍位移漂走，而 owner 停在原点附近时看着还挺正常（原点附近两次偏移
+ * 差得不多），是这个 bug 一直没被发现的原因。
+ *
+ * 反向换算（相对 → 绝对）不提供：端口自身在 RF 里的绝对位置
+ * `internals.positionAbsolute` 就是它，连线端点（`edgeAnchor.internalNodeBox`）
+ * 也直接读那个值，用不着自己加。
+ */
+export function toChildPosition(parent: PortBox, absolute: Point): { x: number; y: number } {
+  return { x: absolute.x - parent.x, y: absolute.y - parent.y };
 }
 
 /**

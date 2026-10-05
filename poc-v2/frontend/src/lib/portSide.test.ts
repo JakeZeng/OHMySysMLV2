@@ -8,8 +8,9 @@ import {
   placePortByAnchor,
   placePortByGeometry,
   resolvePortPlacement,
+  toChildPosition,
 } from './portSide';
-import { anchorFromPoint, boxCenter } from './anchor';
+import { anchorFromPoint, boxCenter, type Anchor } from './anchor';
 
 const PART = { x: 100, y: 100, width: 200, height: 80 };
 const BADGE = { width: 18, height: 14 };
@@ -300,5 +301,101 @@ describe('resolvePortPlacement — 有锚点走锚点，无锚点走几何', () 
         expect(onEdge).toBe(true);
       }
     }
+  });
+});
+
+// ─── M17：子节点坐标系 ────────────────────────────────────────────────
+//
+// 端口带 `parentId`，是 React Flow v12 的**真子节点**：RF 渲染时算
+// `positionAbsolute = parent.positionAbsolute + node.position`
+// （@xyflow/system 0.0.82 `calculateChildXYZ` index.js:1778）。
+// 下面的 `rfAbsolute` 就是那条公式的复刻，用它当「渲染出来的真实位置」做断言 ——
+// 否则单测只能验证纯函数的自洽性，验证不了写回 RF 的坐标对不对。
+
+describe('toChildPosition — 画布绝对坐标 → 子节点 position', () => {
+  /** 复刻 RF 的子节点定位公式：绝对位置 = owner 绝对 + 我们的 position */
+  const rfAbsolute = (parent: { x: number; y: number }, child: { x: number; y: number }) => ({
+    x: parent.x + child.x,
+    y: parent.y + child.y,
+  });
+
+  const at = (x: number, y: number) => ({ x, y, ...BADGE });
+
+  it('四边各测一次：换算后的偏移 + owner 原点 === 徽标该在的绝对位置', () => {
+    const cases: Anchor[] = [
+      { side: 'left', ratio: 0.3 },
+      { side: 'right', ratio: 0.7 },
+      { side: 'top', ratio: 0.2 },
+      { side: 'bottom', ratio: 0.8 },
+    ];
+    for (const anchor of cases) {
+      const placement = placePortByAnchor(at(0, 0), PART, anchor);
+      const child = toChildPosition(PART, placement.position);
+      const rendered = rfAbsolute(PART, child);
+      expect(rendered.x).toBeCloseTo(placement.position.x, 6);
+      expect(rendered.y).toBeCloseTo(placement.position.y, 6);
+      // 徽标中心精确压在边框线上（骑边是这轮修复的目标形态）
+      const c = boxCenter({ ...rendered, ...BADGE });
+      if (anchor.side === 'left') expect(c.x).toBeCloseTo(PART.x, 6);
+      if (anchor.side === 'right') expect(c.x).toBeCloseTo(PART.x + PART.width, 6);
+      if (anchor.side === 'top') expect(c.y).toBeCloseTo(PART.y, 6);
+      if (anchor.side === 'bottom') expect(c.y).toBeCloseTo(PART.y + PART.height, 6);
+    }
+  });
+
+  it('【回归】拖动 owner：偏移量不变 → 徽标以 1 倍位移跟随，不漂', () => {
+    // 用户报的现象：拖动图元时端口 pin 会随主图元位置变化而变化。
+    // 根因是把画布绝对坐标直接塞进子节点的 position，RF 再加一次 owner 原点，
+    // 于是徽标相对 owner 多漂了整整一个位移（owner 越拖越偏）。
+    const anchor = { side: 'left', ratio: 0.4 } as const;
+    const offsets = [0, 60, 240, -35].map((dx) => {
+      const owner = { ...PART, x: PART.x + dx };
+      const placement = placePortByAnchor(at(0, 0), owner, anchor);
+      return toChildPosition(owner, placement.position);
+    });
+    for (const o of offsets) {
+      expect(o.x).toBeCloseTo(offsets[0].x, 6);
+      expect(o.y).toBeCloseTo(offsets[0].y, 6);
+    }
+    // 徽标跟着 owner 走，且相对位置不动
+    const owner = { ...PART, x: PART.x + 240 };
+    const rendered = boxCenter({ ...rfAbsolute(owner, offsets[2]), ...BADGE });
+    expect(rendered.x).toBeCloseTo(owner.x, 6);
+  });
+
+  it('【回归】不换算就会漂：直接写绝对坐标时，徽标相对 owner 边框的偏移恒等于 owner 的绝对 x', () => {
+    const anchor = { side: 'left', ratio: 0.4 } as const;
+    const drift = [0, 60, 240].map((dx) => {
+      const owner = { ...PART, x: PART.x + dx };
+      const placement = placePortByAnchor(at(0, 0), owner, anchor);
+      // 改造前：position = 画布绝对坐标（漏了 toChildPosition）
+      const rendered = boxCenter({ ...rfAbsolute(owner, placement.position), ...BADGE });
+      return rendered.x - owner.x; // 徽标中心相对左边框的偏移
+    });
+    // 徽标被平移了**两遍** owner 的位置，于是这个偏移恒等于 owner 自己的绝对 x：
+    // owner 每往右挪 1px，徽标就相对边框往里挪 1px（拖得越远偏得越离谱）。
+    // 对照上一条：换算后这个偏移恒为 0（中心压在边框上）。
+    expect(drift[0]).toBeCloseTo(PART.x, 6);
+    expect(drift[1]).toBeCloseTo(PART.x + 60, 6);
+    expect(drift[2]).toBeCloseTo(PART.x + 240, 6);
+  });
+
+  it('几何分支同样要换算：拖动后锚点/边不变，只是绝对位置跟着走', () => {
+    const owner = { ...PART, x: PART.x + 137 };
+    const first = placePortByGeometry(at(PART.x - 40, PART.y + 30), PART);
+    const second = placePortByGeometry(
+      { ...rfAbsolute(owner, toChildPosition(PART, first.position)), ...BADGE },
+      owner,
+    );
+    expect(second.side).toBe(first.side);
+    const child = toChildPosition(owner, second.position);
+    const c = boxCenter({ ...rfAbsolute(owner, child), ...BADGE });
+    expect(Math.abs(c.x - owner.x)).toBeLessThan(1);
+  });
+
+  it('换算只减不加：反了会变成两倍偏移', () => {
+    const p = { x: 40, y: 30 };
+    const child = toChildPosition(PART, p);
+    expect(child).toEqual({ x: p.x - PART.x, y: p.y - PART.y });
   });
 });
