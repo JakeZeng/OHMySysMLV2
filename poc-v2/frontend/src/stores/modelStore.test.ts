@@ -1,12 +1,16 @@
 /**
  * Model Store 单元测试。
  *
- * 覆盖：setContent 触发 pipeline、reset 恢复初始态。
+ * 覆盖：setContent 触发 pipeline、reset 恢复初始态、
+ *       applyExternalContent 树右键同步、applyRemoteContentUpdate 接收协同同步。
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { useModelStore } from './modelStore';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { useModelStore, applyRemoteContentUpdate } from './modelStore';
 import { useLayoutStore } from './layoutStore';
+import { packageApi } from '../services/packageApi';
+import { viewApi } from '../services/viewApi';
+import { useCollabStore } from './collabStore';
 import type { EdgeAnchors } from '../lib/edgeAnchor';
 
 beforeEach(() => {
@@ -441,5 +445,177 @@ describe('M17 S5：addConnection 把锚点挂到新边上', () => {
 
     expect(useModelStore.getState().pipeline.edges[0].id).not.toBe(idBefore);
     expect(useLayoutStore.getState().getEdgeAnchors('pkg1')[key]).toEqual(ANCHORS);
+  });
+});
+
+// ── M17.x：applyExternalContent（树右键同步入口） ──────────────────
+
+describe('modelStore - applyExternalContent', () => {
+  it('A1. entityKind / entityId 不匹配 → 返回 false，store 状态不变', () => {
+    // 当前 session：package 'A'
+    useModelStore.setState({
+      entityKind: 'package',
+      entityId: 'A',
+      content: 'package A {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'package A {}',
+      dirty: true,
+    });
+
+    const ok = useModelStore
+      .getState()
+      .applyExternalContent('package', 'B', 'package B { part def X; }', 5);
+
+    expect(ok).toBe(false);
+    const s = useModelStore.getState();
+    expect(s.content).toBe('package A {}');
+    expect(s.version).toBe(1);
+    expect(s.dirty).toBe(true);
+  });
+
+  it('A2. entityId 匹配 → 返回 true：content / version / baseVersion / baseContent / dirty 全部更新；pipeline 重跑；collab.baseContent 同步', () => {
+    useModelStore.setState({
+      entityKind: 'package',
+      entityId: 'P1',
+      content: 'package P1 {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'package P1 {}',
+      dirty: true,
+      saved: false,
+    });
+
+    const newText = 'package P1 { part def NewOne; }';
+    const ok = useModelStore
+      .getState()
+      .applyExternalContent('package', 'P1', newText, 3);
+
+    expect(ok).toBe(true);
+    const s = useModelStore.getState();
+    expect(s.content).toBe(newText);
+    expect(s.version).toBe(3);
+    expect(s.baseVersion).toBe(3);
+    expect(s.baseContent).toBe(newText);
+    expect(s.dirty).toBe(false);
+    expect(s.saved).toBe(false);
+    // pipeline 已重跑，新元素应出现在 nodes
+    const labels = s.pipeline.nodes.map((n) => String((n.data as { label?: string }).label ?? ''));
+    expect(labels).toContain('NewOne');
+    // collabStore 同步
+    expect(useCollabStore.getState().baseVersion).toBe(3);
+    expect(useCollabStore.getState().baseContent).toBe(newText);
+  });
+
+  it('A3. 内容写入后 pipeline.parseErrors 反映新文本解析', () => {
+    useModelStore.setState({
+      entityKind: 'package',
+      entityId: 'P2',
+      content: 'package P2 {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'package P2 {}',
+    });
+
+    // 故意构造非法语法，让 pipeline 产生 parseErrors
+    useModelStore
+      .getState()
+      .applyExternalContent('package', 'P2', 'package P2 { part def 123 {} }', 2);
+
+    const s = useModelStore.getState();
+    expect(s.pipeline.parseErrors.length).toBeGreaterThan(0);
+  });
+});
+
+// ── M17.x：applyRemoteContentUpdate（协同接收入口） ──────────────────
+
+describe('modelStore - applyRemoteContentUpdate (collab:content-updated)', () => {
+  it('R1. scope 不匹配 → 不调 packageApi.get，store 不变', async () => {
+    useModelStore.setState({
+      entityKind: 'package',
+      entityId: 'A',
+      content: 'package A {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'package A {}',
+    });
+    const spy = vi.spyOn(packageApi, 'get').mockResolvedValue({
+      id: 'A',
+      version: 99,
+      projectId: 'proj',
+      name: 'A',
+      parentPackageId: '',
+      description: '',
+      content: 'never used',
+      metadata: {},
+      createdAt: '',
+      updatedAt: '',
+    });
+
+    await applyRemoteContentUpdate({ scope: 'package:OTHER' });
+
+    expect(spy).not.toHaveBeenCalled();
+    const s = useModelStore.getState();
+    expect(s.content).toBe('package A {}');
+    expect(s.version).toBe(1);
+  });
+
+  it('R2. scope 匹配 + dirty=false → 调 packageApi.get，applyExternalContent 落地', async () => {
+    useModelStore.setState({
+      entityKind: 'package',
+      entityId: 'A',
+      content: 'package A {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'package A {}',
+      dirty: false,
+    });
+    const newText = 'package A { part def Remote; }';
+    const spy = vi.spyOn(packageApi, 'get').mockResolvedValue({
+      id: 'A',
+      version: 7,
+      projectId: 'proj',
+      name: 'A',
+      parentPackageId: '',
+      description: '',
+      content: newText,
+      metadata: {},
+      createdAt: '',
+      updatedAt: '',
+    });
+
+    await applyRemoteContentUpdate({ scope: 'package:A' });
+
+    expect(spy).toHaveBeenCalledWith('A');
+    const s = useModelStore.getState();
+    expect(s.content).toBe(newText);
+    expect(s.version).toBe(7);
+    expect(s.baseVersion).toBe(7);
+    expect(s.dirty).toBe(false);
+    const labels = s.pipeline.nodes.map((n) => String((n.data as { label?: string }).label ?? ''));
+    expect(labels).toContain('Remote');
+  });
+
+  it('R3. scope 匹配 + dirty=true → 不调 API，store 不动（留给 409 冲突流处理）', async () => {
+    useModelStore.setState({
+      entityKind: 'view',
+      entityId: 'V1',
+      content: 'view V1 {}',
+      version: 1,
+      baseVersion: 1,
+      baseContent: 'view V1 {}',
+      dirty: true,
+    });
+    const spyPkg = vi.spyOn(packageApi, 'get');
+    const spyView = vi.spyOn(viewApi, 'get');
+
+    await applyRemoteContentUpdate({ scope: 'view:V1' });
+
+    expect(spyPkg).not.toHaveBeenCalled();
+    expect(spyView).not.toHaveBeenCalled();
+    const s = useModelStore.getState();
+    expect(s.content).toBe('view V1 {}');
+    expect(s.version).toBe(1);
+    expect(s.dirty).toBe(true);
   });
 });

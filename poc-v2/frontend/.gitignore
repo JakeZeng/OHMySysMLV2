@@ -35,6 +35,11 @@ test-results/
 # from a CDN at runtime; the cache dir is per-machine)
 .monaco-cache/
 
+# Monaco 本地副本（src/editor/monacoLoader.ts 把 loader 指向 /monaco/；
+# 本目录由 predev/prebuild 钩子 scripts/copy-monaco.mjs 从
+# node_modules/monaco-editor/min/vs 同步生成，无需入 git）
+public/monaco/
+
 # React 18 devtools bookmark — local-only
 # (no path to add; document-only note)
 

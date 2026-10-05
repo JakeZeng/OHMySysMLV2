@@ -14,6 +14,9 @@ import React, {
 } from 'react';
 import Editor, { OnMount, OnChange } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
+// 副作用导入：把 @monaco-editor/react 的 loader 从 CDN 重定向到本地 /monaco/
+// （沙箱网络封了 cdn.jsdelivr.net）。详见 src/editor/monacoLoader.ts。
+import './monacoLoader';
 import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
 import type { ValidationIssue } from '@validator/validator';

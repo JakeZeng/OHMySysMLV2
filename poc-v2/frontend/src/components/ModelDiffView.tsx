@@ -6,6 +6,8 @@
 
 import * as React from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
+// 副作用导入：把 loader 指向本地 /monaco/，绕开沙箱对 cdn.jsdelivr.net 的封锁。详见 src/editor/monacoLoader.ts。
+import '../editor/monacoLoader';
 
 interface ModelDiffViewProps {
   original: string;

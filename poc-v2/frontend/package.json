@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "copy-monaco": "node scripts/copy-monaco.mjs",
+    "predev": "npm run copy-monaco",
+    "prebuild": "npm run copy-monaco",
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
