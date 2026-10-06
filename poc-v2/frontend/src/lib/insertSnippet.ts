@@ -43,7 +43,12 @@ export type PaletteKind =
   | 'analysisCaseDef'
   | 'verificationCaseDef'
   // ── 关系 ──
-  | 'allocation'
+  // ⚠️ 'allocation' 仍在 PaletteKind 里，但**已从 PALETTE_ITEMS 移除**（M17 S7.3）。
+  //    原因：它原来的 generate() 产出 `allocation X;`，这在 SysML v2 里不是合法语法
+  //    —— §7.12 的 AllocationUsage 是 `allocate <源> to <目标>;` 且必须写在 def body 内。
+  //    而 palette 的 `generate(name, name2)` 只有两个参数，装不下源/目标两个名字。
+  //    语义上它本质是**画布连线操作**，不该作为可拖入的元素。
+  //    保留 kind 是为了让 nestingMatrix 的「语法尚未支持」提示仍然成立。
   // ── 枚举 ──
   | 'enumDef';
 
@@ -347,19 +352,6 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     generate: (n) => `verification case def ${n} {\n}`,
   },
 
-  // ───────────────────────── 关系 ───────────────────────────
-  {
-    kind: 'allocation',
-    label: 'allocation',
-    icon: '↔️',
-    category: '关系',
-    form: 'usage',
-    specRef: '§7.12 Allocation',
-    description: 'allocation { logical -> physical }  ——逻辑到物理的分配',
-    defaultName: 'NewAllocation',
-    generate: (n) => `allocation ${n};`,
-  },
-
   // ───────────────────────── 枚举 ───────────────────────────
   {
     kind: 'enumDef',
@@ -382,7 +374,7 @@ export const PALETTE_CATEGORIES: Array<{
   { key: '结构', label: '结构' },
   { key: '行为', label: '行为' },
   { key: '需求', label: '需求' },
-  { key: '关系', label: '关系' },
+  // '关系' 类已随 allocation 移出调色板（M17 S7.3）——只剩空类，不再列出
   { key: '枚举', label: '枚举' },
 ];
 

@@ -1013,6 +1013,15 @@ alias FS for FreeStanding;`);
       expect(Number.isFinite(n.position.x)).toBe(true);
       expect(Number.isFinite(n.position.y)).toBe(true);
     }
+    // 回归：兜底桶不能把唯一的节点推到很远。fitView 是按 ELK **之前**的这些
+    // 初值算视口的，ELK 之后不再重算 —— 初值离原点越远，节点越可能落到视口外
+    // 被 onlyRenderVisibleElements 剔掉，表现为「画布空白但 store 里有节点」。
+    const g2 = parse(`package P { state def St { } }`);
+    expect(g2.ok).toBe(true);
+    const only = modelToFlow(g2.model).nodes[0] as any;
+    // ORIGIN_X / ORIGIN_Y 都是 80（gridLayout 的原点）
+    expect(only.position.x).toBeLessThanOrEqual(81);
+    expect(only.position.y).toBeLessThanOrEqual(81);
   });
 });
 

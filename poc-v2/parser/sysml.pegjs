@@ -659,6 +659,10 @@ PartBodyMember
   / ImplicitFeatureWithDir
   / DocStatement
   / EnumDef
+  // 需求追溯语句（satisfy / verify / refine）：规范里它们可出现在任何
+  // Namespace 内，改造前只挂在 NamespaceOrTopLevel / PackageMember，
+  // 于是 `part def B { refine A by C; }` 解析不了。排在 CommentBlock 前。
+  / TraceStatement
   / CommentBlock
 
 // ─── Structure Definitions（M17 S5a：item / attribute / interface）───────
@@ -747,8 +751,14 @@ PortBodyMember
 
 // ─── Part Usage ────────────────────────────────────────────────────────
 
+// ⚠️ `(_ Multiplicity)?` 而不是 `_ Multiplicity?`（M17 补）：
+//    改造前 `name multiplicity:` 之间没有任何空白规则，于是 `part x [1..*] : Car;`
+//    里的空格把 Multiplicity 顶掉，整条规则挂掉，只有 `part x[1..*] : Car;`
+//    能解析 —— 规范里两种写法都合法（Multiplicity 与名字之间可有可无空白）。
+//    必须包成**可选组**：`_` 是贪婪的且组内不回溯，写成 `_ Multiplicity?` 时
+//    `_` 会把 `x` 与 `:` 之间的空白吃掉，后面 `WS ":"` 没空白可用，整条挂掉。
 PartUsage
-  = "part" WS name:Identifier multiplicity:Multiplicity? WS ":" WS typeRef:QualifiedName body:PartUsageBody? _ ";"?
+  = "part" WS name:Identifier multiplicity:(_ Multiplicity)? WS ":" WS typeRef:QualifiedName body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'partUsage',
@@ -772,7 +782,7 @@ UsageTypeSpec
   = WS (":>" / ":") WS typeRef:QualifiedName { return typeRef; }
 
 ItemUsage
-  = "item" WS name:Identifier multiplicity:Multiplicity? typeRef:UsageTypeSpec body:PartUsageBody? _ ";"?
+  = "item" WS name:Identifier multiplicity:(_ Multiplicity)? typeRef:UsageTypeSpec body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'itemUsage',
@@ -796,7 +806,7 @@ ItemUsage
 //    "refine"；本规则的 `"ref" WS` 里 WS 是**必需**空白，所以
 //    `refine X by Y;` 会在 WS 处失败并回落到 TraceStatement，不会被误吃。
 ReferenceUsage
-  = "ref" WS name:Identifier multiplicity:Multiplicity? typeRef:UsageTypeSpec redef:ReferenceRedeclares? _ ";"?
+  = "ref" WS name:Identifier multiplicity:(_ Multiplicity)? typeRef:UsageTypeSpec redef:ReferenceRedeclares? _ ";"?
     {
       return {
         kind: 'referenceUsage',

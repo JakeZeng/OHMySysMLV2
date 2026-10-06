@@ -452,7 +452,14 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
   };
   /** 摆一段横向序列（portDef 等不需要按 PART_WIDTH 间隔的窄节点） */
   const placeTopRow = (list: Node[], width: number) => {
-    if (list.length > 0 && rowHeight > 0) newRow();
+    // ⚠️ 空列表必须**什么都不做**。早先写成无条件
+    // `rowHeight = Math.max(rowHeight, PART_HEIGHT)`，于是「包里只有状态机 /
+    // item def 这类非 partDef 成员」时，rowHeight 被凭空抬到 120，
+    // 下面的兜底桶 `if (rowHeight > 0) newRow()` 就必定触发，把唯一的节点
+    // 推到 y≈280。fitView 又是按 ELK 之前的初值算视口的，于是节点被推到
+    // 视口外，`onlyRenderVisibleElements` 直接不渲染 —— 画布看着是空的。
+    if (list.length === 0) return;
+    if (rowHeight > 0) newRow();
     for (const n of list) {
       place(n, cursorX, cursorY);
       cursorX += width + COL_GAP;
@@ -502,8 +509,12 @@ function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds:
   }
   // 剩下的（含孤儿子节点）当顶层排开：宁可位置难看，也不能凭空消失
   const looseTops = leftovers.filter((n) => !placed.has(String(n.id)));
+  // ⚠️ 只在这一段**开始**时起一次新行，不要每个节点都起。
+  //    每节点一次的话，第二行起每个节点都被推下去 ROW_GAP，整张图纵向拉散，
+  //    而 fitView 是按这些初值算视口的（ELK 之后不再重算），
+  //    节点会落到视口外被 onlyRenderVisibleElements 剔掉 —— 画布看着是空的。
+  if (looseTops.length > 0 && rowHeight > 0) newRow();
   for (const n of looseTops) {
-    if (rowHeight > 0) newRow();
     placeTop(n);
   }
 

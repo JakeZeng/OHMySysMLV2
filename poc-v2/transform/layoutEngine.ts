@@ -63,7 +63,10 @@ export async function elkLayout(graph: FlowGraph): Promise<FlowGraph> {
   const portToOwner = new Map<string, string>();
   for (const n of graph.nodes) {
     const pid = parentIdOf(n);
-    if (pid) portToOwner.set(String(n.id), pid);
+    // ⚠️ 只登记**真端口**。M17 S8 起 state / action 也带 parentId，
+    // 若一并登记，状态机内的 transition 会被重定向成「状态机指向自己」的自环，
+    // 分层布局就看不到迁移关系了。
+    if (pid && isPortBadge(n)) portToOwner.set(String(n.id), pid);
   }
 
   const elkInput: ElkNode = {
@@ -117,35 +120,49 @@ function parentIdOf(node: Node): string | null {
 }
 
 /**
- * 把节点列表编成 ELK 的**嵌套**树：顶层图元挂在 root 下，端口挂进各自的
- * owner 里。
+ * 把节点列表编成 ELK 的**嵌套**树：顶层图元挂在 root 下，带 `parentId` 的
+ * 子节点挂进各自的 owner 里。
  *
- * 父节点不在图里的孤儿端口退回顶层 —— 宁可布局得难看，也不能让它凭空消失
+ * 父节点不在图里的孤儿子节点退回顶层 —— 宁可布局得难看，也不能让它凭空消失
  * （`elkLayout` 末尾按 id 回填坐标，丢掉的节点会退回 (0,0)）。
+ *
+ * ⚠️ **尺寸必须按节点类型给，不能按「有没有 parentId」给。**
+ * M17 S8 起 state / action 也成了容器（状态机 / 活动）的子节点，而这里原本
+ * 把**所有**子节点都当成端口徽标，告诉 ELK 尺寸是 18×14。ELK 就按 18×14
+ * 排 state —— 实测两个 state 被排成 y=12 / y=46（间距 34），而节点实际高约
+ * 40，于是**互相重叠**；容器也被撑成一个只装得下徽标的小框。
+ * 现在只有 `sysmlPort` 才是徽标，其余子节点按普通图元尺寸给。
  */
 function toElkTree(nodes: Node[]): ElkNode[] {
   const known = new Set(nodes.map((n) => String(n.id)));
-  const portsByParent = new Map<string, Node[]>();
+  const childrenByParent = new Map<string, Node[]>();
   const tops: Node[] = [];
 
   for (const n of nodes) {
     const pid = parentIdOf(n);
     if (pid && known.has(pid)) {
-      const list = portsByParent.get(pid);
+      const list = childrenByParent.get(pid);
       if (list) list.push(n);
-      else portsByParent.set(pid, [n]);
+      else childrenByParent.set(pid, [n]);
     } else {
       tops.push(n);
     }
   }
 
   return tops.map((n) => {
-    const ports = portsByParent.get(String(n.id)) ?? [];
+    const kids = childrenByParent.get(String(n.id)) ?? [];
     return {
-      ...toElkChild(n, false),
-      ...(ports.length > 0 ? { children: ports.map((p) => toElkChild(p, true)) } : {}),
+      ...toElkChild(n, isPortBadge(n)),
+      ...(kids.length > 0
+        ? { children: kids.map((p) => toElkChild(p, isPortBadge(p))) }
+        : {}),
     };
   });
+}
+
+/** 端口徽标（骑在 owner 边框上的小方块）—— 唯一需要特殊尺寸的子节点。 */
+function isPortBadge(node: Node): boolean {
+  return node.type === 'sysmlPort';
 }
 
 function toElkChild(node: Node, isPort: boolean): ElkNode {
