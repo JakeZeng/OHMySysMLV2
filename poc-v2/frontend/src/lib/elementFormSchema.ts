@@ -297,6 +297,22 @@ const CALC_DEFINITION_SCHEMA: FormSchema = {
   nodeType: 'sysmlCalcDefinition',
   title: 'Calc Def（计算定义）',
 };
+/** M17 S6：三类需求族定义与 part def 同构（body 同产生式），仅标题/nodeType 不同。 */
+const USE_CASE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlUseCaseDef',
+  title: 'Use Case Def（用例定义）',
+};
+const ANALYSIS_CASE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlAnalysisCaseDef',
+  title: 'Analysis Case Def（分析用例定义）',
+};
+const VERIFICATION_CASE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlVerificationCaseDef',
+  title: 'Verification Case Def（验证用例定义）',
+};
 
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
@@ -310,6 +326,9 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlActionDefinition: ACTION_DEFINITION_SCHEMA,
   sysmlStateDefinition: STATE_DEFINITION_SCHEMA,
   sysmlCalcDefinition: CALC_DEFINITION_SCHEMA,
+  sysmlUseCaseDef: USE_CASE_DEF_SCHEMA,
+  sysmlAnalysisCaseDef: ANALYSIS_CASE_DEF_SCHEMA,
+  sysmlVerificationCaseDef: VERIFICATION_CASE_DEF_SCHEMA,
   sysmlState: STATE_SCHEMA,
   sysmlAction: ACTION_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,

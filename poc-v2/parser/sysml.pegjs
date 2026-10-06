@@ -272,6 +272,9 @@ NamespaceOrTopLevel
   / ActionDefinition
   / StateDefinition
   / CalcDefinition
+  / UseCaseDef
+  / AnalysisCaseDef
+  / VerificationCaseDef
   / PartUsage
   / PortUsage
   / Attribute
@@ -537,6 +540,9 @@ PackageMember
     / ActionDefinition
     / StateDefinition
     / CalcDefinition
+    / UseCaseDef
+    / AnalysisCaseDef
+    / VerificationCaseDef
     / PartUsage
     / PortUsage
     / Attribute
@@ -635,6 +641,9 @@ PartBodyMember
   / ActionDefinition
   / StateDefinition
   / CalcDefinition
+  / UseCaseDef
+  / AnalysisCaseDef
+  / VerificationCaseDef
   / PartUsage
   / PortUsageWithDir
   / AttributeWithDir
@@ -944,6 +953,29 @@ ReqId
 
 ReqText
   = WS "{" t:$(!"}" .)* _ "}" { return t.trim(); }
+
+// ─── Case Definitions（M17 S6：use case / analysis case / verification case）
+//
+// 规范上三者都是 RequirementDefinition 的特化（§7.18–7.20），body 为
+// RequirementBodyMember。本仓库的 RequirementDef 只支持
+// `requirement def X;`（+ 可选 reqId / text）的精简形态，没有 Requirement
+// 专用成员产生式，因此三类 case 沿用 StructureDefBody（PartBodyMember）
+// —— 与本仓库其它 def 保持一致。补齐 RequirementBodyMember 是独立后续项。
+//
+// ⚠️ 双词关键字：`use` / `analysis` / `verification` 都不是保留字，与
+// identifier 不冲突；`!IdentifierChar` 守卫用于 `case` 之后，
+// 使 `use caseX def` 这类不合法输入不被误吃。
+UseCaseDef
+  = isAbstract:(AbstractKw WS)? "use" WS "case" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('useCaseDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+AnalysisCaseDef
+  = isAbstract:(AbstractKw WS)? "analysis" WS "case" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('analysisCaseDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+VerificationCaseDef
+  = isAbstract:(AbstractKw WS)? "verification" WS "case" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('verificationCaseDef', location().start.offset, name, !!isAbstract, spec, body); }
 
 // ─── Trace Statement（M5 需求追溯）────────────────────────────────────
 

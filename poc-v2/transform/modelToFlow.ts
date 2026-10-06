@@ -560,6 +560,9 @@ const STRUCTURE_DEF_NODE_TYPE: Readonly<Record<string, string>> = {
   actionDefinition: 'sysmlActionDefinition',
   stateDefinition: 'sysmlStateDefinition',
   calcDefinition: 'sysmlCalcDefinition',
+  useCaseDef: 'sysmlUseCaseDef',
+  analysisCaseDef: 'sysmlAnalysisCaseDef',
+  verificationCaseDef: 'sysmlVerificationCaseDef',
 };
 
 function makeStructureDefNode(id: string, sd: StructureDefinition, stableKey: string): Node {
@@ -721,6 +724,9 @@ function collectMembers(
       case 'actionDefinition':
       case 'stateDefinition':
       case 'calcDefinition':
+      case 'useCaseDef':
+      case 'analysisCaseDef':
+      case 'verificationCaseDef':
         structureDefs.push({ node: m, qname });
         break;
       case 'partUsage':

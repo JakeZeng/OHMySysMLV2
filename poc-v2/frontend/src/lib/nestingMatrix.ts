@@ -71,6 +71,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'attributeUsage',
     'requirementDef',
     'constraintDef',
+    'useCaseDef',
+    'analysisCaseDef',
+    'verificationCaseDef',
     'enumDef',
   ],
   viewDef: [
@@ -89,6 +92,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'attributeUsage',
     'requirementDef',
     'constraintDef',
+    'useCaseDef',
+    'analysisCaseDef',
+    'verificationCaseDef',
     'enumDef',
   ],
   viewpoint: [
@@ -107,11 +113,15 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'attributeUsage',
     'requirementDef',
     'constraintDef',
+    'useCaseDef',
+    'analysisCaseDef',
+    'verificationCaseDef',
     'enumDef',
   ],
   // M17 S5a/S5c：PartBodyMember 接受嵌套 def（PartDef / PortDef / ItemDef /
   // OccurrenceDef / ConnectionDef / AttributeDef / InterfaceDef /
-  // ActionDefinition / StateDefinition / CalcDefinition）+ 既有 usage / enum。
+  // ActionDefinition / StateDefinition / CalcDefinition / UseCaseDef /
+  // AnalysisCaseDef / VerificationCaseDef）+ 既有 usage / enum。
   partDef: [
     'partDef',
     'portDef',
@@ -123,6 +133,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'actionDef',
     'stateDef',
     'calcDef',
+    'useCaseDef',
+    'analysisCaseDef',
+    'verificationCaseDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -163,6 +176,10 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlActionDefinition: 'partDef',
   sysmlStateDefinition: 'partDef',
   sysmlCalcDefinition: 'partDef',
+  // S6：用例 / 分析 / 验证 def 的 body 同样复用 PartBodyMember 产生式
+  sysmlUseCaseDef: 'partDef',
+  sysmlAnalysisCaseDef: 'partDef',
+  sysmlVerificationCaseDef: 'partDef',
   sysmlState: null,
   sysmlAction: null,
   sysmlRequirement: null,

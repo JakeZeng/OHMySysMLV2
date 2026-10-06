@@ -155,7 +155,10 @@ export type StructureDefinitionKind =
   | 'connectionDef'
   | 'actionDefinition'
   | 'stateDefinition'
-  | 'calcDefinition';
+  | 'calcDefinition'
+  | 'useCaseDef'
+  | 'analysisCaseDef'
+  | 'verificationCaseDef';
 export interface StructureDefinition extends SysMLNode {
   kind: StructureDefinitionKind;
   name: string;

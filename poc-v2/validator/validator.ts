@@ -112,7 +112,7 @@ export interface ValidationResult {
 interface TypeSymbol {
   kind: 'partDef' | 'portDef' | 'itemDef' | 'attributeDef' | 'interfaceDef' |
     'occurrenceDef' | 'connectionDef' | 'actionDefinition' | 'stateDefinition' |
-    'calcDefinition';
+    'calcDefinition' | 'useCaseDef' | 'analysisCaseDef' | 'verificationCaseDef';
   name: string;
   qualifiedName: string;
   location: SourceLocation;
@@ -165,6 +165,9 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   actionDefinition: 'action def',
   stateDefinition: 'state def',
   calcDefinition: 'calc def',
+  useCaseDef: 'use case def',
+  analysisCaseDef: 'analysis case def',
+  verificationCaseDef: 'verification case def',
 };
 
 // ─── 内置类型 ──────────────────────────────────────────────────────────
@@ -749,7 +752,10 @@ function collectFromPackage(
       case 'connectionDef':
       case 'actionDefinition':
       case 'stateDefinition':
-      case 'calcDefinition': {
+      case 'calcDefinition':
+    case 'useCaseDef':
+    case 'analysisCaseDef':
+    case 'verificationCaseDef': {
         // 跨类同名也算重复（同一 Namespace 内成员名唯一，与 kind 无关）
         const existing = scope.structureDefs.get(memberQName) ?? findTypeSym(scope, memberQName);
         if (existing) {
@@ -829,6 +835,9 @@ function memberName(m: NamespaceMember): string {
     case 'actionDefinition': return m.name;
     case 'stateDefinition': return m.name;
     case 'calcDefinition': return m.name;
+    case 'useCaseDef': return m.name;
+    case 'analysisCaseDef': return m.name;
+    case 'verificationCaseDef': return m.name;
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
@@ -973,6 +982,9 @@ function checkReferences(
       case 'actionDefinition':
       case 'stateDefinition':
       case 'calcDefinition':
+      case 'useCaseDef':
+      case 'analysisCaseDef':
+      case 'verificationCaseDef':
         checkTypeDefBody(m, KIND_LABEL[m.kind] ?? m.kind, qualifiedName, scope, issues);
         break;
       case 'partUsage':
@@ -1645,6 +1657,9 @@ function collectPartUsageTypeRefsInMember(m: NamespaceMember, out: Set<string>):
     case 'actionDefinition':
     case 'stateDefinition':
     case 'calcDefinition':
+    case 'useCaseDef':
+    case 'analysisCaseDef':
+    case 'verificationCaseDef':
       for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
       break;
     default:

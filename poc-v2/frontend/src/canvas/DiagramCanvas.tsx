@@ -515,6 +515,10 @@ const STRUCTURE_DEF_VISUAL: Readonly<
   actionDefinition: { bg: '#fffbe6', bgSelected: '#ffe58f', border: '#fa8c16', borderSelected: '#d46b08', stereo: 'action def' },
   stateDefinition: { bg: '#e6fffb', bgSelected: '#87e8de', border: '#13c2c2', borderSelected: '#08979c', stereo: 'state def' },
   calcDefinition: { bg: '#f9f0ff', bgSelected: '#d3adf7', border: '#9254de', borderSelected: '#722ed1', stereo: 'calc def' },
+  // S6 用例 / 分析 / 验证：需求族统一用绿色系三档
+  useCaseDef: { bg: '#f6ffed', bgSelected: '#d9f7be', border: '#52c41a', borderSelected: '#389e0d', stereo: 'use case def' },
+  analysisCaseDef: { bg: '#fff7e6', bgSelected: '#ffd591', border: '#fa8c16', borderSelected: '#d46b08', stereo: 'analysis case def' },
+  verificationCaseDef: { bg: '#fffbe6', bgSelected: '#ffe58f', border: '#faad14', borderSelected: '#d48806', stereo: 'verification case def' },
 };
 const StructureDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
@@ -625,6 +629,9 @@ const nodeTypes = {
   sysmlActionDefinition: MemoStructureDefNode,
   sysmlStateDefinition: MemoStructureDefNode,
   sysmlCalcDefinition: MemoStructureDefNode,
+  sysmlUseCaseDef: MemoStructureDefNode,
+  sysmlAnalysisCaseDef: MemoStructureDefNode,
+  sysmlVerificationCaseDef: MemoStructureDefNode,
   sysmlState: MemoStateNode,
   sysmlAction: MemoActionNode,
   sysmlRequirement: MemoRequirementNode,

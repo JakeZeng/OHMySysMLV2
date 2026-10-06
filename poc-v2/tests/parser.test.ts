@@ -846,6 +846,66 @@ alias FS for FreeStanding;`);
       'calcDefinition',
     ]);
   });
+
+  it('56. use / analysis / verification case def 包级 + 特化（M17 S6）', () => {
+    const r = parse(`package P {
+      use case def UC :> BaseUC { attribute actor : Real; }
+      analysis case def AC;
+      verification case def VC :> BaseVC;
+    }`);
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m) => m.kind);
+    expect(kinds).toEqual(['useCaseDef', 'analysisCaseDef', 'verificationCaseDef']);
+    const uc = r.model.packages[0].members.find((m) => m.kind === 'useCaseDef') as any;
+    expect(uc.name).toBe('UC');
+    expect(uc.inherits).toEqual(['BaseUC']);
+    expect(uc.body.map((b: any) => b.kind)).toEqual(['attributeUsage']);
+    const vc = r.model.packages[0].members.find((m) => m.kind === 'verificationCaseDef') as any;
+    expect(vc.inherits).toEqual(['BaseVC']);
+  });
+
+  it('57. 三类 case def 可内联嵌套在 part def body（M17 S6）', () => {
+    const r = parse(`package P { part def B {
+      use case def UC;
+      analysis case def AC;
+      verification case def VC;
+    } }`);
+    expect(r.ok).toBe(true);
+    const b = r.model.packages[0].members.find((m) => m.kind === 'partDef') as any;
+    expect(b.body.map((m: any) => m.kind)).toEqual([
+      'useCaseDef',
+      'analysisCaseDef',
+      'verificationCaseDef',
+    ]);
+  });
+
+  it('58. 三类 case def 可内联嵌套在 view def body（M17 S6）', () => {
+    const r = parse(`package P { view def V {
+      use case def UC;
+      analysis case def AC;
+      verification case def VC;
+    } }`);
+    expect(r.ok).toBe(true);
+    // M15 §7.26：view 提升为顶层字段（kind='view'，声明形态在 declKind），
+    // owned 成员放 members，不在 packages[].members 里
+    const v = r.model.views.find((m) => m.name === 'V') as any;
+    expect(v).toBeDefined();
+    expect(v.declKind).toBe('definition');
+    expect(v.members.map((m: any) => m.kind)).toEqual([
+      'useCaseDef',
+      'analysisCaseDef',
+      'verificationCaseDef',
+    ]);
+  });
+
+  it('59. case def body 接受 part usage，且缺分号仍然报错（M17 S6）', () => {
+    const r = parse('package P { use case def UC { part engine : Engine; } }');
+    expect(r.ok).toBe(true);
+    const uc = r.model.packages[0].members.find((m) => m.kind === 'useCaseDef') as any;
+    expect(uc.body.map((b: any) => b.kind)).toEqual(['partUsage']);
+    // 边界守卫：不能把 `use case defX;` 误吞成 def
+    expect(parse('package P { use case defX; }').ok).toBe(false);
+  });
 });
 
 describe('Parser - 错误处理', () => {
