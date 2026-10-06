@@ -25,6 +25,7 @@ import {
   type PipelineResult,
 } from '../lib/pipeline';
 import { insertSnippetScoped, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
+import { parse } from '@parser/parser';
 import { stableKeyOf, renameStableKey } from '@transform/stableKey';
 import type { Anchor } from '../lib/anchor';
 import type { EdgeAnchors } from '../lib/edgeAnchor';
@@ -659,6 +660,16 @@ export const useModelStore = create<ModelState>((set, get) => ({
       model: pipeline.model,
     });
 
+    // M17 S1：插入结果解析失败时 pipeline 会把画布整个清空。落库前先 parse，
+    // 把坏片段挡在会话之外（约 8 行守卫，消除一整类静默清空）。
+    const probe = parse(newContent);
+    if (!probe.ok) {
+      return {
+        ok: false,
+        reason: probe.errors[0]?.message ?? '插入的文本解析失败',
+      };
+    }
+
     set({ content: newContent, saved: false, dirty: true });
     get().runPipeline(newContent);
 
@@ -702,6 +713,14 @@ export const useModelStore = create<ModelState>((set, get) => ({
       scopeName,
       model: pipeline.model,
     });
+    // M17 S1：坏片段守卫（与 createNodeFromPalette 同一份）
+    const probe = parse(newContent);
+    if (!probe.ok) {
+      return {
+        ok: false,
+        reason: probe.errors[0]?.message ?? '连接语句解析失败',
+      };
+    }
     // runPipeline 是**同步**的（parse → validate → modelToFlow 全在一个调用里），
     // 所以调用前后做一次差集就能精确定位新边 —— 不需要 TTL、重试或等一拍。
     //

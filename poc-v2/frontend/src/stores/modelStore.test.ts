@@ -619,3 +619,26 @@ describe('modelStore - applyRemoteContentUpdate (collab:content-updated)', () =>
     expect(s.dirty).toBe(true);
   });
 });
+
+describe('modelStore - createNodeFromPalette parse 守卫', () => {
+  it('坏片段被拒绝，content 与 dirty 状态均不变', () => {
+    openSession('package P { part def A { } }');
+    const before = useModelStore.getState();
+    const r = useModelStore.getState().createNodeFromPalette(
+      'item def BadThing { }',
+      'BadThing',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBeTruthy();
+    const after = useModelStore.getState();
+    expect(after.content).toBe(before.content);
+    expect(after.dirty).toBe(before.dirty);
+  });
+
+  it('好片段正常插入且解析零错误', () => {
+    openSession('package P { part def A { } }');
+    const r = useModelStore.getState().createNodeFromPalette('part def B { }', 'B');
+    expect(r.ok).toBe(true);
+    expect(useModelStore.getState().pipeline.parseErrors).toHaveLength(0);
+  });
+});

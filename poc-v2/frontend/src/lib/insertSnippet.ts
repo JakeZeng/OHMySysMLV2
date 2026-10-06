@@ -286,7 +286,8 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     specRef: '§7.7.3 TransitionUsage',
     description: 'transition S1 -> S2  ——状态迁移（建议在画布连线生成）',
     defaultName: 'NewTransition',
-    generate: (n) => `  transition ${n};`,
+    defaultName2: 'Target',
+    generate: (n, t = 'Target') => `  transition ${n} to ${t};`,
   },
 
   // ───────────────────────── 需求 / 分析 ───────────────────────────
@@ -299,7 +300,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     specRef: '§7.2.3 RequirementDefinition',
     description: 'requirement def R { ... }  ——系统需求（可被 satisfy / verify）',
     defaultName: 'NewReq',
-    generate: (n) => `requirement def ${n} {\n    /* doc */\n}`,
+    generate: (n) => `requirement def ${n} {\n    /* doc */\n};`,
   },
   {
     kind: 'constraintDef',
@@ -369,7 +370,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     specRef: '§7.5.6 (EnumerationDefinition)',
     description: 'enum def E { A; B; }  ——有限枚举',
     defaultName: 'NewEnum',
-    generate: (n) => `enum def ${n} {\n    enum ${n}_A;\n    enum ${n}_B;\n}`,
+    generate: (n) => `enum def ${n} {\n    ${n}_A;\n    ${n}_B;\n}`,
   },
 ];
 
