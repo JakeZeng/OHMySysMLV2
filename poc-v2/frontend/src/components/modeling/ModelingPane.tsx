@@ -12,6 +12,7 @@
  */
 
 import * as React from 'react';
+import { parse } from '@parser/parser';
 import type { Node } from '@xyflow/react';
 import SysMLEditor, { type SysMLEditorHandle, type PipelineResult as EditorPipeline } from '../../editor/SysMLEditor';
 import { DiagramCanvas, type DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
@@ -22,7 +23,13 @@ import { useModelStore } from '../../stores/modelStore';
 import { useCollabStore } from '../../stores/collabStore';
 import { PALETTE_ITEMS, type PaletteKind } from '../../lib/insertSnippet';
 import { generateUniqueName } from '../../lib/naming';
-import { canNestIntoBody, nodeKindHasBody, insertSnippetIntoElement } from '../../lib/textOps';
+import { insertSnippetIntoElement } from '../../lib/textOps';
+import {
+  containerOfNode,
+  containerOfScope,
+  canNest,
+  unsupportedReason,
+} from '../../lib/nestingMatrix';
 import type { Anchor } from '../../lib/anchor';
 import type { EdgeAnchors } from '../../lib/edgeAnchor';
 import { SimulationPanel } from '../sim/SimulationPanel';
@@ -169,7 +176,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
   const latestPartDefName = useModelStore((s) => {
     const ns = s.pipeline.nodes;
     for (let i = ns.length - 1; i >= 0; i--) {
-      if ((ns[i].data as { nodeType?: string } | undefined)?.nodeType === 'sysmlPartDef') {
+      if (ns[i].type === 'sysmlPartDef') {
         return String((ns[i].data as { label?: string } | undefined)?.label ?? '');
       }
     }
@@ -186,26 +193,24 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
       if (!item) return;
       const name = generateUniqueName(item.defaultName, existingNodeNames);
 
-      // M16：拖到节点上的分支
+      // M17 S2：拖到节点上的分支 —— 严格按矩阵判定 (容器, 元素) 是否合法
       if (hoveredNodeId) {
-        // 1. 反查目标节点类型（nodeType 含 body 信息的标识）
         const hoveredNode = adapter.pipeline.nodes.find(
           (n) => String(n.id) === hoveredNodeId,
         );
-        const hoveredNodeType = (hoveredNode?.data as { nodeType?: string } | undefined)?.nodeType;
-        // 2. 判定目标节点是否能接收嵌套：def 类（含 body）可，usage 类不可
-        if (!canNestIntoBody(hoveredNodeType)) {
-          // usage 节点无 body → 拒绝（任意 palette 元素都不能嵌进去）
+        const container = containerOfNode(hoveredNode?.type);
+        if (container === null || !canNest(container, item.kind)) {
           showToast({
-            title: '该元素不支持嵌套成员',
-            description: hoveredNodeType
-              ? `${hoveredNodeType} 是 usage 节点（无 body）；请拖到 def 节点或画布空白处`
-              : '目标节点无 body；请拖到 def 节点或画布空白处',
+            title: '该元素不能放入此目标',
+            description: unsupportedReason(
+              container ?? containerOfScope(entityKind),
+              item.kind,
+            ),
             variant: 'error',
           });
           return;
         }
-        // 3. 从 hovered nodeId 反查元素 name（按 label）
+        // 从 hovered nodeId 反查元素 name（按 label）
         const elementName = String(
           (hoveredNode?.data as { label?: string } | undefined)?.label ?? '',
         );
@@ -217,11 +222,20 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
           });
           return;
         }
-        // 4. 嵌到目标 def body（任何 palette 元素都能嵌，包括 usage 类）
         const snippet = item.generate(name);
         const result = insertSnippetIntoElement(adapter.content, elementName, snippet);
         if (!result.ok) {
           showToast({ title: '嵌套失败', description: result.reason, variant: 'error' });
+          return;
+        }
+        // S1 同款 parse 守卫：坏片段拒绝落盘，画布保持上一次成功结果
+        const probe = parse(result.content);
+        if (!probe.ok) {
+          showToast({
+            title: '嵌套文本解析失败',
+            description: probe.errors[0]?.message ?? '插入的文本解析失败',
+            variant: 'error',
+          });
           return;
         }
         adapter.setContent(result.content);
@@ -248,7 +262,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
         if (r.newNodeId) diagramRef.current?.focusNode(r.newNodeId);
       }
     },
-    [adapter, showToast, existingNodeNames, latestPartDefName],
+    [adapter, showToast, existingNodeNames, latestPartDefName, entityKind],
   );
 
   const handlePaneDoubleClick = React.useCallback(

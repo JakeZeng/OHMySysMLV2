@@ -1,6 +1,6 @@
 /**
  * M14.1 — insertSnippetIntoPackage 行为契约
- * M16  — canNest + insertSnippetIntoElement 行为契约
+ * M17 S2 — insertSnippetIntoElement 行为契约（旧 canNestIntoBody 虚构用例已删）
  *
  * 关键不变量：snippet 必须在某个 package 的 `{ ... }` 内部，
  * 而不是被追加到 content 末尾的 `}` 之外。
@@ -13,8 +13,6 @@ import {
   insertSnippetScoped,
   findPackageClose,
   insertSnippetIntoElement,
-  nodeKindHasBody,
-  canNestIntoBody,
   shortNameFromNodeId,
   kindFromNodeId,
 } from './textOps';
@@ -235,51 +233,7 @@ describe('findPackageClose', () => {
   });
 });
 
-// ─── M16: canNest + insertSnippetIntoElement ────────────────────────
-
-describe('canNestIntoBody / nodeKindHasBody', () => {
-  // M16 修订：能否嵌套取决于「目标节点」（画布上 hover 的 react-flow node），
-  // 而不是被拖的 palette 元素。目标节点是 def（有 body）→ 任何元素都可嵌套；
-  // 目标是 usage（无 body）→ 全部拒绝。
-
-  it('def 类节点 → hasBody=true', () => {
-    expect(nodeKindHasBody('sysmlPartDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlPortDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlActionDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlRequirementDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlEnumDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlConstraintDef')).toBe(true);
-    expect(nodeKindHasBody('sysmlStateDef')).toBe(true); // stateDef 有 body
-    expect(nodeKindHasBody('sysmlConnectionDef')).toBe(true);
-  });
-
-  it('usage 类节点 → hasBody=false', () => {
-    expect(nodeKindHasBody('sysmlPartUsage')).toBe(false);
-    expect(nodeKindHasBody('sysmlPortUsage')).toBe(false);
-    expect(nodeKindHasBody('sysmlAttributeUsage')).toBe(false);
-    expect(nodeKindHasBody('sysmlReferenceUsage')).toBe(false);
-    expect(nodeKindHasBody('sysmlTransition')).toBe(false);
-    expect(nodeKindHasBody('sysmlInitialState')).toBe(false);
-    expect(nodeKindHasBody('sysmlFinalState')).toBe(false);
-    // 注意：sysmlState 也是 usage 类（状态机中的状态），无 body
-    expect(nodeKindHasBody('sysmlState')).toBe(false);
-  });
-
-  it('canNestIntoBody 与 hasBody 等价（任何 palette 元素都可嵌到 def body）', () => {
-    expect(canNestIntoBody('sysmlPartDef')).toBe(true);
-    expect(canNestIntoBody('sysmlPartUsage')).toBe(false);
-    // 关键回归点：usage 拖到 def 也能嵌套（之前误判为 false）
-    // 用例化：拖 'partUsage' 到 'sysmlPartDef' → 应允许
-    // canNestIntoBody 只看目标，目标 = sysmlPartDef → true（任何 palette 都可）
-    expect(canNestIntoBody('sysmlPartDef')).toBe(true);
-  });
-
-  it('undefined / 空 nodeType → false', () => {
-    expect(nodeKindHasBody(undefined)).toBe(false);
-    expect(nodeKindHasBody('')).toBe(false);
-    expect(canNestIntoBody(undefined)).toBe(false);
-  });
-});
+// ─── insertSnippetIntoElement ───────────────────────────────────────
 
 describe('insertSnippetIntoElement', () => {
   it('空 snippet → 原 content', () => {

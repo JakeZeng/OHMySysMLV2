@@ -66,6 +66,7 @@ import {
 import { AnchorStripProvider, AnchorStrips } from './AnchorStrips';
 import AnchoredEdge from './AnchoredEdge';
 import { stableKeyOf } from '@transform/stableKey';
+import { containerOfNode } from '../lib/nestingMatrix';
 
 /** 锚点边 → React Flow 的 Position（自带边的贝塞尔控制点方向要用）。 */
 const SIDE_TO_POSITION: Record<AnchorSide, Position> = {
@@ -79,7 +80,6 @@ const SIDE_TO_POSITION: Record<AnchorSide, Position> = {
 
 interface BaseNodeData {
   label: string;
-  nodeType: string;
   location?: { line: number; column: number };
   /** M17：端口贴在所属 part 的哪条边，由 stableNodes 按几何注入 */
   attachSide?: PortSide;
@@ -887,12 +887,14 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
       const own = (n as { measured?: { width: number; height: number } }).measured;
       const measured = own ?? prevMeasured.get(idStr);
-      // M16：拖拽 palette 时实时高亮目标节点（绿=def 可嵌 / 红=usage 不可嵌）
+      // M17 S2：拖拽 palette 时实时高亮目标节点（绿=容器可接收 / 红=非容器）。
+      // 具体 (容器 × 元素) 的合法性由 ModelingPane 落文本前按矩阵最终判定。
       if (idStr === hoveredPaletteDropNodeId) {
-        const nodeType = (n.data as { nodeType?: string } | undefined)?.nodeType ?? '';
-        // def 类的 nodeType 通常含 'sysml' 且不带 'Usage'，如 sysmlPartDef / sysmlPortDef
-        const isDef = /sysml.*Def$/.test(nodeType) || /sysml.*Definition$/.test(nodeType);
-        cls.push(isDef ? 'rf-palette-drop-ok' : 'rf-palette-drop-bad');
+        cls.push(
+          containerOfNode(n.type) !== null
+            ? 'rf-palette-drop-ok'
+            : 'rf-palette-drop-bad',
+        );
       }
       // M17：端口的摆放一律交给 `resolvePortPlacement` ——
       // 有 `attach`（来自 layoutStore）就由锚点单向推导位置，没有就按几何
