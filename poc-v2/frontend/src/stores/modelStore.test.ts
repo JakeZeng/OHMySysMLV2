@@ -642,3 +642,51 @@ describe('modelStore - createNodeFromPalette parse 守卫', () => {
     expect(useModelStore.getState().pipeline.parseErrors).toHaveLength(0);
   });
 });
+
+describe('modelStore - M17 S4 幽灵节点 + 保留上一次成功图', () => {
+  const goodText = 'package Pkg1 {\n  part def A { }\n}';
+
+  it('exposedElements 经 runPipeline 渲染为 sysmlGhost', () => {
+    openSession(goodText);
+    useModelStore.setState({
+      entityKind: 'view',
+      exposedElements: [{ qualifiedName: 'Other::Engine', kind: 'PartDefinition' }],
+    });
+    useModelStore.getState().runPipeline(goodText);
+    const p = useModelStore.getState().pipeline;
+    expect(p.parseErrors).toHaveLength(0);
+    const ghosts = p.nodes.filter((n) => n.type === 'sysmlGhost');
+    expect(ghosts).toHaveLength(1);
+    expect((ghosts[0].data as { label?: string }).label).toBe('Engine');
+    expect((ghosts[0].data as { sourcePackage?: string }).sourcePackage).toBe('Other');
+  });
+
+  it('parse 失败 → 保留上一次成功图（含幽灵节点）并打 stale 标记', () => {
+    openSession(goodText);
+    useModelStore.setState({
+      entityKind: 'view',
+      exposedElements: [{ qualifiedName: 'Other::Engine', kind: 'PartDefinition' }],
+    });
+    useModelStore.getState().runPipeline(goodText);
+    const before = useModelStore.getState().pipeline;
+    expect(before.nodes.some((n) => n.type === 'sysmlGhost')).toBe(true);
+
+    useModelStore.getState().runPipeline('package Pkg1 { !!bad!!');
+    const after = useModelStore.getState().pipeline;
+    expect(after.parseErrors.length).toBeGreaterThan(0);
+    expect(after.stale).toBe(true);
+    expect(after.nodes).toHaveLength(before.nodes.length);
+    expect(after.edges).toEqual(before.edges);
+    expect(after.nodes.some((n) => n.type === 'sysmlGhost')).toBe(true);
+  });
+
+  it('无成功缓存时 parse 失败 → 空图（不伪造 stale）', () => {
+    useLayoutStore.getState().setProject('proj');
+    useModelStore.setState({ scopeId: 'pkg1', projectId: 'proj' });
+    useModelStore.getState().runPipeline('!!!');
+    const p = useModelStore.getState().pipeline;
+    expect(p.parseErrors.length).toBeGreaterThan(0);
+    expect(p.nodes).toHaveLength(0);
+    expect(p.stale).toBeUndefined();
+  });
+});

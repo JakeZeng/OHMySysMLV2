@@ -12,7 +12,7 @@
  */
 
 import { create } from 'zustand';
-import type { Node } from '@xyflow/react';
+import type { Node, Edge } from '@xyflow/react';
 import { renameNode as editRename, deleteNode as editDelete, deleteConnection as editDeleteConn } from '@transform/textEdit';
 import { modelToFlowLayouted } from '@transform/modelToFlow';
 import { packageApi } from '../services/packageApi';
@@ -34,6 +34,12 @@ import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
 import { ApiError } from '../services/api';
 import { layoutApi, type LayoutEntityKind } from '../services/layoutApi';
+
+/**
+ * M17 S4：上一次 parse 成功的图。parse 失败时画布保留它（不清空）。
+ * loadPackage/loadView/reset 时复位 —— 不跨实体残留。
+ */
+let lastGoodGraph: { nodes: Node[]; edges: Edge[] } | null = null;
 
 /** M16 P5/Q10：拖动停止 800ms 后把当前 scope 的布局推到后端 */
 let layoutFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -242,12 +248,25 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   runPipeline(text) {
-    const result = runPipelinePure(text, currentPositions(get().scopeId));
-    set({ pipeline: result, perfMs: result.layoutMs ?? 0 });
+    const result = runPipelinePure(
+      text,
+      currentPositions(get().scopeId),
+      get().exposedElements,
+    );
 
-    // 异步触发 ELK 自动布局：完成后用 ELK 坐标覆盖 grid 坐标
+    // M17 S4：parse 成功 → 缓存图；失败 → 画布保留上一次成功结果（stale 标记）
     if (result.parseErrors.length === 0) {
+      lastGoodGraph = { nodes: result.nodes, edges: result.edges };
+      set({ pipeline: result, perfMs: result.layoutMs ?? 0 });
+      // 异步触发 ELK 自动布局：完成后用 ELK 坐标覆盖 grid 坐标
       void get().applyElkLayout();
+    } else {
+      set({
+        pipeline: lastGoodGraph
+          ? { ...result, nodes: lastGoodGraph.nodes, edges: lastGoodGraph.edges, stale: true }
+          : result,
+        perfMs: result.layoutMs ?? 0,
+      });
     }
   },
 
@@ -256,7 +275,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
     if (pipeline.parseErrors.length > 0) return;
     const t0 = performance.now();
     try {
-      const laid = await modelToFlowLayouted(pipeline.model);
+      // S4：ELK 路径同样要传 exposed —— 漏了幽灵节点会每次布局完消失又回来
+      const laid = await modelToFlowLayouted(pipeline.model, get().exposedElements);
       const positions = currentPositions(scopeId) ?? {};
       // 用户拖动过的节点保留用户位置，未拖动的采用 ELK 坐标
       //
@@ -272,6 +292,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         return next;
       });
       const ms = performance.now() - t0;
+      // S4：ELK 后的图同样记入 lastGood
+      lastGoodGraph = { nodes: merged, edges: pipeline.edges };
       set({
         pipeline: { ...pipeline, nodes: merged, layoutMs: ms, layoutEngine: 'elk' },
         perfMs: ms,
@@ -320,6 +342,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
         .catch(() => {
           /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
         });
+      lastGoodGraph = null; // 切换实体：不沿用上一实体的缓存图
       get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
@@ -364,6 +387,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
         .catch(() => {
           /* 无布局记录 / 后端不可用：回落到 ELK + localStorage */
         });
+      lastGoodGraph = null; // 切换实体：不沿用上一实体的缓存图
       get().runPipeline(initialContent);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
@@ -571,6 +595,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
       baseContent: '',
     });
     useCollabStore.getState().setConflict(null);
+    lastGoodGraph = null;
   },
 
   // ─── M2 双向同步 ──────────────────────────────────────────────────

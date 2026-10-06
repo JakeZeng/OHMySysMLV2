@@ -497,6 +497,73 @@ const ConstraintBlockNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoConstraintBlockNode = React.memo(ConstraintBlockNode);
 
+/**
+ * M17 S4：跨包 expose 的只读幽灵节点（§7.26 引用，非拷贝）。
+ *
+ * 视觉三要素刻意与 owned 节点拉开：虚线边框 / 半透明 / 「引用」角标。
+ * **不**渲染 AnchorStrips，也**不**注册任何 Handle —— 从 DOM/handleBounds
+ * 两个层面同时断掉连线入口，只读语义不靠 remember。
+ */
+const GhostNode: React.FC<NodeProps> = ({ data }) => {
+  const d = data as BaseNodeData & {
+    kind?: string;
+    sourcePackage?: string;
+  };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: 'rgba(245, 245, 245, 0.55)',
+        border: '2px dashed #8c8c8c',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        minWidth: '150px',
+        opacity: 0.75,
+      }}
+      data-testid="ghost-node"
+    >
+      <div
+        style={{
+          position: 'absolute',
+          top: -10,
+          right: 6,
+          fontSize: '9px',
+          lineHeight: 1,
+          color: '#595959',
+          background: '#fafafa',
+          border: '1px solid #d9d9d9',
+          borderRadius: '8px',
+          padding: '2px 6px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        §7.26 引用
+      </div>
+      <div style={{ fontWeight: 600, color: '#595959', textAlign: 'center' }}>{d.label}</div>
+      {d.sourcePackage && (
+        <div
+          style={{ fontSize: '10px', color: '#8c8c8c', textAlign: 'center', marginTop: '3px' }}
+          title={`来源：${d.sourcePackage}`}
+        >
+          ↳ {d.sourcePackage}
+        </div>
+      )}
+    </div>
+  );
+};
+const MemoGhostNode = React.memo(GhostNode);
+
+/**
+ * M17 S4：节点是否只读。
+ * 两条来源：sysmlGhost（§7.26 引用节点）与 data.readOnly（协同锁等
+ * owned-but-locked 元素 —— 同一套守卫免费复用）。
+ */
+function isReadOnlyNode(n: Node | undefined): boolean {
+  if (!n) return false;
+  if (n.type === 'sysmlGhost') return true;
+  return n.data?.readOnly === true;
+}
+
 const nodeTypes = {
   sysmlPartDef: MemoPartDefNode,
   sysmlPartUsage: MemoPartUsageNode,
@@ -506,6 +573,7 @@ const nodeTypes = {
   sysmlAction: MemoActionNode,
   sysmlRequirement: MemoRequirementNode,
   sysmlConstraint: MemoConstraintBlockNode,
+  sysmlGhost: MemoGhostNode,
 };
 
 /**
@@ -951,6 +1019,8 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         position,
         selected: selectedNodeIds.has(idStr),
         className: cls.length > 0 ? cls.join(' ') : undefined,
+        // S4：RF 层面禁掉幽灵节点的拖拽/删除（handler 守卫是第二层）
+        ...(n.type === 'sysmlGhost' ? { draggable: false, deletable: false } : {}),
         ...(measured ? { measured } : {}),
       };
     });
@@ -1082,6 +1152,10 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         // 拖动过程里节点纹丝不动，只有松手那一帧才跳到终点。
         if (c.type === 'position' && c.position && onNodePositionChange) {
           const idStr = String(c.id);
+          // S4：只读节点（幽灵引用 / 协同锁定）位置变化直接丢弃
+          if (isReadOnlyNode(stableNodes.find((n) => String(n.id) === idStr))) {
+            continue;
+          }
           // M17：端口拖动时落点不能直接用原始坐标 —— 必须换算成 owner 边框上的
           // 锚点，再把**推导出的**位置连同锚点一起写回。
           // 写原始坐标的话，锚点与坐标各说各话：下次重绘时 stableNodes 按锚点
@@ -1109,6 +1183,10 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
           }
         }
         if (c.type === 'remove' && onNodeDelete) {
+          // S4：只读节点不允许删除
+          if (isReadOnlyNode(stableNodes.find((n) => String(n.id) === String(c.id)))) {
+            continue;
+          }
           onNodeDelete(String(c.id));
         }
         // 选中态：nodes 是完全受控的（来自 store），必须把 select 变化回写到本地状态
@@ -1147,10 +1225,12 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
 
   const handleNodesDelete = useCallback(
     (deleted: Node[]) => {
+      // S4：批量删除滤掉只读节点
+      const mutable = deleted.filter((d) => !isReadOnlyNode(d));
       if (onNodesDelete) {
-        onNodesDelete(deleted.map((d) => String(d.id)));
+        onNodesDelete(mutable.map((d) => String(d.id)));
       } else if (onNodeDelete) {
-        for (const d of deleted) onNodeDelete(String(d.id));
+        for (const d of mutable) onNodeDelete(String(d.id));
       }
     },
     [onNodesDelete, onNodeDelete]
@@ -1296,6 +1376,11 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       // 拖回自己身上 = 取消。不拦的话会一路走到 addConnection 被拒，
       // 用户看到的是一条莫名其妙的「连接失败」提示。
       if (draft.targetId === draft.sourceId) return;
+      // S4：只读节点（幽灵引用 / 锁定）不能作为连线端点
+      const pool = stableNodesRef.current;
+      const ro = (id: string) =>
+        isReadOnlyNode(pool.find((n) => String(n.id) === id));
+      if (ro(draft.sourceId) || ro(draft.targetId)) return;
       cfg.onConnectCreate(draft.sourceId, draft.targetId, {
         source: draft.sourceAnchor,
         target: draft.targetAnchor,

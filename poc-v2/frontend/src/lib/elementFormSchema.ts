@@ -237,6 +237,25 @@ export const CONSTRAINT_SCHEMA: FormSchema = {
   ],
 };
 
+/**
+ * M17 S4：幽灵引用节点的表单 —— 仅展示，无任何可编辑语义。
+ * 字段输入在 ElementFormPanel 里对非 model 来源本来就禁用；
+ * title 明确这是 §7.26 引用，避免用户误以为能在此改名（改名要去源包）。
+ */
+export const GHOST_SCHEMA: FormSchema = {
+  nodeType: 'sysmlGhost',
+  title: '引用元素（只读）',
+  sections: [
+    {
+      key: 'basic',
+      label: '引用信息',
+      fields: [
+        { key: 'name', label: '名称', widget: 'text', required: true, help: '§7.26 引用：归属不变，改名请前往源包' },
+      ],
+    },
+  ],
+};
+
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
   sysmlPartUsage: PART_USAGE_SCHEMA,
@@ -245,6 +264,7 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlAction: ACTION_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,
   sysmlConstraint: CONSTRAINT_SCHEMA,
+  sysmlGhost: GHOST_SCHEMA,
 };
 
 /** 取 schema（fallback to Part Def） */

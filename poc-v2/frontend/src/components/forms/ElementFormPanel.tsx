@@ -109,12 +109,15 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const location = data.location as { line: number; column: number } | undefined;
 
   const isFromModel = !!location && nodeType.startsWith('sysml');
+  // M17 S4：只读三来源 —— readOnly prop / data.readOnly（协同锁）/ ghost 引用节点
+  const effectiveReadOnly =
+    readOnly || data.readOnly === true || nodeType === 'sysmlGhost';
   const issue = pipeline.validationIssues.find(
     (i) => (i as { elementId?: string }).elementId === selectedNode.id
   );
 
   const handleFieldChange = (fieldKey: string, value: string | boolean) => {
-    if (readOnly || !isFromModel) return;
+    if (effectiveReadOnly || !isFromModel) return;
     const result = applyFieldEdit(
       useModelStore.getState().content,
       pipeline.model,
@@ -127,7 +130,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   };
 
   const handleListAdd = (sectionKey: SectionKey, item: ListItem) => {
-    if (readOnly || !isFromModel) return;
+    if (effectiveReadOnly || !isFromModel) return;
     const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
     const result = applyListEdit(
       useModelStore.getState().content,
@@ -139,7 +142,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   };
 
   const handleListRemove = (sectionKey: SectionKey, item: ListItem) => {
-    if (readOnly || !isFromModel) return;
+    if (effectiveReadOnly || !isFromModel) return;
     const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
     const result = applyListEdit(
       useModelStore.getState().content,
@@ -152,7 +155,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
 
   // M16 P5/Q4：接线 reverseSerialize 已有但一直未接的 `update` op（行内改名/改类型）
   const handleListUpdate = (sectionKey: SectionKey, old: ListItem, next: ListItem) => {
-    if (readOnly || !isFromModel) return;
+    if (effectiveReadOnly || !isFromModel) return;
     const kind = sectionKey === 'attributes' ? 'attribute' : 'port';
     const result = applyListEdit(
       useModelStore.getState().content,
@@ -206,12 +209,21 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
               📝 文本模式
             </span>
           )}
-          {readOnly && (
-            <span className="inline-block rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+          {effectiveReadOnly && (
+            <span
+              className="inline-block rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+              data-testid="form-readonly"
+            >
               只读
             </span>
           )}
         </div>
+        {/* S4：幽灵节点显示来源包 */}
+        {nodeType === 'sysmlGhost' && typeof data.sourcePackage === 'string' && (
+          <div className="-mt-2 mb-3 text-[10px] text-gray-400">
+            来源：{data.sourcePackage}（归属不变）
+          </div>
+        )}
 
         {/* 各 section */}
         {schema.sections.map((section) => (
@@ -237,7 +249,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
                 onAdd={(item) => handleListAdd(section.key, item)}
                 onRemove={(item) => handleListRemove(section.key, item)}
                 onUpdate={(old, next) => handleListUpdate(section.key, old, next)}
-                disabled={readOnly || !isFromModel}
+                disabled={effectiveReadOnly || !isFromModel}
               />
             ) : (
               <div className="space-y-2">
@@ -247,7 +259,7 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
                     field={field}
                     value={data[field.key] ?? ''}
                     onChange={(v) => handleFieldChange(field.key, v)}
-                    disabled={readOnly || !isFromModel}
+                    disabled={effectiveReadOnly || !isFromModel}
                   />
                 ))}
               </div>

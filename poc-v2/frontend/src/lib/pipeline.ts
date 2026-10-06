@@ -15,6 +15,7 @@ import type { ValidationIssue } from '@validator/validator';
 import type { Node, Edge } from '@xyflow/react';
 import type { NodePosition } from '../stores/layoutStore';
 import { stableKeyOf } from '@transform/stableKey';
+import type { ExposedExternal } from '@transform/modelToFlow';
 
 export interface PipelineResult {
   parseErrors: ParseError[];
@@ -24,6 +25,11 @@ export interface PipelineResult {
   edges: Edge[];
   layoutMs?: number;
   layoutEngine?: 'grid' | 'elk';
+  /**
+   * M17 S3：nodes/edges 为上一次成功解析的陈旧图（本次 parse 失败，
+   * 画布保留上一次成功结果而非清空）。
+   */
+  stale?: boolean;
 }
 
 export const EMPTY_MODEL: SysMLModel = {
@@ -53,10 +59,12 @@ export const EMPTY_PIPELINE: PipelineResult = {
  *
  * @param text           SysML v2 源文本
  * @param userPositions  节点位置覆盖（nodeId → {x,y}）；undefined 表示不覆盖
+ * @param exposed        M17 S4：视图会话的跨包 expose 元素（渲染为只读幽灵节点）
  */
 export function runPipeline(
   text: string,
   userPositions?: Record<string, NodePosition>,
+  exposed?: ExposedExternal[],
 ): PipelineResult {
   const t0 = performance.now();
   let parseErrors: ParseError[] = [];
@@ -74,7 +82,7 @@ export function runPipeline(
     validationIssues = v.issues;
 
     if (parseErrors.length === 0) {
-      const f = modelToFlow(model);
+      const f = modelToFlow(model, exposed);
       nodes = f.nodes;
       edges = f.edges;
     }
