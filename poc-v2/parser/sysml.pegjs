@@ -72,6 +72,19 @@
     };
   }
 
+  // M17 S5a：item / attribute / interface 三类结构定义共用构造
+  function makeStructureDef(kind, loc, name, isAbstract, spec, body) {
+    return {
+      kind,
+      id: nextId(kind),
+      name,
+      isAbstract: isAbstract || undefined,
+      inherits: spec || undefined,
+      body,
+      location: locationOf(loc),
+    };
+  }
+
   /**
    * 从 rendering usage 的名字推断渲染方式。
    *
@@ -251,6 +264,9 @@ NamespaceOrTopLevel
   / ConnectStatement
   / PartDef
   / PortDef
+  / ItemDef
+  / AttributeDef
+  / InterfaceDef
   / PartUsage
   / PortUsage
   / Attribute
@@ -495,7 +511,7 @@ Package
     }
 
 QualifiedNames
-  = head:QualifiedName tail:(WS "," WS q:QualifiedName { return q; })*
+  = head:QualifiedName tail:(WS? "," WS? q:QualifiedName { return q; })*
     { return [head, ...tail]; }
 
 // M16 P1：视图/视角是普通包成员（官方所有完整示例都把 view 写在包内）
@@ -508,6 +524,9 @@ PackageMember
     / ViewpointDecl
     / PartDef
     / PortDef
+    / ItemDef
+    / AttributeDef
+    / InterfaceDef
     / PartUsage
     / PortUsage
     / Attribute
@@ -593,7 +612,14 @@ PartDefBody
   / _ ";" { return []; }
 
 PartBodyMember
-  = PartUsage
+  // M17 S5a：嵌套定义（§Q1 —— def 内可拥有内联子定义）
+  = PartDef
+  / PortDef
+  / ItemDef
+  // AttributeDef 必须排在 Attribute 前（`attribute def X` vs `attribute x : T`）
+  / AttributeDef
+  / InterfaceDef
+  / PartUsage
   / PortUsageWithDir
   / AttributeWithDir
   / PortUsage
@@ -603,6 +629,30 @@ PartBodyMember
   / DocStatement
   / EnumDef
   / CommentBlock
+
+// ─── Structure Definitions（M17 S5a：item / attribute / interface）───────
+
+ItemDef
+  = isAbstract:(AbstractKw WS)? "item" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('itemDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+// ⚠️ `"def" !IdentifierChar` 守卫：`attribute defX : T;`（defX 是标识符）
+// 必须回落到 Attribute usage 规则，而不是把 def 吃成关键字。
+AttributeDef
+  = isAbstract:(AbstractKw WS)? "attribute" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('attributeDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+InterfaceDef
+  = isAbstract:(AbstractKw WS)? "interface" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('interfaceDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+StructureDefSpec
+  = WS (":>" / ":") WS inh:QualifiedNames { return inh; }
+
+// body 与 part def 同规则（PartBodyMember）；`;` 为空体
+StructureDefBody
+  = OPEN _ members:(_ PartBodyMember)* CLOSE { return members.map(m => m[1]); }
+  / _ ";" { return []; }
 
 // ─── Port Definition ───────────────────────────────────────────────────
 
@@ -983,6 +1033,10 @@ Direction
 
 Identifier
   = $([a-zA-Z_][a-zA-Z0-9_]*)
+
+// M17 S5a：标识符字符（关键字 "def" 的边界守卫用）
+IdentifierChar
+  = [a-zA-Z0-9_]
 
 QualifiedName
   = head:Identifier tail:(_ "::" _ Identifier)* { return [head, ...tail.map(t => t[3])].join('::'); }

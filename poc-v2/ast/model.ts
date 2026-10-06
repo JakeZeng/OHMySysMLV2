@@ -65,6 +65,7 @@ export type NamespaceMember =
   | SysMLViewpoint
   | PartDefinition
   | PortDefinition
+  | StructureDefinition
   | PartUsage
   | PortUsage
   | AttributeUsage
@@ -138,7 +139,28 @@ export interface PortDefinition extends SysMLNode {
   body: PortBodyMember[];
 }
 
-export type PartBodyMember = AttributeUsage | PortUsage;
+/**
+ * M17 S5a：item / attribute / interface 三类结构定义。
+ * 与 part def 同构（特化 + body），仅 kind 不同。
+ */
+export type StructureDefinitionKind = 'itemDef' | 'attributeDef' | 'interfaceDef';
+export interface StructureDefinition extends SysMLNode {
+  kind: StructureDefinitionKind;
+  name: string;
+  isAbstract?: boolean;
+  inherits?: string[];
+  body: PartBodyMember[];
+}
+
+export type PartBodyMember =
+  | AttributeUsage
+  | PortUsage
+  | PartDefinition
+  | PortDefinition
+  | StructureDefinition
+  | EnumDefinition
+  | DocMember
+  | CommentBlock;
 export type PortBodyMember = AttributeUsage | PortUsage;
 
 // ─── Usage ──────────────────────────────────────────────────────────────

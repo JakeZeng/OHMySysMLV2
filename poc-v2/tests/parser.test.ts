@@ -734,6 +734,58 @@ alias FS for FreeStanding;`);
     expect((r.model.packages[0].members.find((m) => m.kind === 'alias') as any).target)
       .toBe('Some::Long::Name');
   });
+
+  it('47. item def：包级 + body 成员（M17 S5a）', () => {
+    const r = parse('package P { item def I { attribute x : Real; port p : Q; } }');
+    expect(r.ok).toBe(true);
+    const item = r.model.packages[0].members.find((m) => m.kind === 'itemDef') as any;
+    expect(item.name).toBe('I');
+    expect(item.body.map((b: any) => b.kind)).toEqual(['attributeUsage', 'portUsage']);
+    // 无 body 的分号形式
+    expect(parse('package P { item def I; }').ok).toBe(true);
+  });
+
+  it('48. attribute def：def/usage 边界守卫，不误吃 attribute usage（M17 S5a）', () => {
+    const r = parse(`package P {
+      attribute def A { attribute y : Integer; }
+      attribute z : Real;
+    }`);
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m) => m.kind);
+    expect(kinds).toContain('attributeDef');
+    expect(kinds).toContain('attributeUsage');
+    // `attribute defX`（def 后紧跟标识符字符）必须按 usage 解析失败，而非 def
+    const bad = parse('package P { attribute defX {} }');
+    expect(bad.ok).toBe(false);
+  });
+
+  it('49. interface def + abstract / 特化（M17 S5a）', () => {
+    const r = parse('package P { abstract interface def S :> Base, Mix { port p : Q; } }');
+    expect(r.ok).toBe(true);
+    const iface = r.model.packages[0].members.find((m) => m.kind === 'interfaceDef') as any;
+    expect(iface.name).toBe('S');
+    expect(iface.isAbstract).toBe(true);
+    expect(iface.inherits).toEqual(['Base', 'Mix']);
+  });
+
+  it('50. part def body 内嵌套 def：part/port/item/attribute/interface（M17 S5a）', () => {
+    const r = parse(`package P { part def B {
+      part def Inner {}
+      port def Pin {}
+      item def It {}
+      attribute def At {}
+      interface def Ifc {}
+    } }`);
+    expect(r.ok).toBe(true);
+    const b = r.model.packages[0].members.find((m) => m.kind === 'partDef') as any;
+    expect(b.body.map((m: any) => m.kind)).toEqual([
+      'partDef',
+      'portDef',
+      'itemDef',
+      'attributeDef',
+      'interfaceDef',
+    ]);
+  });
 });
 
 describe('Parser - 错误处理', () => {

@@ -498,6 +498,46 @@ const ConstraintBlockNode: React.FC<NodeProps> = ({ data, selected }) => {
 const MemoConstraintBlockNode = React.memo(ConstraintBlockNode);
 
 /**
+ * M17 S5a：item def / attribute def / interface def —— 与 part def 同构的
+ * 结构定义（特化 + body），用 data.kind 区分配色与构造型标签，单一组件渲染。
+ */
+const STRUCTURE_DEF_VISUAL: Readonly<
+  Record<string, { bg: string; bgSelected: string; border: string; borderSelected: string; stereo: string }>
+> = {
+  itemDef: { bg: '#f9f0ff', bgSelected: '#efdbff', border: '#722ed1', borderSelected: '#531dab', stereo: 'item def' },
+  attributeDef: { bg: '#f0f5ff', bgSelected: '#d6e4ff', border: '#2f54eb', borderSelected: '#1d39c4', stereo: 'attribute def' },
+  interfaceDef: { bg: '#e6fffb', bgSelected: '#87e8de', border: '#08979c', borderSelected: '#006d75', stereo: 'interface def' },
+};
+const StructureDefNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData;
+  const v = STRUCTURE_DEF_VISUAL[String(d.kind ?? '')] ?? STRUCTURE_DEF_VISUAL.itemDef;
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? v.bgSelected : v.bg,
+        border: `2px solid ${selected ? v.borderSelected : v.border}`,
+        borderRadius: '4px',
+        padding: '8px 12px',
+        minWidth: '160px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        transition: 'background 0.1s',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: v.border, width: 8, height: 8 }} />
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        «{v.stereo}»
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: v.border, width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoStructureDefNode = React.memo(StructureDefNode);
+
+/**
  * M17 S4：跨包 expose 的只读幽灵节点（§7.26 引用，非拷贝）。
  *
  * 视觉三要素刻意与 owned 节点拉开：虚线边框 / 半透明 / 「引用」角标。
@@ -569,6 +609,9 @@ const nodeTypes = {
   sysmlPartUsage: MemoPartUsageNode,
   sysmlPortDef: MemoPortDefNode,
   sysmlPort: MemoPortNode,
+  sysmlItemDef: MemoStructureDefNode,
+  sysmlAttributeDef: MemoStructureDefNode,
+  sysmlInterfaceDef: MemoStructureDefNode,
   sysmlState: MemoStateNode,
   sysmlAction: MemoActionNode,
   sysmlRequirement: MemoRequirementNode,

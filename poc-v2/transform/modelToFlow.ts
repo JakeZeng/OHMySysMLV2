@@ -22,6 +22,7 @@ import type {
   PartUsage,
   PortDefinition,
   PortUsage,
+  StructureDefinition,
   SysMLModel,
   StateMachine,
   Activity,
@@ -115,6 +116,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // 而 stableKey 正是靠它跨文本编辑保持稳定（见 transform/stableKey.ts）。
   const partDefs: Q<PartDefinition>[] = [];
   const portDefs: Q<PortDefinition>[] = [];
+  const structureDefs: Q<StructureDefinition>[] = [];
   const partUsages: Q<PartUsage>[] = [];
   const connections: Q<Connection>[] = [];
   const stateMachines: Q<StateMachine>[] = [];
@@ -123,15 +125,15 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   const constraintBlocks: Q<ConstraintBlock>[] = [];
 
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
-    collectMembers(v, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   for (const vp of model.viewpoints ?? []) {
-    collectMembers(vp, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
@@ -170,6 +172,12 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   for (const { node: portDef, qname } of portDefs) {
     const id = `portdef:${portDef.id}`;
     nodes.push(makePortDefNode(id, portDef, keys.alloc(elementKeyBase('portDef', qname))));
+  }
+  // M17 S5a：item / attribute / interface def
+  for (const { node: sd, qname } of structureDefs) {
+    const id = `sd:${sd.id}`;
+    nodes.push(makeStructureDefNode(id, sd, keys.alloc(elementKeyBase(sd.kind, qname))));
+    partToPortIds.set(id, collectPortNodes(nodes, sd.body, id, qname, keys));
   }
 
   // 3b. 节点构造（M5 状态机）
@@ -542,9 +550,33 @@ function makePortDefNode(id: string, pd: PortDefinition, stableKey: string): Nod
   };
 }
 
+// M17 S5a
+const STRUCTURE_DEF_NODE_TYPE: Readonly<Record<string, string>> = {
+  itemDef: 'sysmlItemDef',
+  attributeDef: 'sysmlAttributeDef',
+  interfaceDef: 'sysmlInterfaceDef',
+};
+
+function makeStructureDefNode(id: string, sd: StructureDefinition, stableKey: string): Node {
+  return {
+    id,
+    type: STRUCTURE_DEF_NODE_TYPE[sd.kind] ?? 'sysmlItemDef',
+    position: { x: 0, y: 0 },
+    data: {
+      label: sd.name,
+      kind: sd.kind,
+      isAbstract: !!sd.isAbstract,
+      portCount: sd.body.filter((b) => b.kind === 'portUsage').length,
+      attrCount: sd.body.filter((b) => b.kind === 'attributeUsage').length,
+      location: sd.location,
+      stableKey,
+    },
+  };
+}
+
 function collectPortNodes(
   out: Node[],
-  body: PartDefinition['body'] | PartUsage['body'],
+  body: PartDefinition['body'] | PartUsage['body'] | StructureDefinition['body'],
   parentId: string,
   ownerQName: string,
   keys: StableKeys
@@ -655,6 +687,7 @@ function collectMembers(
   ns: { name?: string; members: any[] },
   partDefs: Q<PartDefinition>[],
   portDefs: Q<PortDefinition>[],
+  structureDefs: Q<StructureDefinition>[],
   partUsages: Q<PartUsage>[],
   connections: Q<Connection>[],
   stateMachines?: Q<StateMachine>[],
@@ -675,11 +708,16 @@ function collectMembers(
       case 'portDef':
         portDefs.push({ node: m, qname });
         break;
+      case 'itemDef':
+      case 'attributeDef':
+      case 'interfaceDef':
+        structureDefs.push({ node: m, qname });
+        break;
       case 'partUsage':
         partUsages.push({ node: m, qname });
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
+        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
         break;
       case 'connection':
         connections.push({ node: m, qname });

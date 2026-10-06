@@ -58,6 +58,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   package: [
     'partDef',
     'portDef',
+    'itemDef',
+    'attributeDef',
+    'interfaceDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -68,6 +71,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   viewDef: [
     'partDef',
     'portDef',
+    'itemDef',
+    'attributeDef',
+    'interfaceDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -78,6 +84,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   viewpoint: [
     'partDef',
     'portDef',
+    'itemDef',
+    'attributeDef',
+    'interfaceDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -85,7 +94,19 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'constraintDef',
     'enumDef',
   ],
-  partDef: ['partUsage', 'portUsage', 'attributeUsage', 'enumDef'],
+  // M17 S5a：PartBodyMember 接受嵌套 def（PartDef / PortDef / ItemDef /
+  // AttributeDef / InterfaceDef）+ 既有 usage / enum。
+  partDef: [
+    'partDef',
+    'portDef',
+    'itemDef',
+    'attributeDef',
+    'interfaceDef',
+    'partUsage',
+    'portUsage',
+    'attributeUsage',
+    'enumDef',
+  ],
   portDef: ['portUsage', 'attributeUsage'],
   stateMachine: ['state', 'initialState', 'finalState', 'transition'],
   // 活动成员是 `action n;` / `flow ...`，palette 的 actionDef 生成的是
@@ -110,6 +131,10 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlPartUsage: null,
   sysmlPortDef: 'portDef',
   sysmlPort: null,
+  // S5a：三类结构 def 的 body 复用 PartBodyMember 产生式 → partDef 容器
+  sysmlItemDef: 'partDef',
+  sysmlAttributeDef: 'partDef',
+  sysmlInterfaceDef: 'partDef',
   sysmlState: null,
   sysmlAction: null,
   sysmlRequirement: null,

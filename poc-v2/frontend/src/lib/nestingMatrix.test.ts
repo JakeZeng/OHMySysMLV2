@@ -63,10 +63,13 @@ describe('nestingMatrix — 矩阵不变量', () => {
     }
   });
 
-  it('12 项在某处可用（8 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
+  it('15 项在某处可用（11 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
     const expectedSupported: readonly PaletteKind[] = [
       'partDef',
       'portDef',
+      'itemDef',
+      'attributeDef',
+      'interfaceDef',
       'partUsage',
       'portUsage',
       'attributeUsage',
@@ -89,6 +92,9 @@ describe('nestingMatrix — containerOfNode / containerOfScope', () => {
     expect(containerOfNode('sysmlPartDef')).toBe('partDef');
     expect(containerOfNode('sysmlPortDef')).toBe('portDef');
     expect(containerOfNode('sysmlConstraint')).toBe('constraintBlock');
+    expect(containerOfNode('sysmlItemDef')).toBe('partDef');
+    expect(containerOfNode('sysmlAttributeDef')).toBe('partDef');
+    expect(containerOfNode('sysmlInterfaceDef')).toBe('partDef');
     expect(containerOfNode('sysmlPartUsage')).toBeNull();
     expect(containerOfNode('sysmlPort')).toBeNull();
     expect(containerOfNode('sysmlState')).toBeNull();
@@ -119,13 +125,13 @@ describe('nestingMatrix — unsupportedReason', () => {
   });
 
   it('语法未支持元素 → 说明后续扩展', () => {
-    expect(unsupportedReason('package', 'itemDef')).toContain('语法版本');
+    expect(unsupportedReason('package', 'occurrenceDef')).toContain('语法版本');
     expect(unsupportedReason('partDef', 'allocation')).toContain('语法版本');
   });
 
   it('可用于别处但不能放入当前容器 → 列出可用位置', () => {
-    const reason = unsupportedReason('partDef', 'partDef');
-    expect(reason).toContain('零件定义');
+    const reason = unsupportedReason('portDef', 'partDef');
+    expect(reason).toContain('端口定义');
     expect(reason).toContain('包');
   });
 });

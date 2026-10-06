@@ -625,7 +625,7 @@ describe('modelStore - createNodeFromPalette parse 守卫', () => {
     openSession('package P { part def A { } }');
     const before = useModelStore.getState();
     const r = useModelStore.getState().createNodeFromPalette(
-      'item def BadThing { }',
+      'part def { }',
       'BadThing',
     );
     expect(r.ok).toBe(false);

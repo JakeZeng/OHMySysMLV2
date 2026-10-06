@@ -256,10 +256,30 @@ export const GHOST_SCHEMA: FormSchema = {
   ],
 };
 
+/** M17 S5a：三类结构定义与 part def 同构，仅标题/nodeType 不同。 */
+const ITEM_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlItemDef',
+  title: 'Item Def（项定义）',
+};
+const ATTRIBUTE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlAttributeDef',
+  title: 'Attribute Def（属性定义）',
+};
+const INTERFACE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlInterfaceDef',
+  title: 'Interface Def（接口定义）',
+};
+
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
   sysmlPartUsage: PART_USAGE_SCHEMA,
   sysmlPortDef: PORT_DEF_SCHEMA,
+  sysmlItemDef: ITEM_DEF_SCHEMA,
+  sysmlAttributeDef: ATTRIBUTE_DEF_SCHEMA,
+  sysmlInterfaceDef: INTERFACE_DEF_SCHEMA,
   sysmlState: STATE_SCHEMA,
   sysmlAction: ACTION_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,

@@ -32,6 +32,7 @@ import type {
   PartUsage,
   PortDefinition,
   PortUsage,
+  StructureDefinition,
   SourceLocation,
   SysMLModel,
   StateMachine,
@@ -109,7 +110,7 @@ export interface ValidationResult {
 // ─── 符号表 ────────────────────────────────────────────────────────────
 
 interface TypeSymbol {
-  kind: 'partDef' | 'portDef';
+  kind: 'partDef' | 'portDef' | 'itemDef' | 'attributeDef' | 'interfaceDef';
   name: string;
   qualifiedName: string;
   location: SourceLocation;
@@ -137,12 +138,19 @@ interface Scope {
   packages: Map<string, Package>;
   partDefs: Map<string, TypeSymbol>;
   portDefs: Map<string, TypeSymbol>;
+  /** M17 S5a：item def / attribute def / interface def */
+  structureDefs: Map<string, TypeSymbol>;
   partUsages: Map<string, PartSymbol>;
   /**
    * 每个包自己的 import 列表（按包限定名索引）。
    * 用于在本包内把裸名解析到被导入的命名空间成员。
    */
   imports: Map<string, ImportSymbol[]>;
+}
+
+/** 按限定名在三张类型表中查找（part def / port def / S5a 结构 def）。 */
+function findTypeSym(scope: Scope, qname: string): TypeSymbol | undefined {
+  return scope.partDefs.get(qname) ?? scope.portDefs.get(qname) ?? scope.structureDefs.get(qname);
 }
 
 // ─── 内置类型 ──────────────────────────────────────────────────────────
@@ -159,6 +167,7 @@ export function validate(model: SysMLModel): ValidationResult {
     packages: new Map(),
     partDefs: new Map(),
     portDefs: new Map(),
+    structureDefs: new Map(),
     partUsages: new Map(),
     imports: new Map(),
   };
@@ -175,6 +184,9 @@ export function validate(model: SysMLModel): ValidationResult {
 
   // 第二遍：循环继承检测
   for (const [qname, sym] of scope.partDefs) {
+    detectCircularInheritance(qname, sym, scope, issues);
+  }
+  for (const [qname, sym] of scope.structureDefs) {
     detectCircularInheritance(qname, sym, scope, issues);
   }
 
@@ -214,6 +226,7 @@ export function validate(model: SysMLModel): ValidationResult {
   for (const [qname, usage] of scope.partUsages) {
     const parentSym = scope.partDefs.get(usage.typeRef) ??
       scope.portDefs.get(usage.typeRef) ??
+      scope.structureDefs.get(usage.typeRef) ??
       resolveType(scope, usage.typeRef, parentPackageOf(usage, scope));
     if (parentSym && parentSym.isAbstract) {
       issues.push({
@@ -715,6 +728,32 @@ function collectFromPackage(
         });
         break;
       }
+      case 'itemDef':
+      case 'attributeDef':
+      case 'interfaceDef': {
+        // 跨类同名也算重复（同一 Namespace 内成员名唯一，与 kind 无关）
+        const existing = scope.structureDefs.get(memberQName) ?? findTypeSym(scope, memberQName);
+        if (existing) {
+          issues.push({
+            code: 'E101_DUPLICATE_NAME',
+            message: `重复的结构定义名称：\`${m.name}\`（限定名 \`${memberQName}\`）`,
+            location: m.location,
+            severity: 'error',
+            relatedLocations: [existing.location],
+          });
+          break;
+        }
+        scope.structureDefs.set(memberQName, {
+          kind: m.kind,
+          name: m.name,
+          qualifiedName: memberQName,
+          location: m.location,
+          isAbstract: !!m.isAbstract,
+          inherits: m.inherits,
+          ports: collectPorts(m.body),
+        });
+        break;
+      }
       case 'partUsage': {
         if (scope.partUsages.has(memberQName)) {
           issues.push({
@@ -763,6 +802,9 @@ function memberName(m: NamespaceMember): string {
     case 'import': return '';            // 不参与成员名拼接
     case 'partDef': return m.name;
     case 'portDef': return m.name;
+    case 'itemDef': return m.name;
+    case 'attributeDef': return m.name;
+    case 'interfaceDef': return m.name;
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
@@ -798,9 +840,14 @@ function resolveInheritsInPackage(
     if (m.kind === 'package') {
       const memberQName = `${qualifiedName}::${m.name}`;
       resolveInheritsInPackage(m, memberQName, scope, _issues);
-    } else if (m.kind === 'partDef' || m.kind === 'portDef') {
-      const sym = scope.partDefs.get(`${qualifiedName}::${m.name}`)
-        ?? scope.portDefs.get(`${qualifiedName}::${m.name}`);
+    } else if (
+      m.kind === 'partDef' ||
+      m.kind === 'portDef' ||
+      m.kind === 'itemDef' ||
+      m.kind === 'attributeDef' ||
+      m.kind === 'interfaceDef'
+    ) {
+      const sym = findTypeSym(scope, `${qualifiedName}::${m.name}`);
       if (!sym || !m.inherits) continue;
       const resolved: string[] = [];
       for (const ref of m.inherits) {
@@ -851,7 +898,7 @@ function detectCircularInheritance(
 
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const current = chain[chain.length - 1];
-    const currentSym = scope.partDefs.get(current) ?? scope.portDefs.get(current);
+    const currentSym = findTypeSym(scope, current);
     if (!currentSym || !currentSym.inherits || currentSym.inherits.length === 0) return;
 
     const next = currentSym.inherits[0]; // M1：单继承，多继承后续支持
@@ -861,7 +908,7 @@ function detectCircularInheritance(
         message: `检测到循环继承：\`${startQName}\` → \`${next}\`（继承链成环）`,
         location: currentSym.location,
         severity: 'error',
-        relatedLocations: [scope.partDefs.get(next)?.location ?? scope.portDefs.get(next)?.location ?? currentSym.location],
+        relatedLocations: [findTypeSym(scope, next)?.location ?? currentSym.location],
       });
       return;
     }
@@ -895,10 +942,16 @@ function checkReferences(
         checkReferences(m, `${qualifiedName}::${m.name}`, scope, issues);
         break;
       case 'partDef':
-        checkPartDefBody(m, qualifiedName, scope, issues);
+        checkTypeDefBody(m, 'part def', qualifiedName, scope, issues);
         break;
       case 'portDef':
         checkPortDefBody(m, qualifiedName, scope, issues);
+        break;
+      case 'itemDef':
+      case 'attributeDef':
+      case 'interfaceDef':
+        checkTypeDefBody(m, m.kind === 'itemDef' ? 'item def' : m.kind === 'attributeDef' ? 'attribute def' : 'interface def',
+          qualifiedName, scope, issues);
         break;
       case 'partUsage':
         checkPartUsageRefs(m, qualifiedName, scope, issues);
@@ -910,8 +963,13 @@ function checkReferences(
   }
 }
 
-function checkPartDefBody(
-  def: PartDefinition,
+/**
+ * 类型定义 body 的通用检查（part def 与 S5a 三类结构 def 同构）：
+ *   1) 特化父类型必须存在；2) port :>> 重定义目标必须存在。
+ */
+function checkTypeDefBody(
+  def: PartDefinition | StructureDefinition,
+  ownerLabel: string,
   qualifiedName: string,
   scope: Scope,
   issues: ValidationIssue[]
@@ -921,13 +979,12 @@ function checkPartDefBody(
     for (const parentRef of def.inherits) {
       const found = BUILTIN_TYPES.has(parentRef)
         ? null
-        : scope.partDefs.get(parentRef) ??
-          scope.portDefs.get(parentRef) ??
+        : findTypeSym(scope, parentRef) ??
           resolveType(scope, parentRef, qualifiedName);
       if (!found) {
         issues.push({
           code: 'E102_UNDEFINED_TYPE',
-          message: `part def \`${def.name}\` 的父类型 \`${parentRef}\` 未定义`,
+          message: `${ownerLabel} \`${def.name}\` 的父类型 \`${parentRef}\` 未定义`,
           location: def.location,
           severity: 'error',
         });
@@ -980,7 +1037,7 @@ function lookupInheritedPort(
   for (const parent of inherits) {
     if (visited.has(parent)) continue;
     visited.add(parent);
-    const sym = scope.partDefs.get(parent) ?? scope.portDefs.get(parent);
+    const sym = findTypeSym(scope, parent);
     if (!sym) continue;
     const port = sym.ports.get(name);
     if (port) return { location: port.location, source: sym.qualifiedName };
@@ -1014,8 +1071,7 @@ function checkPartUsageRefs(
       // 找到父类型
       const parentRef = usage.typeRef;
       const parentSym =
-        scope.partDefs.get(parentRef) ??
-        scope.portDefs.get(parentRef) ??
+        findTypeSym(scope, parentRef) ??
         resolveType(scope, parentRef, qualifiedName);
       if (parentSym) {
         // 在父类型（及父类型的父类型）中查找
@@ -1058,7 +1114,7 @@ function checkImportTarget(
   // `import Foo;` → Foo 必须是已知的 package
   // `import Foo::*;` / `import Foo::**;` → 同上（剥离后缀）
   const ns = stripImportSuffix(imp.namespace);
-  if (!scope.packages.has(ns) && !scope.partDefs.has(ns) && !scope.portDefs.has(ns)) {
+  if (!scope.packages.has(ns) && !scope.partDefs.has(ns) && !scope.portDefs.has(ns) && !scope.structureDefs.has(ns)) {
     // 仅当命名空间前导段未找到时报错
     if (!scope.packages.has(ns)) {
       issues.push({
@@ -1096,11 +1152,18 @@ function resolveType(
   if (exact) return exact;
   const portExact = scope.portDefs.get(ref);
   if (portExact) return portExact;
+  const structureExact = scope.structureDefs.get(ref);
+  if (structureExact) return structureExact;
 
-  // 2. 裸名：在当前包内查找同名 PartDef
+  // 2. 裸名：在当前包内查找同名类型定义
   if (!ref.includes('::')) {
     const pkgPrefix = currentQualifiedName + '::';
     for (const [qname, sym] of scope.partDefs) {
+      if (qname.startsWith(pkgPrefix) && qname.substring(pkgPrefix.length) === ref) {
+        return sym;
+      }
+    }
+    for (const [qname, sym] of scope.structureDefs) {
       if (qname.startsWith(pkgPrefix) && qname.substring(pkgPrefix.length) === ref) {
         return sym;
       }
@@ -1121,7 +1184,8 @@ function resolveType(
           ? imp.namespace.slice(0, -3)
           : imp.namespace;
         const candidate = `${ns}::${ref}`;
-        const found = scope.partDefs.get(candidate) ?? scope.portDefs.get(candidate);
+        const found = scope.partDefs.get(candidate) ?? scope.portDefs.get(candidate) ??
+          scope.structureDefs.get(candidate);
         if (found) return found;
         // 命名空间本身是嵌套包：把子包加入检查队列
         for (const subPkg of scope.packages.keys()) {
@@ -1231,6 +1295,7 @@ function collectVisiblePorts(
     const resolved =
       scope.partDefs.get(usageTypeRef) ??
       scope.portDefs.get(usageTypeRef) ??
+      scope.structureDefs.get(usageTypeRef) ??
       resolveType(scope, usageTypeRef, parentPackageOf(sym, scope));
     if (resolved && !parents.includes(resolved.qualifiedName)) {
       parents.push(resolved.qualifiedName);
@@ -1239,8 +1304,7 @@ function collectVisiblePorts(
   for (const parent of parents) {
     if (visited.has(parent)) continue;
     visited.add(parent);
-    const parentSym =
-      scope.partDefs.get(parent) ?? scope.portDefs.get(parent);
+    const parentSym = findTypeSym(scope, parent);
     if (!parentSym) continue;
     const inherited = collectVisiblePorts(scope, parentSym, visited, depth + 1);
     for (const [name, p] of inherited) {
@@ -1478,7 +1542,7 @@ function validateConstraintBlock(
   // E206: 约束参数类型必须存在
   for (const param of cb.parameters) {
     if (!BUILTIN_TYPES.has(param.typeRef)) {
-      const typeSym = scope.partDefs.get(param.typeRef) ?? scope.portDefs.get(param.typeRef);
+      const typeSym = findTypeSym(scope, param.typeRef);
       if (!typeSym) {
         issues.push({
           code: 'E206_CONSTRAINT_PARAM_TYPE_NOT_FOUND',
@@ -1549,6 +1613,11 @@ function collectPartUsageTypeRefsInMember(m: NamespaceMember, out: Set<string>):
       for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
       break;
     case 'portDef':
+      for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
+      break;
+    case 'itemDef':
+    case 'attributeDef':
+    case 'interfaceDef':
       for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
       break;
     default:
