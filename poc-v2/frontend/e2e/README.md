@@ -68,6 +68,14 @@ npx playwright test m16-p5-screenshots --reporter=line
    Monaco 还是懒加载，单独给 30s。
 3. **调色板置灰用 `aria-disabled` 不是 HTML `disabled`** —— Playwright 的
    actionability 会跳过真 disabled 元素，`dragTo` 会静默超时。
+4. **断言编辑结果要「先保存再 API 回读」**，两条理由：
+   - 应用是脏状态，不保存就不落库，直接 GET 拿到的是保存前的内容，
+     会把「操作成功了」误判成「没生效」。
+   - **Monaco 是虚拟化的**，`innerText` 只吐视口内的行。实测编辑器里明明有
+     `transition Off to On;`，`innerText` 却只返回那一行。整篇文档必须走 API。
+5. **别并发跑两个 `playwright test`** —— 它们抢同一个
+   `test-results/.playwright-artifacts-0`，trace/video 互相删，失败信息全是
+   `ENOENT`，完全没法排查。串行跑。
 
 ## 已知限制
 
