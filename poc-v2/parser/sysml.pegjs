@@ -269,6 +269,9 @@ NamespaceOrTopLevel
   / ConnectionDef
   / AttributeDef
   / InterfaceDef
+  / ActionDefinition
+  / StateDefinition
+  / CalcDefinition
   / PartUsage
   / PortUsage
   / Attribute
@@ -531,6 +534,9 @@ PackageMember
     / ConnectionDef
     / AttributeDef
     / InterfaceDef
+    / ActionDefinition
+    / StateDefinition
+    / CalcDefinition
     / PartUsage
     / PortUsage
     / Attribute
@@ -625,6 +631,10 @@ PartBodyMember
   // AttributeDef 必须排在 Attribute 前（`attribute def X` vs `attribute x : T`）
   / AttributeDef
   / InterfaceDef
+  // S5c：行为定义同样可内联嵌套（`state` usage 不在 part body 里，无歧义）
+  / ActionDefinition
+  / StateDefinition
+  / CalcDefinition
   / PartUsage
   / PortUsageWithDir
   / AttributeWithDir
@@ -659,6 +669,24 @@ OccurrenceDef
 ConnectionDef
   = isAbstract:(AbstractKw WS)? "connection" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
     { return makeStructureDef('connectionDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+// ─── Behavior Definitions（M17 S5c：action / state / calc def）──────────
+//
+// ⚠️ AST kind 刻意用 'actionDefinition' / 'stateDefinition'：既有 kind
+// 'actionDef' / 'stateDef' 已被 activity/state-machine 内的 **usage**
+// （`action n;` / `state s;`）占用，不能复用。
+// ⚠️ `"def" !IdentifierChar` 守卫：`action defX;` 必须回落到 usage 解析。
+ActionDefinition
+  = isAbstract:(AbstractKw WS)? "action" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('actionDefinition', location().start.offset, name, !!isAbstract, spec, body); }
+
+StateDefinition
+  = isAbstract:(AbstractKw WS)? "state" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('stateDefinition', location().start.offset, name, !!isAbstract, spec, body); }
+
+CalcDefinition
+  = isAbstract:(AbstractKw WS)? "calc" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('calcDefinition', location().start.offset, name, !!isAbstract, spec, body); }
 
 StructureDefSpec
   = WS (":>" / ":") WS inh:QualifiedNames { return inh; }

@@ -140,15 +140,22 @@ export interface PortDefinition extends SysMLNode {
 }
 
 /**
- * M17 S5a：item / attribute / interface 三类结构定义。
+ * M17 S5a/S5c：结构与行为定义。
  * 与 part def 同构（特化 + body），仅 kind 不同。
+ *
+ * ⚠️ `actionDefinition` / `stateDefinition` **不是** `actionDef` / `stateDef`：
+ * 后两个 kind 已被 activity / state-machine 内的 usage（`action n;` / `state s;`）
+ * 占用（见下方 StateDefinition / ActionDefinition 接口）。
  */
 export type StructureDefinitionKind =
   | 'itemDef'
   | 'attributeDef'
   | 'interfaceDef'
   | 'occurrenceDef'
-  | 'connectionDef';
+  | 'connectionDef'
+  | 'actionDefinition'
+  | 'stateDefinition'
+  | 'calcDefinition';
 export interface StructureDefinition extends SysMLNode {
   kind: StructureDefinitionKind;
   name: string;

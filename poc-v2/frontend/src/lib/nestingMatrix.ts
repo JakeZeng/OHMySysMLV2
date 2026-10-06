@@ -63,6 +63,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'connectionDef',
     'attributeDef',
     'interfaceDef',
+    'actionDef',
+    'stateDef',
+    'calcDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -78,6 +81,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'connectionDef',
     'attributeDef',
     'interfaceDef',
+    'actionDef',
+    'stateDef',
+    'calcDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -93,6 +99,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'connectionDef',
     'attributeDef',
     'interfaceDef',
+    'actionDef',
+    'stateDef',
+    'calcDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
@@ -100,8 +109,9 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'constraintDef',
     'enumDef',
   ],
-  // M17 S5a：PartBodyMember 接受嵌套 def（PartDef / PortDef / ItemDef /
-  // AttributeDef / InterfaceDef）+ 既有 usage / enum。
+  // M17 S5a/S5c：PartBodyMember 接受嵌套 def（PartDef / PortDef / ItemDef /
+  // OccurrenceDef / ConnectionDef / AttributeDef / InterfaceDef /
+  // ActionDefinition / StateDefinition / CalcDefinition）+ 既有 usage / enum。
   partDef: [
     'partDef',
     'portDef',
@@ -110,12 +120,17 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'connectionDef',
     'attributeDef',
     'interfaceDef',
+    'actionDef',
+    'stateDef',
+    'calcDef',
     'partUsage',
     'portUsage',
     'attributeUsage',
     'enumDef',
   ],
   portDef: ['portUsage', 'attributeUsage'],
+  // 状态机成员是 state / initial state / final state / transition（usage 形态）；
+  // `state def` 是 TypeDefinition，不属于状态机成员 → 不接受。
   stateMachine: ['state', 'initialState', 'finalState', 'transition'],
   // 活动成员是 `action n;` / `flow ...`，palette 的 actionDef 生成的是
   // `action def n {}`（非活动成员）→ 当前无 palette 元素可放入活动。
@@ -145,6 +160,9 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlInterfaceDef: 'partDef',
   sysmlOccurrenceDef: 'partDef',
   sysmlConnectionDef: 'partDef',
+  sysmlActionDefinition: 'partDef',
+  sysmlStateDefinition: 'partDef',
+  sysmlCalcDefinition: 'partDef',
   sysmlState: null,
   sysmlAction: null,
   sysmlRequirement: null,

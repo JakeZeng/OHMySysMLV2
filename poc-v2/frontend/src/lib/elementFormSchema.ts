@@ -282,6 +282,21 @@ const CONNECTION_DEF_SCHEMA: FormSchema = {
   nodeType: 'sysmlConnectionDef',
   title: 'Connection Def（连接定义）',
 };
+const ACTION_DEFINITION_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlActionDefinition',
+  title: 'Action Def（行为定义）',
+};
+const STATE_DEFINITION_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlStateDefinition',
+  title: 'State Def（状态类型定义）',
+};
+const CALC_DEFINITION_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlCalcDefinition',
+  title: 'Calc Def（计算定义）',
+};
 
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
@@ -292,6 +307,9 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlInterfaceDef: INTERFACE_DEF_SCHEMA,
   sysmlOccurrenceDef: OCCURRENCE_DEF_SCHEMA,
   sysmlConnectionDef: CONNECTION_DEF_SCHEMA,
+  sysmlActionDefinition: ACTION_DEFINITION_SCHEMA,
+  sysmlStateDefinition: STATE_DEFINITION_SCHEMA,
+  sysmlCalcDefinition: CALC_DEFINITION_SCHEMA,
   sysmlState: STATE_SCHEMA,
   sysmlAction: ACTION_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,

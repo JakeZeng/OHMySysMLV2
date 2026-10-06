@@ -805,6 +805,47 @@ alias FS for FreeStanding;`);
     const c = r.model.packages[0].members.find((m) => m.kind === 'connectionDef') as any;
     expect(c.inherits).toEqual(['BaseConn']);
   });
+
+  it('53. action / state / calc def 包级 + 特化（M17 S5c）', () => {
+    const r = parse(`package P {
+      action def A :> BaseAct { attribute x : Real; }
+      state def S { }
+      calc def C;
+    }`);
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m) => m.kind);
+    expect(kinds).toContain('actionDefinition');
+    expect(kinds).toContain('stateDefinition');
+    expect(kinds).toContain('calcDefinition');
+    const a = r.model.packages[0].members.find((m) => m.kind === 'actionDefinition') as any;
+    expect(a.inherits).toEqual(['BaseAct']);
+    expect(a.body.map((b: any) => b.kind)).toEqual(['attributeUsage']);
+  });
+
+  it('54. `def` 边界守卫：`action`/`state`/`calc` 的 usage 不被 def 规则吞掉（M17 S5c）', () => {
+    // 活动内的 action usage 仍是 actionDef（不是 actionDefinition）
+    const r = parse('package P { activity Act { action doIt; } }');
+    expect(r.ok).toBe(true);
+    const act = r.model.activities[0];
+    expect(act.actions.map((a: any) => a.kind)).toEqual(['actionDef']);
+    // 状态机内的 state usage 仍是 stateDef
+    const sm = parse('package P { state machine SM { state Idle; transition Idle to Done; } }');
+    expect(sm.ok).toBe(true);
+    expect(sm.model.stateMachines[0].states.map((s: any) => s.kind)).toEqual(['stateDef']);
+    // `action defX;` 不能解析成 def（defX 是标识符）
+    expect(parse('package P { activity Act { action defX; } }').ok).toBe(true);
+  });
+
+  it('55. 行为 def 可内联嵌套在 part def body（M17 S5c）', () => {
+    const r = parse('package P { part def B { action def A; state def S; calc def C; } }');
+    expect(r.ok).toBe(true);
+    const b = r.model.packages[0].members.find((m) => m.kind === 'partDef') as any;
+    expect(b.body.map((m: any) => m.kind)).toEqual([
+      'actionDefinition',
+      'stateDefinition',
+      'calcDefinition',
+    ]);
+  });
 });
 
 describe('Parser - 错误处理', () => {

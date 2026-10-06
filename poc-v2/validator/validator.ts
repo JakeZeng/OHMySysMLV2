@@ -111,7 +111,8 @@ export interface ValidationResult {
 
 interface TypeSymbol {
   kind: 'partDef' | 'portDef' | 'itemDef' | 'attributeDef' | 'interfaceDef' |
-    'occurrenceDef' | 'connectionDef';
+    'occurrenceDef' | 'connectionDef' | 'actionDefinition' | 'stateDefinition' |
+    'calcDefinition';
   name: string;
   qualifiedName: string;
   location: SourceLocation;
@@ -161,6 +162,9 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   interfaceDef: 'interface def',
   occurrenceDef: 'occurrence def',
   connectionDef: 'connection def',
+  actionDefinition: 'action def',
+  stateDefinition: 'state def',
+  calcDefinition: 'calc def',
 };
 
 // ─── 内置类型 ──────────────────────────────────────────────────────────
@@ -742,7 +746,10 @@ function collectFromPackage(
       case 'attributeDef':
       case 'interfaceDef':
       case 'occurrenceDef':
-      case 'connectionDef': {
+      case 'connectionDef':
+      case 'actionDefinition':
+      case 'stateDefinition':
+      case 'calcDefinition': {
         // 跨类同名也算重复（同一 Namespace 内成员名唯一，与 kind 无关）
         const existing = scope.structureDefs.get(memberQName) ?? findTypeSym(scope, memberQName);
         if (existing) {
@@ -819,6 +826,9 @@ function memberName(m: NamespaceMember): string {
     case 'interfaceDef': return m.name;
     case 'occurrenceDef': return m.name;
     case 'connectionDef': return m.name;
+    case 'actionDefinition': return m.name;
+    case 'stateDefinition': return m.name;
+    case 'calcDefinition': return m.name;
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
@@ -854,13 +864,7 @@ function resolveInheritsInPackage(
     if (m.kind === 'package') {
       const memberQName = `${qualifiedName}::${m.name}`;
       resolveInheritsInPackage(m, memberQName, scope, _issues);
-    } else if (
-      m.kind === 'partDef' ||
-      m.kind === 'portDef' ||
-      m.kind === 'itemDef' ||
-      m.kind === 'attributeDef' ||
-      m.kind === 'interfaceDef'
-    ) {
+    } else if (m.kind in KIND_LABEL || m.kind === 'partDef' || m.kind === 'portDef') {
       const sym = findTypeSym(scope, `${qualifiedName}::${m.name}`);
       if (!sym || !m.inherits) continue;
       const resolved: string[] = [];
@@ -966,6 +970,9 @@ function checkReferences(
       case 'interfaceDef':
       case 'occurrenceDef':
       case 'connectionDef':
+      case 'actionDefinition':
+      case 'stateDefinition':
+      case 'calcDefinition':
         checkTypeDefBody(m, KIND_LABEL[m.kind] ?? m.kind, qualifiedName, scope, issues);
         break;
       case 'partUsage':
@@ -1635,6 +1642,9 @@ function collectPartUsageTypeRefsInMember(m: NamespaceMember, out: Set<string>):
     case 'interfaceDef':
     case 'occurrenceDef':
     case 'connectionDef':
+    case 'actionDefinition':
+    case 'stateDefinition':
+    case 'calcDefinition':
       for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
       break;
     default:

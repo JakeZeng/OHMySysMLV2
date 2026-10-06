@@ -498,8 +498,9 @@ const ConstraintBlockNode: React.FC<NodeProps> = ({ data, selected }) => {
 const MemoConstraintBlockNode = React.memo(ConstraintBlockNode);
 
 /**
- * M17 S5a：item def / attribute def / interface def —— 与 part def 同构的
- * 结构定义（特化 + body），用 data.kind 区分配色与构造型标签，单一组件渲染。
+ * M17 S5a/S5c：item / attribute / interface / occurrence / connection /
+ * action / state / calc def —— 与 part def 同构的定义（特化 + body），
+ * 用 data.kind 区分配色与构造型标签，单一组件渲染。
  */
 const STRUCTURE_DEF_VISUAL: Readonly<
   Record<string, { bg: string; bgSelected: string; border: string; borderSelected: string; stereo: string }>
@@ -509,6 +510,11 @@ const STRUCTURE_DEF_VISUAL: Readonly<
   interfaceDef: { bg: '#e6fffb', bgSelected: '#87e8de', border: '#08979c', borderSelected: '#006d75', stereo: 'interface def' },
   occurrenceDef: { bg: '#fff0f6', bgSelected: '#ffadd2', border: '#c41d7f', borderSelected: '#9e1068', stereo: 'occurrence def' },
   connectionDef: { bg: '#fcffe6', bgSelected: '#e3f59b', border: '#7cb305', borderSelected: '#5b8c00', stereo: 'connection def' },
+  // S5c 行为定义：橙 / 青 / 紫红，与既有 sysmlAction / sysmlState usage 节点
+  // 的实心橙/灰刻意错开，避免「def」与「usage」视觉混淆
+  actionDefinition: { bg: '#fffbe6', bgSelected: '#ffe58f', border: '#fa8c16', borderSelected: '#d46b08', stereo: 'action def' },
+  stateDefinition: { bg: '#e6fffb', bgSelected: '#87e8de', border: '#13c2c2', borderSelected: '#08979c', stereo: 'state def' },
+  calcDefinition: { bg: '#f9f0ff', bgSelected: '#d3adf7', border: '#9254de', borderSelected: '#722ed1', stereo: 'calc def' },
 };
 const StructureDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
@@ -616,6 +622,9 @@ const nodeTypes = {
   sysmlInterfaceDef: MemoStructureDefNode,
   sysmlOccurrenceDef: MemoStructureDefNode,
   sysmlConnectionDef: MemoStructureDefNode,
+  sysmlActionDefinition: MemoStructureDefNode,
+  sysmlStateDefinition: MemoStructureDefNode,
+  sysmlCalcDefinition: MemoStructureDefNode,
   sysmlState: MemoStateNode,
   sysmlAction: MemoActionNode,
   sysmlRequirement: MemoRequirementNode,
