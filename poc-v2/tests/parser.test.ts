@@ -938,6 +938,43 @@ alias FS for FreeStanding;`);
     const g = parse('package P { item defX; }');
     expect(g.ok).toBe(false);
   });
+
+  it('62. reference usage：`:` / `:>` 特化 / 重新声明（M17 S7.2）', () => {
+    const r = parse(`package P {
+      item def T { }
+      ref a : T;
+      ref b :> T;
+      ref c : T = d;
+    }`);
+    expect(r.ok).toBe(true);
+    const members = r.model.packages[0].members;
+    expect(members.filter((m: any) => m.kind === 'referenceUsage')).toHaveLength(3);
+    const [a, b, c] = members.filter((m: any) => m.kind === 'referenceUsage');
+    // ⚠️ 调色板生成的是 `:>` 特化形式 —— 有序选择写反就会在这里挂
+    expect(a.typeRef).toBe('T');
+    expect(b.typeRef).toBe('T');
+    expect(c.typeRef).toBe('T');
+    expect(c.redefines).toBe('d');
+  });
+
+  it('63. `ref` 关键字不误吃 `refine` trace 语句（M17 S7.2 撞词回归）', () => {
+    // `"ref" WS` 里 WS 是必需空白 → `refine X by Y;` 在 WS 处失败并回落
+    const r = parse('package P { ref x : T; refine A by C; satisfy B by D; }');
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m: any) => m.kind);
+    expect(kinds).toContain('referenceUsage');
+    expect(kinds).toContain('trace');
+    // 无空白的 `refX` 不是关键字
+    expect(parse('package P { refX : T; }').ok).toBe(false);
+  });
+
+  it('64. reference usage 嵌套能力与矩阵一致（M17 S7.2）', () => {
+    expect(parse('package P { part def B { ref x : T; } }').ok).toBe(true);
+    expect(parse('package P { view def V { ref x : T; } }').ok).toBe(true);
+    expect(parse('package P { viewpoint VP { ref x : T; } }').ok).toBe(true);
+    // PortBodyMember 只收 attribute / port
+    expect(parse('package P { port def Q { ref x : T; } }').ok).toBe(false);
+  });
 });
 
 describe('Parser - 错误处理', () => {

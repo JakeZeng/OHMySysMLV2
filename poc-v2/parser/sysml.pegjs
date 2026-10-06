@@ -277,6 +277,7 @@ NamespaceOrTopLevel
   / VerificationCaseDef
   / PartUsage
   / ItemUsage
+  / ReferenceUsage
   / PortUsage
   / Attribute
   / ImportStatement
@@ -546,6 +547,7 @@ PackageMember
     / VerificationCaseDef
     / PartUsage
     / ItemUsage
+    / ReferenceUsage
     / PortUsage
     / Attribute
     / StateMachine
@@ -648,6 +650,7 @@ PartBodyMember
   / VerificationCaseDef
   / PartUsage
   / ItemUsage
+  / ReferenceUsage
   / PortUsageWithDir
   / AttributeWithDir
   / PortUsage
@@ -780,6 +783,34 @@ ItemUsage
         location: locationOf(location().start.offset),
       };
     }
+
+// ─── Reference Usage（M17 S7.2）────────────────────────────────────────
+// §7.5.8 ReferenceUsage —— `ref x : T;`，调色板生成的是 **特化** 形式
+// `ref x :> NewItem;`。
+//
+// ⚠️ 别照抄 PartUsage 的 `WS ":" WS` 写 —— PEG 是有序选择，`":"` 会先把 `:>`
+//    的冒号吃掉，导致后面 `">"` 匹配失败。这里必须复用 `UsageTypeSpec`
+//    （已经是 `WS (":>" / ":") WS` 的正确顺序）。
+//
+// ⚠️ `ref` 不是保留字。`refine` 是 trace 关系关键字，但 `TraceRel` 先整体匹配
+//    "refine"；本规则的 `"ref" WS` 里 WS 是**必需**空白，所以
+//    `refine X by Y;` 会在 WS 处失败并回落到 TraceStatement，不会被误吃。
+ReferenceUsage
+  = "ref" WS name:Identifier multiplicity:Multiplicity? typeRef:UsageTypeSpec redef:ReferenceRedeclares? _ ";"?
+    {
+      return {
+        kind: 'referenceUsage',
+        id: nextId('ref'),
+        name,
+        typeRef,
+        redefines: redef || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// 重新声明（§7.5.8）：`ref x : T = y;` —— y 是被重新声明的既有特征名
+ReferenceRedeclares
+  = _ "=" _ n:Identifier { return n; }
 
 Multiplicity
   = "[" m:MultiplicityRange "]" { return m; }

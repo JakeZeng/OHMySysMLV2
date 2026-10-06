@@ -147,6 +147,13 @@ const ITEM_USAGE_SCHEMA: FormSchema = {
   title: 'Item Usage（项用法）',
 };
 
+/** M17 S7.2：ReferenceUsage 与 PartUsage 同构（name + typeRef） */
+const REFERENCE_USAGE_SCHEMA: FormSchema = {
+  ...PART_USAGE_SCHEMA,
+  nodeType: 'sysmlReferenceUsage',
+  title: 'Reference Usage（引用用法）',
+};
+
 export const PORT_DEF_SCHEMA: FormSchema = {
   nodeType: 'sysmlPortDef',
   title: 'Port Def（端口定义）',
@@ -325,6 +332,7 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
   sysmlPartUsage: PART_USAGE_SCHEMA,
   sysmlItemUsage: ITEM_USAGE_SCHEMA,
+  sysmlReferenceUsage: REFERENCE_USAGE_SCHEMA,
   sysmlPortDef: PORT_DEF_SCHEMA,
   sysmlItemDef: ITEM_DEF_SCHEMA,
   sysmlAttributeDef: ATTRIBUTE_DEF_SCHEMA,

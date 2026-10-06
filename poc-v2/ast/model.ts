@@ -68,6 +68,7 @@ export type NamespaceMember =
   | StructureDefinition
   | PartUsage
   | ItemUsage
+  | ReferenceUsage
   | PortUsage
   | AttributeUsage
   | Connection
@@ -198,6 +199,15 @@ export interface ItemUsage extends SysMLNode {
   /** `item x :> Base;` 的特化目标（`:>` 形式） */
   inherits?: string;
   body: PartBodyMember[];
+}
+
+/** `ref sensor :> TempSensor;` —— §7.5.8 ReferenceUsage，不拥有 body */
+export interface ReferenceUsage extends SysMLNode {
+  kind: 'referenceUsage';
+  name: string;
+  typeRef: string;             // `:` 与 `:>` 都解析到这
+  /** `ref x : T = y;` 的被重新声明特征名 */
+  redefines?: string;
 }
 
 /** `port powerPort : Power` 或 port def 内的 port 字段 */

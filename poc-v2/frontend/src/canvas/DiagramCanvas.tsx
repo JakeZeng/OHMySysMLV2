@@ -257,6 +257,36 @@ const ItemUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoItemUsageNode = React.memo(ItemUsageNode);
 
+/**
+ * M17 S7.2：§7.5.8 ReferenceUsage 节点（`ref x :> T;`）。
+ * 用洋红色系 —— 与 part usage（橙）/ item usage（紫）都拉开距离。
+ */
+const ReferenceUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData;
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#ffd3eb' : '#fff0f6',
+        border: `2px solid ${selected ? '#ad1fac' : '#eb2f96'}`,
+        borderRadius: '4px',
+        padding: '8px 12px',
+        minWidth: '160px',
+        fontFamily: 'monospace',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#eb2f96', width: 8, height: 8 }} />
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        «ref» : {String(d.typeRef ?? '')}
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#eb2f96', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoReferenceUsageNode = React.memo(ReferenceUsageNode);
+
 const PortDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
   return (
@@ -650,6 +680,7 @@ const nodeTypes = {
   sysmlPartDef: MemoPartDefNode,
   sysmlPartUsage: MemoPartUsageNode,
   sysmlItemUsage: MemoItemUsageNode,
+  sysmlReferenceUsage: MemoReferenceUsageNode,
   sysmlPortDef: MemoPortDefNode,
   sysmlPort: MemoPortNode,
   sysmlItemDef: MemoStructureDefNode,

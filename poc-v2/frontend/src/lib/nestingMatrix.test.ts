@@ -63,7 +63,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
     }
   });
 
-  it('24 项在某处可用（20 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
+  it('25 项在某处可用（21 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
     const expectedSupported: readonly PaletteKind[] = [
       'partDef',
       'portDef',
@@ -77,6 +77,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
       'calcDef',
       'partUsage',
       'itemUsage',
+      'referenceUsage',
       'portUsage',
       'attributeUsage',
       'requirementDef',
@@ -113,6 +114,7 @@ describe('nestingMatrix — containerOfNode / containerOfScope', () => {
     expect(containerOfNode('sysmlAnalysisCaseDef')).toBe('partDef');
     expect(containerOfNode('sysmlVerificationCaseDef')).toBe('partDef');
     expect(containerOfNode('sysmlItemUsage')).toBeNull();
+    expect(containerOfNode('sysmlReferenceUsage')).toBeNull();
     expect(containerOfNode('sysmlPartUsage')).toBeNull();
     expect(containerOfNode('sysmlPort')).toBeNull();
     expect(containerOfNode('sysmlState')).toBeNull();
@@ -146,8 +148,9 @@ describe('nestingMatrix — unsupportedReason', () => {
     // S6 起 useCaseDef 已可用（S7 起 itemUsage / referenceUsage 会补上）
     expect(unsupportedReason('package', 'useCaseDef')).toBeUndefined();
     expect(unsupportedReason('package', 'itemUsage')).toBeUndefined();
-    // S7 起 referenceUsage / allocation 仍未开放
-    expect(unsupportedReason('package', 'referenceUsage')).toContain('语法版本');
+    expect(unsupportedReason('package', 'referenceUsage')).toBeUndefined();
+    // S7.3 起 allocation 仍未开放
+    expect(unsupportedReason('package', 'allocation')).toContain('语法版本');
     expect(unsupportedReason('partDef', 'allocation')).toContain('语法版本');
   });
 

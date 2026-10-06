@@ -21,6 +21,7 @@ import type {
   PartDefinition,
   PartUsage,
   ItemUsage,
+  ReferenceUsage,
   PortDefinition,
   PortUsage,
   StructureDefinition,
@@ -119,6 +120,8 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   const portDefs: Q<PortDefinition>[] = [];
   const structureDefs: Q<StructureDefinition>[] = [];
   const partUsages: Q<PartUsage>[] = [];
+  // M17 S7.2：reference usage 无 body，单独一个桶
+  const referenceUsages: Q<ReferenceUsage>[] = [];
   const connections: Q<Connection>[] = [];
   const stateMachines: Q<StateMachine>[] = [];
   const activities: Q<Activity>[] = [];
@@ -126,15 +129,15 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   const constraintBlocks: Q<ConstraintBlock>[] = [];
 
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
-    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   for (const vp of model.viewpoints ?? []) {
-    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
@@ -173,6 +176,11 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         : makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))),
     );
     partToPortIds.set(id, collectPortNodes(nodes, pu.body, id, qname, keys));
+  }
+  // M17 S7.2：reference usage —— 无 body，不建端口子节点
+  for (const { node: ru, qname } of referenceUsages) {
+    const id = `ru:${ru.id}`;
+    nodes.push(makeReferenceUsageNode(id, ru, keys.alloc(elementKeyBase('referenceUsage', qname))));
   }
   for (const { node: portDef, qname } of portDefs) {
     const id = `portdef:${portDef.id}`;
@@ -558,6 +566,25 @@ function makeItemUsageNode(id: string, iu: ItemUsage, stableKey: string): Node {
   };
 }
 
+/**
+ * M17 S7.2：§7.5.8 ReferenceUsage —— `ref x : T;` / `ref x :> Base;`
+ * 无 body，因此不进 partUsages 桶（那条路径会调 collectPortNodes 遍历 body）。
+ */
+function makeReferenceUsageNode(id: string, ru: ReferenceUsage, stableKey: string): Node {
+  return {
+    id,
+    type: 'sysmlReferenceUsage',
+    position: { x: 0, y: 0 },
+    data: {
+      label: ru.name,
+      kind: 'referenceUsage',
+      typeRef: ru.typeRef,
+      location: ru.location,
+      stableKey,
+    },
+  };
+}
+
 function makePortDefNode(id: string, pd: PortDefinition, stableKey: string): Node {
   return {
     id,
@@ -720,6 +747,7 @@ function collectMembers(
   portDefs: Q<PortDefinition>[],
   structureDefs: Q<StructureDefinition>[],
   partUsages: Q<PartUsage>[],
+  referenceUsages: Q<ReferenceUsage>[],
   connections: Q<Connection>[],
   stateMachines?: Q<StateMachine>[],
   activities?: Q<Activity>[],
@@ -758,8 +786,11 @@ function collectMembers(
       case 'itemUsage':
         partUsages.push({ node: m, qname });
         break;
+      case 'referenceUsage':
+        referenceUsages.push({ node: m, qname });
+        break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
+        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
         break;
       case 'connection':
         connections.push({ node: m, qname });
