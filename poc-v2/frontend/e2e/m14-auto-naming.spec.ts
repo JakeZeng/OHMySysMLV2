@@ -16,7 +16,10 @@
  *   npx playwright test e2e/m14-auto-naming --reporter=line
  */
 
-import { test, type Page, type APIRequestContext } from '@playwright/test';
+// ⚠️ `expect` 必须在这里导入：本文件早期只 import 了 `test`，下面的断言
+//    直接抛 `ReferenceError: expect is not defined` —— 用例 07 一直红着，
+//    而且报的是 ReferenceError，看起来像环境问题而不是用例问题。
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 
 const SHOT_DIR = '../docs/screenshots/m14';
 
@@ -318,7 +321,7 @@ test.describe.serial('M14 截图归档', () => {
 
     await shot(page, '07-tree-create-element-no-reload.png');
 
-    // 软断言：失败也不抛，方便 CI 报错时定位
+    // 硬断言：树里必须出现新元素，编辑器里必须能看到 part def
     expect(hasNewElem, '新元素应出现在树').toBeGreaterThan(0);
     expect(linesText).toMatch(/part\s+def/i);
   });

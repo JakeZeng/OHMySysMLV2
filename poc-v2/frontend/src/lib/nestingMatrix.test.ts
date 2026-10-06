@@ -148,13 +148,15 @@ describe('nestingMatrix — unsupportedReason', () => {
   });
 
   it('语法未支持元素 → 说明后续扩展', () => {
-    // S6 起 useCaseDef 已可用（S7 起 itemUsage / referenceUsage 会补上）
+    // S6~S7.2：use case / item usage / reference usage 都已可用
     expect(unsupportedReason('package', 'useCaseDef')).toBeUndefined();
     expect(unsupportedReason('package', 'itemUsage')).toBeUndefined();
     expect(unsupportedReason('package', 'referenceUsage')).toBeUndefined();
-    // S7.3 起 allocation 仍未开放
-    expect(unsupportedReason('package', 'allocation')).toContain('语法版本');
-    expect(unsupportedReason('partDef', 'allocation')).toContain('语法版本');
+    // S7.3：allocation 连 PaletteKind 都不再是调色板元素了 ——
+    // 它的 generate() 产出的是非法语法（§7.12 要 `allocate <src> to <tgt>;`），
+    // 语义上属于画布连线操作，条目已从 PALETTE_ITEMS 移除。
+    // 这里钉住「调色板里不再出现 allocation」。
+    expect(PALETTE_ITEMS.map((i) => i.kind)).not.toContain('allocation');
   });
 
   it('可用于别处但不能放入当前容器 → 列出可用位置', () => {
