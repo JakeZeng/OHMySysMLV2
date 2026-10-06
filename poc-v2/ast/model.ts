@@ -143,7 +143,12 @@ export interface PortDefinition extends SysMLNode {
  * M17 S5a：item / attribute / interface 三类结构定义。
  * 与 part def 同构（特化 + body），仅 kind 不同。
  */
-export type StructureDefinitionKind = 'itemDef' | 'attributeDef' | 'interfaceDef';
+export type StructureDefinitionKind =
+  | 'itemDef'
+  | 'attributeDef'
+  | 'interfaceDef'
+  | 'occurrenceDef'
+  | 'connectionDef';
 export interface StructureDefinition extends SysMLNode {
   kind: StructureDefinitionKind;
   name: string;

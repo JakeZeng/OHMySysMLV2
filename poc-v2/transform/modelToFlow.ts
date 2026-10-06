@@ -555,6 +555,8 @@ const STRUCTURE_DEF_NODE_TYPE: Readonly<Record<string, string>> = {
   itemDef: 'sysmlItemDef',
   attributeDef: 'sysmlAttributeDef',
   interfaceDef: 'sysmlInterfaceDef',
+  occurrenceDef: 'sysmlOccurrenceDef',
+  connectionDef: 'sysmlConnectionDef',
 };
 
 function makeStructureDefNode(id: string, sd: StructureDefinition, stableKey: string): Node {
@@ -711,6 +713,8 @@ function collectMembers(
       case 'itemDef':
       case 'attributeDef':
       case 'interfaceDef':
+      case 'occurrenceDef':
+      case 'connectionDef':
         structureDefs.push({ node: m, qname });
         break;
       case 'partUsage':

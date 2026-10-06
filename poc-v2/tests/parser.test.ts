@@ -786,6 +786,25 @@ alias FS for FreeStanding;`);
       'interfaceDef',
     ]);
   });
+
+  it('51. occurrence def：包级 + body + 嵌套（M17 S5b）', () => {
+    const r = parse('package P { occurrence def O { attribute t : Real; } }');
+    expect(r.ok).toBe(true);
+    const o = r.model.packages[0].members.find((m) => m.kind === 'occurrenceDef') as any;
+    expect(o.name).toBe('O');
+    expect(o.body.map((b: any) => b.kind)).toEqual(['attributeUsage']);
+    // part def body 内可嵌套
+    expect(parse('package P { part def B { occurrence def O; } }').ok).toBe(true);
+  });
+
+  it('52. connection def：分号形式 + 特化（M17 S5b），不与 connection 语句混淆', () => {
+    const r = parse('package P { connection def C :> BaseConn; connect A to B; }');
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m) => m.kind);
+    expect(kinds).toContain('connectionDef');
+    const c = r.model.packages[0].members.find((m) => m.kind === 'connectionDef') as any;
+    expect(c.inherits).toEqual(['BaseConn']);
+  });
 });
 
 describe('Parser - 错误处理', () => {

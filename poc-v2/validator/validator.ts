@@ -110,7 +110,8 @@ export interface ValidationResult {
 // ─── 符号表 ────────────────────────────────────────────────────────────
 
 interface TypeSymbol {
-  kind: 'partDef' | 'portDef' | 'itemDef' | 'attributeDef' | 'interfaceDef';
+  kind: 'partDef' | 'portDef' | 'itemDef' | 'attributeDef' | 'interfaceDef' |
+    'occurrenceDef' | 'connectionDef';
   name: string;
   qualifiedName: string;
   location: SourceLocation;
@@ -148,10 +149,19 @@ interface Scope {
   imports: Map<string, ImportSymbol[]>;
 }
 
-/** 按限定名在三张类型表中查找（part def / port def / S5a 结构 def）。 */
+/** 按限定名在三张类型表中查找（part def / port def / S5 结构 def）。 */
 function findTypeSym(scope: Scope, qname: string): TypeSymbol | undefined {
   return scope.partDefs.get(qname) ?? scope.portDefs.get(qname) ?? scope.structureDefs.get(qname);
 }
+
+/** kind → 错误文案里的关键字形态（<keyword> def）。 */
+const KIND_LABEL: Readonly<Record<string, string>> = {
+  itemDef: 'item def',
+  attributeDef: 'attribute def',
+  interfaceDef: 'interface def',
+  occurrenceDef: 'occurrence def',
+  connectionDef: 'connection def',
+};
 
 // ─── 内置类型 ──────────────────────────────────────────────────────────
 
@@ -730,7 +740,9 @@ function collectFromPackage(
       }
       case 'itemDef':
       case 'attributeDef':
-      case 'interfaceDef': {
+      case 'interfaceDef':
+      case 'occurrenceDef':
+      case 'connectionDef': {
         // 跨类同名也算重复（同一 Namespace 内成员名唯一，与 kind 无关）
         const existing = scope.structureDefs.get(memberQName) ?? findTypeSym(scope, memberQName);
         if (existing) {
@@ -805,6 +817,8 @@ function memberName(m: NamespaceMember): string {
     case 'itemDef': return m.name;
     case 'attributeDef': return m.name;
     case 'interfaceDef': return m.name;
+    case 'occurrenceDef': return m.name;
+    case 'connectionDef': return m.name;
     case 'partUsage': return m.name;
     case 'portUsage': return m.name ?? '<anon>';
     case 'attributeUsage': return m.name;
@@ -950,8 +964,9 @@ function checkReferences(
       case 'itemDef':
       case 'attributeDef':
       case 'interfaceDef':
-        checkTypeDefBody(m, m.kind === 'itemDef' ? 'item def' : m.kind === 'attributeDef' ? 'attribute def' : 'interface def',
-          qualifiedName, scope, issues);
+      case 'occurrenceDef':
+      case 'connectionDef':
+        checkTypeDefBody(m, KIND_LABEL[m.kind] ?? m.kind, qualifiedName, scope, issues);
         break;
       case 'partUsage':
         checkPartUsageRefs(m, qualifiedName, scope, issues);
@@ -1618,6 +1633,8 @@ function collectPartUsageTypeRefsInMember(m: NamespaceMember, out: Set<string>):
     case 'itemDef':
     case 'attributeDef':
     case 'interfaceDef':
+    case 'occurrenceDef':
+    case 'connectionDef':
       for (const b of m.body) collectPartUsageTypeRefsInMember(b as NamespaceMember, out);
       break;
     default:

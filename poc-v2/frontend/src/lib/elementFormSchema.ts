@@ -272,6 +272,16 @@ const INTERFACE_DEF_SCHEMA: FormSchema = {
   nodeType: 'sysmlInterfaceDef',
   title: 'Interface Def（接口定义）',
 };
+const OCCURRENCE_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlOccurrenceDef',
+  title: 'Occurrence Def（发生定义）',
+};
+const CONNECTION_DEF_SCHEMA: FormSchema = {
+  ...PART_DEF_SCHEMA,
+  nodeType: 'sysmlConnectionDef',
+  title: 'Connection Def（连接定义）',
+};
 
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
@@ -280,6 +290,8 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlItemDef: ITEM_DEF_SCHEMA,
   sysmlAttributeDef: ATTRIBUTE_DEF_SCHEMA,
   sysmlInterfaceDef: INTERFACE_DEF_SCHEMA,
+  sysmlOccurrenceDef: OCCURRENCE_DEF_SCHEMA,
+  sysmlConnectionDef: CONNECTION_DEF_SCHEMA,
   sysmlState: STATE_SCHEMA,
   sysmlAction: ACTION_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,

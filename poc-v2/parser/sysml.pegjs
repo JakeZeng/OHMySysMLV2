@@ -265,6 +265,8 @@ NamespaceOrTopLevel
   / PartDef
   / PortDef
   / ItemDef
+  / OccurrenceDef
+  / ConnectionDef
   / AttributeDef
   / InterfaceDef
   / PartUsage
@@ -525,6 +527,8 @@ PackageMember
     / PartDef
     / PortDef
     / ItemDef
+    / OccurrenceDef
+    / ConnectionDef
     / AttributeDef
     / InterfaceDef
     / PartUsage
@@ -616,6 +620,8 @@ PartBodyMember
   = PartDef
   / PortDef
   / ItemDef
+  / OccurrenceDef
+  / ConnectionDef
   // AttributeDef 必须排在 Attribute 前（`attribute def X` vs `attribute x : T`）
   / AttributeDef
   / InterfaceDef
@@ -645,6 +651,14 @@ AttributeDef
 InterfaceDef
   = isAbstract:(AbstractKw WS)? "interface" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
     { return makeStructureDef('interfaceDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+OccurrenceDef
+  = isAbstract:(AbstractKw WS)? "occurrence" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('occurrenceDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+ConnectionDef
+  = isAbstract:(AbstractKw WS)? "connection" WS "def" WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('connectionDef', location().start.offset, name, !!isAbstract, spec, body); }
 
 StructureDefSpec
   = WS (":>" / ":") WS inh:QualifiedNames { return inh; }

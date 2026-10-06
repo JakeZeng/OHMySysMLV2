@@ -507,6 +507,8 @@ const STRUCTURE_DEF_VISUAL: Readonly<
   itemDef: { bg: '#f9f0ff', bgSelected: '#efdbff', border: '#722ed1', borderSelected: '#531dab', stereo: 'item def' },
   attributeDef: { bg: '#f0f5ff', bgSelected: '#d6e4ff', border: '#2f54eb', borderSelected: '#1d39c4', stereo: 'attribute def' },
   interfaceDef: { bg: '#e6fffb', bgSelected: '#87e8de', border: '#08979c', borderSelected: '#006d75', stereo: 'interface def' },
+  occurrenceDef: { bg: '#fff0f6', bgSelected: '#ffadd2', border: '#c41d7f', borderSelected: '#9e1068', stereo: 'occurrence def' },
+  connectionDef: { bg: '#fcffe6', bgSelected: '#e3f59b', border: '#7cb305', borderSelected: '#5b8c00', stereo: 'connection def' },
 };
 const StructureDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
@@ -612,6 +614,8 @@ const nodeTypes = {
   sysmlItemDef: MemoStructureDefNode,
   sysmlAttributeDef: MemoStructureDefNode,
   sysmlInterfaceDef: MemoStructureDefNode,
+  sysmlOccurrenceDef: MemoStructureDefNode,
+  sysmlConnectionDef: MemoStructureDefNode,
   sysmlState: MemoStateNode,
   sysmlAction: MemoActionNode,
   sysmlRequirement: MemoRequirementNode,
