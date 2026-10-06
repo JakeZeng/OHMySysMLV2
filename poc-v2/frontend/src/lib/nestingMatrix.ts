@@ -67,6 +67,7 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'stateDef',
     'calcDef',
     'partUsage',
+    'itemUsage',
     'portUsage',
     'attributeUsage',
     'requirementDef',
@@ -88,6 +89,7 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'stateDef',
     'calcDef',
     'partUsage',
+    'itemUsage',
     'portUsage',
     'attributeUsage',
     'requirementDef',
@@ -109,6 +111,7 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'stateDef',
     'calcDef',
     'partUsage',
+    'itemUsage',
     'portUsage',
     'attributeUsage',
     'requirementDef',
@@ -137,6 +140,7 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'analysisCaseDef',
     'verificationCaseDef',
     'partUsage',
+    'itemUsage',
     'portUsage',
     'attributeUsage',
     'enumDef',
@@ -164,7 +168,7 @@ export const NESTING_MATRIX: Readonly<
  */
 const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>> = {
   sysmlPartDef: 'partDef',
-  sysmlPartUsage: null,
+  sysmlItemUsage: null,
   sysmlPortDef: 'portDef',
   sysmlPort: null,
   // S5a：三类结构 def 的 body 复用 PartBodyMember 产生式 → partDef 容器

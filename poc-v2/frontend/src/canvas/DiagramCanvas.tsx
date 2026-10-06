@@ -227,6 +227,36 @@ const PartUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoPartUsageNode = React.memo(PartUsageNode);
 
+/**
+ * M17 S7.1：§7.5.6 ItemUsage 节点。
+ * 与 part usage 结构同构，换成紫色系以示「非物理实体」语义区分。
+ */
+const ItemUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData;
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#efdbff' : '#f9f0ff',
+        border: `2px solid ${selected ? '#722ed1' : '#9254de'}`,
+        borderRadius: '4px',
+        padding: '8px 12px',
+        minWidth: '160px',
+        fontFamily: 'monospace',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#9254de', width: 8, height: 8 }} />
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        «item» : {String(d.typeRef ?? '')}
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#9254de', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoItemUsageNode = React.memo(ItemUsageNode);
+
 const PortDefNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData;
   return (
@@ -619,6 +649,7 @@ function isReadOnlyNode(n: Node | undefined): boolean {
 const nodeTypes = {
   sysmlPartDef: MemoPartDefNode,
   sysmlPartUsage: MemoPartUsageNode,
+  sysmlItemUsage: MemoItemUsageNode,
   sysmlPortDef: MemoPortDefNode,
   sysmlPort: MemoPortNode,
   sysmlItemDef: MemoStructureDefNode,

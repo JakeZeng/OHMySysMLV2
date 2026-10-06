@@ -67,6 +67,7 @@ export type NamespaceMember =
   | PortDefinition
   | StructureDefinition
   | PartUsage
+  | ItemUsage
   | PortUsage
   | AttributeUsage
   | Connection
@@ -170,6 +171,7 @@ export interface StructureDefinition extends SysMLNode {
 export type PartBodyMember =
   | AttributeUsage
   | PortUsage
+  | ItemUsage
   | PartDefinition
   | PortDefinition
   | StructureDefinition
@@ -185,6 +187,16 @@ export interface PartUsage extends SysMLNode {
   kind: 'partUsage';
   name: string;
   typeRef: string;             // 例如 "Car"
+  body: PartBodyMember[];
+}
+
+/** `item sensor : TempSensor;` —— §7.5.6 ItemUsage，PartUsage 的孪生兄弟 */
+export interface ItemUsage extends SysMLNode {
+  kind: 'itemUsage';
+  name: string;
+  typeRef: string;             // 例如 "TempSensor"（`:` 与 `:>` 都解析到这）
+  /** `item x :> Base;` 的特化目标（`:>` 形式） */
+  inherits?: string;
   body: PartBodyMember[];
 }
 

@@ -906,6 +906,38 @@ alias FS for FreeStanding;`);
     // 边界守卫：不能把 `use case defX;` 误吞成 def
     expect(parse('package P { use case defX; }').ok).toBe(false);
   });
+
+  it('60. item usage：包级 / 特化 / body / 嵌套（M17 S7.1）', () => {
+    const r = parse(`package P {
+      item def T { }
+      item sensor : T;
+      item special :> T;
+      item nested : T { attribute reading : Real; }
+    }`);
+    expect(r.ok).toBe(true);
+    const members = r.model.packages[0].members;
+    expect(members.map((m: any) => m.kind)).toEqual([
+      'itemDef',
+      'itemUsage',
+      'itemUsage',
+      'itemUsage',
+    ]);
+    expect(members[1].name).toBe('sensor');
+    expect(members[1].typeRef).toBe('T');
+    expect(members[2].typeRef).toBe('T'); // `:>` 特化同样解析到 typeRef
+    expect(members[3].body.map((b: any) => b.kind)).toEqual(['attributeUsage']);
+  });
+
+  it('61. item usage 可嵌套在 part def / view / viewpoint，且不被 item def 抢走（M17 S7.1）', () => {
+    expect(parse('package P { part def B { item x : T; } }').ok).toBe(true);
+    expect(parse('package P { view def V { item x : T; } }').ok).toBe(true);
+    expect(parse('package P { viewpoint VP { item x : T; } }').ok).toBe(true);
+    // PortBodyMember 只收 attribute / port → item usage 不该在那里
+    expect(parse('package P { port def Q { item x : T; } }').ok).toBe(false);
+    // `item defX;` 里的 defX 是标识符 —— item usage 规则必须有 WS 才能接住
+    const g = parse('package P { item defX; }');
+    expect(g.ok).toBe(false);
+  });
 });
 
 describe('Parser - 错误处理', () => {

@@ -276,6 +276,7 @@ NamespaceOrTopLevel
   / AnalysisCaseDef
   / VerificationCaseDef
   / PartUsage
+  / ItemUsage
   / PortUsage
   / Attribute
   / ImportStatement
@@ -544,6 +545,7 @@ PackageMember
     / AnalysisCaseDef
     / VerificationCaseDef
     / PartUsage
+    / ItemUsage
     / PortUsage
     / Attribute
     / StateMachine
@@ -645,6 +647,7 @@ PartBodyMember
   / AnalysisCaseDef
   / VerificationCaseDef
   / PartUsage
+  / ItemUsage
   / PortUsageWithDir
   / AttributeWithDir
   / PortUsage
@@ -756,6 +759,27 @@ PartUsage
 
 PartUsageBody
   = OPEN _ bs:(_ PartBodyMember)* CLOSE { return bs.map(b => b[1]); }
+
+// ─── Item Usage（M17 S7.1）──────────────────────────────────────────────
+// §7.5.6 ItemUsage —— `item x : Type;`，PartUsage 的孪生兄弟。
+//
+// ⚠️ 有序选择：`":>"` 必须排在 `":"` 前面。PEG 里 `":"` 会先把 `:>` 的冒号
+//    吃掉，导致后面 `">"` 匹配失败（这是 S7.2 ReferenceUsage 同一个坑）。
+UsageTypeSpec
+  = WS (":>" / ":") WS typeRef:QualifiedName { return typeRef; }
+
+ItemUsage
+  = "item" WS name:Identifier multiplicity:Multiplicity? typeRef:UsageTypeSpec body:PartUsageBody? _ ";"?
+    {
+      return {
+        kind: 'itemUsage',
+        id: nextId('item'),
+        name,
+        typeRef,
+        body: body || [],
+        location: locationOf(location().start.offset),
+      };
+    }
 
 Multiplicity
   = "[" m:MultiplicityRange "]" { return m; }

@@ -20,6 +20,7 @@ import type {
   Package,
   PartDefinition,
   PartUsage,
+  ItemUsage,
   PortDefinition,
   PortUsage,
   StructureDefinition,
@@ -163,10 +164,14 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     partToPortIds.set(id, collectPortNodes(nodes, pd.body, id, qname, keys));
   }
   for (const { node: pu, qname } of partUsages) {
-    const id = `pu:${pu.id}`;
+    const id = `${pu.kind === 'itemUsage' ? 'iu' : 'pu'}:${pu.id}`;
     nameToPartId.set(pu.name, id);
     nameToQName.set(pu.name, qname);
-    nodes.push(makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))));
+    nodes.push(
+      pu.kind === 'itemUsage'
+        ? makeItemUsageNode(id, pu, keys.alloc(elementKeyBase('itemUsage', qname)))
+        : makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))),
+    );
     partToPortIds.set(id, collectPortNodes(nodes, pu.body, id, qname, keys));
   }
   for (const { node: portDef, qname } of portDefs) {
@@ -535,6 +540,24 @@ function makePartUsageNode(id: string, pu: PartUsage, stableKey: string): Node {
   };
 }
 
+/** M17 S7.1：§7.5.6 ItemUsage —— `item x : Type;`，字段与 PartUsage 同构 */
+function makeItemUsageNode(id: string, iu: ItemUsage, stableKey: string): Node {
+  return {
+    id,
+    type: 'sysmlItemUsage',
+    position: { x: 0, y: 0 },
+    data: {
+      label: iu.name,
+      kind: 'itemUsage',
+      typeRef: iu.typeRef,
+      portCount: iu.body.filter((b) => b.kind === 'portUsage').length,
+      attrCount: iu.body.filter((b) => b.kind === 'attributeUsage').length,
+      location: iu.location,
+      stableKey,
+    },
+  };
+}
+
 function makePortDefNode(id: string, pd: PortDefinition, stableKey: string): Node {
   return {
     id,
@@ -730,6 +753,9 @@ function collectMembers(
         structureDefs.push({ node: m, qname });
         break;
       case 'partUsage':
+      // M17 S7.1：item usage 与 part usage 是孪生兄弟，共用同一个桶，
+      // 建节点时按 kind 分流出 sysmlItemUsage 节点类型。
+      case 'itemUsage':
         partUsages.push({ node: m, qname });
         break;
       case 'package':

@@ -140,6 +140,13 @@ export const PART_USAGE_SCHEMA: FormSchema = {
   ],
 };
 
+/** M17 S7.1：ItemUsage 与 PartUsage 同构（name + typeRef），仅标题/nodeType 不同 */
+const ITEM_USAGE_SCHEMA: FormSchema = {
+  ...PART_USAGE_SCHEMA,
+  nodeType: 'sysmlItemUsage',
+  title: 'Item Usage（项用法）',
+};
+
 export const PORT_DEF_SCHEMA: FormSchema = {
   nodeType: 'sysmlPortDef',
   title: 'Port Def（端口定义）',
@@ -317,6 +324,7 @@ const VERIFICATION_CASE_DEF_SCHEMA: FormSchema = {
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
   sysmlPartUsage: PART_USAGE_SCHEMA,
+  sysmlItemUsage: ITEM_USAGE_SCHEMA,
   sysmlPortDef: PORT_DEF_SCHEMA,
   sysmlItemDef: ITEM_DEF_SCHEMA,
   sysmlAttributeDef: ATTRIBUTE_DEF_SCHEMA,
