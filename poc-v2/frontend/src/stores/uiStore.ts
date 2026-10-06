@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand';
+import type { PaletteKind } from '../lib/insertSnippet';
 
 export type ModelingMode = 'drag' | 'text';
 
@@ -22,6 +23,12 @@ interface UIState {
   treeOrgMode: TreeOrgMode;
   /** M12：右侧属性面板是否显影 */
   propertiesPaneOpen: boolean;
+  /**
+   * M17 S3：当前正从 palette 拖出的元素 kind；未拖拽为 null。
+   * 用途：画布按矩阵实时算红/绿高亮与 dropEffect（dragover 期间
+   * dataTransfer.getData 受保护读不到值，只能走 store）。
+   */
+  paletteDragKind: PaletteKind | null;
 
   toggleSidebar: () => void;
   setSidebar: (open: boolean) => void;
@@ -30,6 +37,7 @@ interface UIState {
   setTreeOrgMode: (m: TreeOrgMode) => void;
   togglePropertiesPane: () => void;
   setPropertiesPane: (open: boolean) => void;
+  setPaletteDragKind: (kind: PaletteKind | null) => void;
 }
 
 const STORED_THEME = (() => {
@@ -68,6 +76,7 @@ export const useUIStore = create<UIState>((set) => ({
   modelingMode: STORED_MODELING_MODE,
   treeOrgMode: STORED_TREE_ORG_MODE,
   propertiesPaneOpen: true,
+  paletteDragKind: null,
 
   toggleSidebar() {
     set((s) => ({ sidebarOpen: !s.sidebarOpen }));
@@ -110,5 +119,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   setPropertiesPane(open) {
     set({ propertiesPaneOpen: open });
+  },
+
+  setPaletteDragKind(kind) {
+    set({ paletteDragKind: kind });
   },
 }));

@@ -58,4 +58,12 @@ describe('uiStore', () => {
     useUIStore.getState().setPropertiesPane(true);
     expect(useUIStore.getState().propertiesPaneOpen).toBe(true);
   });
+
+  it('setPaletteDragKind 跟踪拖拽 kind（M17 S3）', () => {
+    expect(useUIStore.getState().paletteDragKind).toBeNull();
+    useUIStore.getState().setPaletteDragKind('partUsage');
+    expect(useUIStore.getState().paletteDragKind).toBe('partUsage');
+    useUIStore.getState().setPaletteDragKind(null);
+    expect(useUIStore.getState().paletteDragKind).toBeNull();
+  });
 });

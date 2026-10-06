@@ -29,8 +29,15 @@ import {
   type PaletteCategory,
 } from '../../lib/insertSnippet';
 import { useModelStore } from '../../stores/modelStore';
+import { useUIStore } from '../../stores/uiStore';
 import { useToast } from '../ui/Toast';
 import { generateUniqueName } from '../../lib/naming';
+import {
+  containerOfScope,
+  canNest,
+  isSupportedAnywhere,
+  unsupportedReason,
+} from '../../lib/nestingMatrix';
 
 /** M15：扩展为 5 类（结构/行为/需求/关系/枚举），与 palette 一一对应 */
 const CATEGORIES: Array<{
@@ -48,8 +55,12 @@ const CATEGORIES: Array<{
 
 export const PalettePanel: React.FC = () => {
   const nodes = useModelStore((s) => s.pipeline.nodes);
+  const entityKind = useModelStore((s) => s.entityKind);
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
+  const setPaletteDragKind = useUIStore((s) => s.setPaletteDragKind);
   const { showToast } = useToast();
+
+  const scopeContainer = containerOfScope(entityKind);
 
   /** 从画布节点提取现有名字（用于去重） */
   const existingNames = React.useMemo(
@@ -68,6 +79,16 @@ export const PalettePanel: React.FC = () => {
   }, [nodes]);
 
   const insertItem = (item: PaletteItem, opts?: { typeRef?: string }) => {
+    // S3：先按 scope 矩阵判定（给状态家族等「此处不可用」项可读引导，
+    // 而不是让 parse 守卫吐一条生硬的 parser 错误）
+    if (!canNest(scopeContainer, item.kind)) {
+      showToast({
+        title: '当前位置不能创建该元素',
+        description: unsupportedReason(scopeContainer, item.kind),
+        variant: 'error',
+      });
+      return;
+    }
     const name = generateUniqueName(item.defaultName, existingNames);
     let snippet: string;
     if (item.kind === 'partUsage') {
@@ -125,21 +146,46 @@ export const PalettePanel: React.FC = () => {
                 {cat.label}
               </div>
               <div className="mt-1 flex flex-col gap-0.5">
-                {items.map((item) => (
+                {items.map((item) => {
+                  // S3：语法在任何容器中都不支持的项 → 永久弱化置灰。
+                  const dead = !isSupportedAnywhere(item.kind);
+                  return (
+                  // 刻意用 aria-disabled 而非 HTML disabled：Playwright 的
+                  // actionability 会跳过 disabled 元素，m14-auto-naming.spec
+                  // 需要对 palette item 真实点击；禁用语义由 aria + handler 守卫承担。
                   <button
                     key={item.kind}
                     type="button"
-                    draggable
+                    aria-disabled={dead || undefined}
+                    draggable={!dead}
                     onDragStart={(e) => {
+                      if (dead) { e.preventDefault(); return; }
                       e.dataTransfer.setData(
                         'application/x-sysml-palette',
                         item.kind
                       );
                       e.dataTransfer.effectAllowed = 'copy';
+                      setPaletteDragKind(item.kind);
                     }}
-                    onClick={() => handleAdd(item)}
-                    className="group flex items-center gap-2 rounded px-2 py-1 text-left text-[11px] text-gray-700 transition hover:bg-white hover:shadow-sm dark:text-gray-200 dark:hover:bg-gray-800"
-                    title={item.description}
+                    onDragEnd={() => setPaletteDragKind(null)}
+                    onClick={() => {
+                      if (dead) {
+                        showToast({
+                          title: '当前语法版本尚不支持该元素',
+                          description: unsupportedReason(scopeContainer, item.kind),
+                          variant: 'error',
+                        });
+                        return;
+                      }
+                      handleAdd(item);
+                    }}
+                    className={[
+                      'group flex items-center gap-2 rounded px-2 py-1 text-left text-[11px] transition',
+                      dead
+                        ? 'cursor-not-allowed text-gray-300 opacity-45 dark:text-gray-600'
+                        : 'text-gray-700 hover:bg-white hover:shadow-sm dark:text-gray-200 dark:hover:bg-gray-800',
+                    ].join(' ')}
+                    title={dead ? unsupportedReason(scopeContainer, item.kind) : item.description}
                     data-testid={`palette-item-${item.kind}`}
                   >
                     <GripVertical className="h-3 w-3 opacity-0 transition group-hover:opacity-40" />
@@ -147,7 +193,8 @@ export const PalettePanel: React.FC = () => {
                     <span className="flex-1">{item.label}</span>
                     <Plus className="h-3 w-3 opacity-0 transition group-hover:opacity-60" />
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );

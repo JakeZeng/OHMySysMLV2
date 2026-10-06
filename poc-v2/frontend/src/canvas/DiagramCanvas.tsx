@@ -66,7 +66,13 @@ import {
 import { AnchorStripProvider, AnchorStrips } from './AnchorStrips';
 import AnchoredEdge from './AnchoredEdge';
 import { stableKeyOf } from '@transform/stableKey';
-import { containerOfNode } from '../lib/nestingMatrix';
+import {
+  containerOfNode,
+  containerOfScope,
+  canNest,
+} from '../lib/nestingMatrix';
+import { useUIStore } from '../stores/uiStore';
+import { useModelStore } from '../stores/modelStore';
 
 /** 锚点边 → React Flow 的 Position（自带边的贝塞尔控制点方向要用）。 */
 const SIDE_TO_POSITION: Record<AnchorSide, Position> = {
@@ -635,6 +641,10 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // M17 S3：dragover 期间 dataTransfer 值受保护读不到，拖拽 kind 走 uiStore；
+  // entityKind 决定空白画布（scope 容器）的合法性。
+  const paletteDragKind = useUIStore((s) => s.paletteDragKind);
+  const entityKind = useModelStore((s) => s.entityKind);
   const [highlightedNodeId, setHighlightedNodeId] = React.useState<string | null>(null);
   /**
    * 画布选中态（完全受控的 nodes 需要自己承接 select 变化，见 handleNodesChange）。
@@ -887,11 +897,12 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
       const own = (n as { measured?: { width: number; height: number } }).measured;
       const measured = own ?? prevMeasured.get(idStr);
-      // M17 S2：拖拽 palette 时实时高亮目标节点（绿=容器可接收 / 红=非容器）。
-      // 具体 (容器 × 元素) 的合法性由 ModelingPane 落文本前按矩阵最终判定。
+      // M17 S3：拖拽 palette 时按真实 kind + 矩阵高亮目标节点
+      // （绿=合法可嵌套 / 红=非法目标）。
       if (idStr === hoveredPaletteDropNodeId) {
+        const c = containerOfNode(n.type);
         cls.push(
-          containerOfNode(n.type) !== null
+          c !== null && paletteDragKind && canNest(c, paletteDragKind)
             ? 'rf-palette-drop-ok'
             : 'rf-palette-drop-bad',
         );
@@ -1344,18 +1355,39 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   // ─── M11: 拖拽支持 ──────────────────────────────────────────
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!interactive) return;
-    if (e.dataTransfer.types.includes('application/x-sysml-palette')) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-      // M16：实时检测鼠标下的 react-flow node；用于"拖到 def 上嵌成员 / 拖到 usage 上拒绝"分支
-      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-      const nodeEl = el?.closest('.react-flow__node') as HTMLElement | null;
-      const nodeId = nodeEl?.getAttribute('data-id') ?? null;
-      if (nodeId !== hoveredPaletteDropNodeId) {
-        setHoveredPaletteDropNodeId(nodeId);
+    if (!e.dataTransfer.types.includes('application/x-sysml-palette')) return;
+    e.preventDefault();
+    // M16：实时检测鼠标下的 react-flow node；用于"拖到容器上嵌套"分支
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const nodeEl = el?.closest('.react-flow__node') as HTMLElement | null;
+    const nodeId = nodeEl?.getAttribute('data-id') ?? null;
+    if (nodeId !== hoveredPaletteDropNodeId) {
+      setHoveredPaletteDropNodeId(nodeId);
+    }
+    // M17 S3：按 (目标容器 × 拖拽 kind) 矩阵给光标反馈。
+    // 最终是否落文本仍由 ModelingPane 的 parse/矩阵守卫把关。
+    let allowed = false;
+    if (paletteDragKind) {
+      if (nodeId) {
+        const target = nodes.find((n) => String(n.id) === nodeId);
+        const c = containerOfNode(target?.type);
+        allowed = c !== null && canNest(c, paletteDragKind);
+      } else {
+        allowed = canNest(containerOfScope(entityKind), paletteDragKind);
       }
     }
-  }, [interactive, hoveredPaletteDropNodeId]);
+    e.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+  }, [interactive, hoveredPaletteDropNodeId, nodes, paletteDragKind, entityKind]);
+
+  /**
+   * M17 S3：拖出画布容器时清掉粘滞的目标高亮（相关目标仍在容器内的
+   * 元素切换不算离开 —— dragleave 在进入子元素时也会冒泡触发）。
+   */
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    const related = e.relatedTarget as HTMLElement | null;
+    if (related && wrapperRef.current?.contains(related)) return;
+    setHoveredPaletteDropNodeId(null);
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (!interactive) return;
@@ -1409,6 +1441,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       ref={wrapperRef}
       style={{ width: '100%', height: '100%', position: 'relative' }}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onPointerDownCapture={handleCanvasPointerDown}
       onPointerUpCapture={handleCanvasPointerUp}
