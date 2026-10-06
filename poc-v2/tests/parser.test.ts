@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
 import { validate } from '../validator/validator';
 import { serialize } from '../transform/serializer';
+import { modelToFlow } from '../transform/modelToFlow';
 
 describe('Parser - 基础语法', () => {
   it('1. 解析空 package', () => {
@@ -974,6 +975,44 @@ alias FS for FreeStanding;`);
     expect(parse('package P { viewpoint VP { ref x : T; } }').ok).toBe(true);
     // PortBodyMember 只收 attribute / port
     expect(parse('package P { port def Q { ref x : T; } }').ok).toBe(false);
+  });
+
+  it('65. M17 S8 回归：gridLayout 不得静默丢节点（S5 结构定义从未上过画布）', () => {
+    // 改造前 gridLayout 按 7 个类型分桶摆放，没进桶的节点在
+    // `return { nodes: positioned }` 处消失 —— item def / calc def /
+    // use case def 等 S5 结构定义一次都没画出来过。
+    const r = parse(`package P {
+      part def B;
+      item def T { }
+      calc def C;
+      use case def UC;
+      item x : T;
+      ref r :> T;
+      state machine SM { state S1; }
+      activity A { action Ac1; }
+    }`);
+    expect(r.ok).toBe(true);
+    const f = modelToFlow(r.model);
+    const types = new Set(f.nodes.map((n: any) => n.type));
+    for (const t of [
+      'sysmlPartDef',
+      'sysmlItemDef',
+      'sysmlCalcDefinition',
+      'sysmlUseCaseDef',
+      'sysmlItemUsage',
+      'sysmlReferenceUsage',
+      'sysmlStateMachine',
+      'sysmlActivity',
+      'sysmlState',
+      'sysmlAction',
+    ]) {
+      expect(types.has(t)).toBe(true);
+    }
+    // 每个子节点的坐标都必须是有限的（孤儿子节点不能全停在 0,0）
+    for (const n of f.nodes as any[]) {
+      expect(Number.isFinite(n.position.x)).toBe(true);
+      expect(Number.isFinite(n.position.y)).toBe(true);
+    }
   });
 });
 

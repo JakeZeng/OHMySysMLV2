@@ -24,7 +24,7 @@ import {
   runPipeline as runPipelinePure,
   type PipelineResult,
 } from '../lib/pipeline';
-import { insertSnippetScoped, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
+import { insertSnippetScoped, insertSnippetIntoElement, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
 import { parse } from '@parser/parser';
 import { stableKeyOf, renameStableKey } from '@transform/stableKey';
 import type { Anchor } from '../lib/anchor';
@@ -175,6 +175,31 @@ interface ModelState {
 function currentPositions(scopeId: string | null): Record<string, NodePosition> | undefined {
   if (!scopeId) return undefined;
   return useLayoutStore.getState().getScope(scopeId);
+}
+
+/**
+ * M17 S8：取两个行为节点共同所属容器的名字（状态机 / 活动）。
+ *
+ * 两端必须挂在**同一个** parentId 下 —— 跨状态机的 transition 语法上无处安放
+ * （transition 是 StateMachine 的成员，不是包级语句），返回 null 让调用方
+ * 报错而不是默默把语句插到当前包里。
+ */
+function behavioralOwnerName(
+  nodes: readonly Node[],
+  sourceId: string,
+  targetId: string,
+): string | null {
+  const pidOf = (id: string): string | null => {
+    const n = nodes.find((x) => String(x.id) === id);
+    const p = (n as { parentId?: string } | undefined)?.parentId;
+    return p ? String(p) : null;
+  };
+  const srcPid = pidOf(sourceId);
+  const tgtPid = pidOf(targetId);
+  if (!srcPid || srcPid !== tgtPid) return null;
+  const owner = nodes.find((x) => String(x.id) === srcPid);
+  const label = (owner?.data as { label?: string } | undefined)?.label;
+  return label || null;
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -728,16 +753,44 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
     const srcKind = kindFromNodeId(sourceId);
     const tgtKind = kindFromNodeId(targetId);
-    const snippet =
-      srcKind === 'stateDef' && tgtKind === 'stateDef'
-        ? `  transition ${srcShort} to ${tgtShort};\n` // 状态机内部用 2 空格缩进
-        : `connect ${srcShort} to ${tgtShort};`;
-    // M16 P0：统一插入路径（目标 = 当前打开 scope）
-    const newContent = insertSnippetScoped(content, snippet, {
-      scopeKind: entityKind ?? 'package',
-      scopeName,
-      model: pipeline.model,
-    });
+
+    // M17 S8：状态 / 动作是真子节点（parentId 指向所属状态机 / 活动）。
+    // transition / flow 必须落进**那个容器**的 body —— 改造前一律走
+    // insertSnippetScoped 插到当前包，状态机因此收不到自己的迁移语句，
+    // 画上线、文本却没变的地方留一条边。
+    const isStateFlow = srcKind === 'stateDef' && tgtKind === 'stateDef';
+    const isActionFlow = srcKind === 'actionDef' && tgtKind === 'actionDef';
+    const behavioral = isStateFlow || isActionFlow;
+
+    let newContent: string;
+    if (behavioral) {
+      const owner = behavioralOwnerName(pipeline.nodes, sourceId, targetId);
+      if (!owner) {
+        return {
+          ok: false,
+          reason: isStateFlow
+            ? '两个状态不在同一个状态机内，无法生成迁移'
+            : '两个动作不在同一个活动内，无法生成流',
+        };
+      }
+      const snippet = isStateFlow
+        ? `transition ${srcShort} to ${tgtShort};`
+        : `flow ${srcShort} to ${tgtShort};`;
+      // insertSnippetIntoElement 自己带缩进，不要再手写行首空格
+      const r = insertSnippetIntoElement(content, owner, snippet);
+      if (!r.ok) {
+        return { ok: false, reason: r.reason ?? '无法写入行为容器' };
+      }
+      newContent = r.content;
+    } else {
+      const snippet = `connect ${srcShort} to ${tgtShort};`;
+      // M16 P0：统一插入路径（目标 = 当前打开 scope）
+      newContent = insertSnippetScoped(content, snippet, {
+        scopeKind: entityKind ?? 'package',
+        scopeName,
+        model: pipeline.model,
+      });
+    }
     // M17 S1：坏片段守卫（与 createNodeFromPalette 同一份）
     const probe = parse(newContent);
     if (!probe.ok) {

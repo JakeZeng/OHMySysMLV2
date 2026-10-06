@@ -484,6 +484,80 @@ const ActionNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoActionNode = React.memo(ActionNode);
 
+/**
+ * M17 S8：状态机 / 活动成为**一等容器节点**。
+ *
+ * 此前矩阵里 `stateMachine` / `activity` 两行已经编码成 ContainerKind，
+ * 但画布上根本没有对应的节点 —— state / action 是平铺的顶层节点，
+ * 没有可拖入的容器，`state` / `initialState` / `finalState` / `transition`
+ * 四项在画布上因此完全不可达。
+ *
+ * 视觉上用虚线边框 + 半透明底，与实线的图元区分：它们是「框」而非「图元」。
+ * 徽标骑边逻辑与 part/port 一致（半边在框外），故不设 extent:'parent'
+ * —— 详见 modelToFlow.makePortNode 里关于 clampPositionToParent 的说明。
+ */
+const StateMachineNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { stateCount?: number; transitionCount?: number };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? 'rgba(114,46,209,0.12)' : 'rgba(114,46,209,0.06)',
+        border: `2px dashed ${selected ? '#531dab' : '#722ed1'}`,
+        borderRadius: '6px',
+        padding: '8px 12px',
+        minWidth: '200px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        transition: 'background 0.1s',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 8, height: 8 }} />
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        «state machine»
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>
+        {d.stateCount ?? 0} 状态 · {d.transitionCount ?? 0} 迁移
+      </div>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoStateMachineNode = React.memo(StateMachineNode);
+
+const ActivityNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { actionCount?: number; flowCount?: number };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? 'rgba(19,194,194,0.12)' : 'rgba(19,194,194,0.06)',
+        border: `2px dashed ${selected ? '#006d75' : '#08979c'}`,
+        borderRadius: '6px',
+        padding: '8px 12px',
+        minWidth: '200px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        transition: 'background 0.1s',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 8, height: 8 }} />
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        «activity»
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: '2px' }}>
+        {d.actionCount ?? 0} 动作 · {d.flowCount ?? 0} 流
+      </div>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoActivityNode = React.memo(ActivityNode);
+
 const RequirementNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData & { reqId?: string; text?: string };
   return (
@@ -696,6 +770,8 @@ const nodeTypes = {
   sysmlVerificationCaseDef: MemoStructureDefNode,
   sysmlState: MemoStateNode,
   sysmlAction: MemoActionNode,
+  sysmlStateMachine: MemoStateMachineNode,
+  sysmlActivity: MemoActivityNode,
   sysmlRequirement: MemoRequirementNode,
   sysmlConstraint: MemoConstraintBlockNode,
   sysmlGhost: MemoGhostNode,
@@ -1171,7 +1247,9 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       if (!interactive) return; // text 模式：禁用
-      if ((node as { parentId?: string }).parentId) return; // 端口不参与改名
+      if (node.type === 'sysmlPort') return; // 端口徽标不参与改名
+      // ⚠️ 判据是**节点类型**而不是「有没有 parentId」。M17 S8 起 state / action
+      // 也带 parentId（挂在状态机 / 活动容器下），它们要能正常改名。
       // 端口徽标之外还要确保属性表单已经切到这个节点：直接补一次选中回写，
       // 否则「双击的那一下」若是首次选中，右栏要到下一次渲染才更新。
       const idStr = String(node.id);
@@ -1705,7 +1783,11 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
               case 'sysmlPortDef': return '#52c41a';
               case 'sysmlPort': return '#52c41a';
               case 'sysmlState': return '#722ed1';
+              case 'sysmlStateMachine': return '#531dab';
               case 'sysmlAction': return '#13c2c2';
+              case 'sysmlActivity': return '#006d75';
+              case 'sysmlItemUsage': return '#9254de';
+              case 'sysmlReferenceUsage': return '#eb2f96';
               case 'sysmlRequirement': return '#faad14';
               case 'sysmlConstraint': return '#f5222d';
               default: return '#d9d9d9';

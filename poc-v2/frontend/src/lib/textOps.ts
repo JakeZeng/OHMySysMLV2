@@ -398,15 +398,24 @@ export function insertSnippetIntoElement(
   const trimmedSnippet = snippet.trim();
   if (trimmedSnippet.length === 0) return { content, ok: true };
 
-  // 找 `xxx def <name>` 的位置（关键字任选）
-  const escaped = elementName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const defHeaderRe = new RegExp(
-    `\\b(?:part|port|item|attribute|interface|occurrence|connection|action|state|calc|requirement|constraint|useCase|analysisCase|verificationCase|enum)\\s+def\\s+${escaped}\\b`,
-  );
-  const headerMatch = defHeaderRe.exec(content);
-  if (!headerMatch) {
-    return { content, ok: false, reason: `找不到 def 元素 "${elementName}"` };
-  }
+  // 找头部位置。两种形态：
+//
+//   a) `<kw> def <name>`  —— part / port / item / action / state / ...（关键字任选）
+//   b) `<kw> <name>`      —— M17 S8：状态机 `state machine <name>` 与活动
+//      `activity <name>`。这两者是容器节点，头部形态里**没有 def**，只匹配
+//      (a) 会直接报「找不到 def 元素」，拖 `state` 进状态机就永远失败。
+//
+// (b) 优先于 (a)：同名元素同时存在时，拖拽目标由调用方传的 name 决定，
+// 先匹配容器头更符合直觉。
+const escaped = elementName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const containerHeaderRe = new RegExp(`\\b(?:state\\s+machine|activity)\\s+${escaped}\\b`);
+const defHeaderRe = new RegExp(
+  `\\b(?:part|port|item|attribute|interface|occurrence|connection|action|state|calc|requirement|constraint|useCase|analysisCase|verificationCase|enum)\\s+def\\s+${escaped}\\b`,
+);
+const headerMatch = containerHeaderRe.exec(content) ?? defHeaderRe.exec(content);
+if (!headerMatch) {
+  return { content, ok: false, reason: `找不到 def 元素 "${elementName}"` };
+}
 
   // 跳到关键字后第一个 `{` 或 `;`
   let i = headerMatch.index + headerMatch[0].length;
@@ -574,6 +583,15 @@ function walkForShortName(
   for (const sm of model.stateMachines) {
     for (const s of sm.states) {
       if (s.id === astId && kind === 'stateDef') return s.name;
+    }
+  }
+  // M17 S8：活动内的 action 与状态机内的 state 是对偶关系。
+  // 改造前这里**只有** stateMachines 一支，action 查不到短名 —— 活动里画线
+  // 一律报「源/目标节点找不到短名」，`walkForName` 里明明有 activity 分支，
+  // 这里是漏掉的一半。
+  for (const act of model.activities) {
+    for (const a of act.actions) {
+      if (a.id === astId && kind === 'actionDef') return a.name;
     }
   }
   for (const req of model.requirements) {

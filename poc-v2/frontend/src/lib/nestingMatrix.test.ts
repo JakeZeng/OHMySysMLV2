@@ -118,6 +118,9 @@ describe('nestingMatrix — containerOfNode / containerOfScope', () => {
     expect(containerOfNode('sysmlPartUsage')).toBeNull();
     expect(containerOfNode('sysmlPort')).toBeNull();
     expect(containerOfNode('sysmlState')).toBeNull();
+    // M17 S8：状态机 / 活动接上了矩阵里早已编码的两行
+    expect(containerOfNode('sysmlStateMachine')).toBe('stateMachine');
+    expect(containerOfNode('sysmlActivity')).toBe('activity');
     expect(containerOfNode('sysmlAction')).toBeNull();
     expect(containerOfNode('sysmlRequirement')).toBeNull();
     expect(containerOfNode('sysmlGhost')).toBeNull();

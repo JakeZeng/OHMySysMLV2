@@ -12,6 +12,7 @@ import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
 import { useCollabStore } from './collabStore';
 import type { EdgeAnchors } from '../lib/edgeAnchor';
+import { canNest, containerOfNode } from '../lib/nestingMatrix';
 
 beforeEach(() => {
   useAuthStore_clearAuth();
@@ -688,5 +689,113 @@ describe('modelStore - M17 S4 幽灵节点 + 保留上一次成功图', () => {
     expect(p.parseErrors.length).toBeGreaterThan(0);
     expect(p.nodes).toHaveLength(0);
     expect(p.stale).toBeUndefined();
+  });
+});
+
+/**
+ * M17 S8：状态机 / 活动成为一等容器节点。
+ *
+ * 这组用例钉的是三件事，缺一整条链就是「画布上看着能拖、文本里没反应」：
+ *   1. 容器节点真的存在，且 state / action 挂在它下面（parentId）
+ *   2. 往容器拖 palette 元素，文本真的落进容器 body（不是当前包）
+ *   3. 容器内画线，transition / flow 落进容器 body
+ */
+describe('M17 S8：状态机 / 活动是一等容器节点', () => {
+  const SRC = `package Vehicle {
+  state machine Ignition {
+    state Off;
+    state On;
+  }
+  activity Drive {
+    action Start;
+    action Stop;
+  }
+}`;
+
+  it('容器节点存在，state / action 作为真子节点挂在它下面', () => {
+    useModelStore.getState().setContent(SRC);
+    const { nodes } = useModelStore.getState().pipeline;
+    const sm = nodes.find((n) => n.type === 'sysmlStateMachine');
+    const act = nodes.find((n) => n.type === 'sysmlActivity');
+    expect(sm).toBeDefined();
+    expect(act).toBeDefined();
+
+    const smId = String(sm!.id);
+    const states = nodes.filter((n) => n.type === 'sysmlState');
+    expect(states.map((n) => (n as { parentId?: string }).parentId)).toEqual([smId, smId]);
+
+    const actId = String(act!.id);
+    const actions = nodes.filter((n) => n.type === 'sysmlAction');
+    expect(actions.map((n) => (n as { parentId?: string }).parentId)).toEqual([
+      actId,
+      actId,
+    ]);
+  });
+
+  it('拖入容器矩阵放行（state 可入状态机、action 可入活动）', () => {
+    useModelStore.getState().setContent(SRC);
+    const sm = useModelStore
+      .getState()
+      .pipeline.nodes.find((n) => n.type === 'sysmlStateMachine')!;
+    expect(canNest(containerOfNode(sm.type)!, 'state')).toBe(true);
+    const act = useModelStore
+      .getState()
+      .pipeline.nodes.find((n) => n.type === 'sysmlActivity')!;
+    expect(canNest(containerOfNode(act.type)!, 'actionDef')).toBe(false); // actionDef 不是活动成员
+  });
+
+  it('容器内画线 → transition 落进状态机 body（不是当前包）', () => {
+    useModelStore.getState().setContent(SRC);
+    const r = useModelStore
+      .getState()
+      .addConnection(nodeIdOf('Off'), nodeIdOf('On'));
+    expect(r.ok).toBe(true);
+    const content = useModelStore.getState().content;
+    expect(content).toContain('transition Off to On;');
+    const smAt = content.indexOf('state machine Ignition');
+    const trAt = content.indexOf('transition Off to On;');
+    const smClose = content.indexOf('}', smAt);
+    // 必须在状态机自己的 body 里
+    expect(trAt).toBeGreaterThan(smAt);
+    expect(trAt).toBeLessThan(smClose);
+    expect(useModelStore.getState().pipeline.parseErrors).toHaveLength(0);
+  });
+
+  it('活动内画线 → flow 落进活动 body', () => {
+    useModelStore.getState().setContent(SRC);
+    const r = useModelStore.getState().addConnection(nodeIdOf('Start'), nodeIdOf('Stop'));
+    expect(r.ok).toBe(true);
+    const content = useModelStore.getState().content;
+    expect(content).toContain('flow Start to Stop;');
+    const actAt = content.indexOf('activity Drive');
+    const flowAt = content.indexOf('flow Start to Stop;');
+    expect(flowAt).toBeGreaterThan(actAt);
+    expect(flowAt).toBeLessThan(content.indexOf('}', actAt));
+    expect(useModelStore.getState().pipeline.parseErrors).toHaveLength(0);
+  });
+
+  it('跨状态机画线被拒（transition 无处安放，不能默默插到当前包）', () => {
+    useModelStore.getState().setContent(`package Vehicle {
+  state machine A { state S1; }
+  state machine B { state S2; }
+}`);
+    const r = useModelStore.getState().addConnection(nodeIdOf('S1'), nodeIdOf('S2'));
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('同一个状态机');
+  });
+
+  it('插进状态机的是 transition 而不是 connect（普通节点连线仍走 connect）', () => {
+    useModelStore.getState().setContent(`package Vehicle {
+  state machine SM { state S1; state S2; }
+  part def Car;
+  part def Engine;
+}`);
+    const t = useModelStore.getState().addConnection(nodeIdOf('S1'), nodeIdOf('S2'));
+    expect(t.ok).toBe(true);
+    const c = useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'));
+    expect(c.ok).toBe(true);
+    const content = useModelStore.getState().content;
+    expect(content).toContain('transition S1 to S2;');
+    expect(content).toContain('connect Car to Engine;');
   });
 });

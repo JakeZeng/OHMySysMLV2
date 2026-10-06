@@ -154,6 +154,34 @@ const REFERENCE_USAGE_SCHEMA: FormSchema = {
   title: 'Reference Usage（引用用法）',
 };
 
+/**
+ * M17 S8：状态机 / 活动容器节点。
+ * 这两个是「框」，不是图元 —— 表单只暴露身份信息，内容靠拖入成员生成。
+ */
+const STATE_MACHINE_SCHEMA: FormSchema = {
+  nodeType: 'sysmlStateMachine',
+  title: 'State Machine（状态机）',
+  sections: [
+    {
+      key: 'basic',
+      label: '基础信息',
+      fields: BASIC_IDENTITY,
+    },
+  ],
+};
+
+const ACTIVITY_SCHEMA: FormSchema = {
+  nodeType: 'sysmlActivity',
+  title: 'Activity（活动）',
+  sections: [
+    {
+      key: 'basic',
+      label: '基础信息',
+      fields: BASIC_IDENTITY,
+    },
+  ],
+};
+
 export const PORT_DEF_SCHEMA: FormSchema = {
   nodeType: 'sysmlPortDef',
   title: 'Port Def（端口定义）',
@@ -331,6 +359,8 @@ const VERIFICATION_CASE_DEF_SCHEMA: FormSchema = {
 export const SCHEMAS: Record<string, FormSchema> = {
   sysmlPartDef: PART_DEF_SCHEMA,
   sysmlPartUsage: PART_USAGE_SCHEMA,
+  sysmlStateMachine: STATE_MACHINE_SCHEMA,
+  sysmlActivity: ACTIVITY_SCHEMA,
   sysmlItemUsage: ITEM_USAGE_SCHEMA,
   sysmlReferenceUsage: REFERENCE_USAGE_SCHEMA,
   sysmlPortDef: PORT_DEF_SCHEMA,

@@ -193,8 +193,15 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     partToPortIds.set(id, collectPortNodes(nodes, sd.body, id, qname, keys));
   }
 
-  // 3b. 节点构造（M5 状态机）
+  // 3b. 节点构造（M17 S8：状态机成为一等容器节点）
+  //
+  // 改造前只有 state 节点、没有 stateMachine 节点 —— 矩阵里 `stateMachine`
+  // 这一行虽已编码为 ContainerKind，画布上却根本没有可拖入的容器。
+  // 现在：先建状态机节点，再把各 state 作为**真子节点**（parentId）挂进去。
+  // layoutEngine.toElkTree 是按 parentId 通用嵌套的，端口之外一样生效。
   for (const { node: sm, qname } of stateMachines) {
+    const smId = `sm:${sm.id}`;
+    nodes.push(makeStateMachineNode(smId, sm, keys.alloc(elementKeyBase('stateMachine', qname))));
     const stateNameToId = new Map<string, string>();
     for (const s of sm.states) {
       const id = `state:${s.id}`;
@@ -206,6 +213,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
           !!s.isInitial,
           !!s.isFinal,
           keys.alloc(elementKeyBase('state', joinQName([qname], s.name))),
+          smId,
         ),
       );
     }
@@ -232,8 +240,10 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     }
   }
 
-  // 3c. 节点构造（M5 活动）
+  // 3c. 节点构造（M17 S8：活动成为一等容器节点）—— 同 3b
   for (const { node: act, qname } of activities) {
+    const actId = `act:${act.id}`;
+    nodes.push(makeActivityNode(actId, act, keys.alloc(elementKeyBase('activity', qname))));
     const actionNameToId = new Map<string, string>();
     for (const a of act.actions) {
       const id = `action:${a.id}`;
@@ -245,6 +255,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
           !!a.isInitial,
           !!a.isFinal,
           keys.alloc(elementKeyBase('action', joinQName([qname], a.name))),
+          actId,
         ),
       );
     }
@@ -372,133 +383,128 @@ const ROW_GAP = 160;
 const ORIGIN_X = 80;
 const ORIGIN_Y = 80;
 const MAX_COL_X = 1400;
+/** M17 S8：行为容器内子节点（state / action）的内边距与行距 */
+const BEHAVIOR_CHILD_X = 20;
+const BEHAVIOR_CHILD_Y = 48;
+const BEHAVIOR_CHILD_GAP = 44;
 
+/**
+ * M1 瀑布网格布局（同步入口的临时坐标，ELK 异步重排前的初值）。
+ *
+ * ⚠️ **本函数必须给每一个输入节点产出输出**。
+ *
+ * 改造前这里是「按类型分桶 + 各桶单独摆放」，只有 7 个类型进得了 `positioned`：
+ * part / portDef / 行为 / 需求 / 约束 / ghost。凡是没进桶的节点**被静默丢弃** ——
+ * `buildGraph` 结尾直接 `return { nodes: positioned }`，丢掉就是画布上根本没有它。
+ * 实际后果：M17 S5 引入的**全部结构定义**（item def / attribute def / interface def /
+ * occurrence def / connection def / action def / state def / calc def / use case def /
+ * analysis case def / verification case def）一次都没上过画布，
+ * 语法支持了、矩阵解锁了、节点组件和表单也写了，用户却什么都看不见。
+ *
+ * 现在末尾加了**兜底桶**：没被任何显式桶摆过的节点一律进这里排队，
+ * 并且「parentId 指向的父节点不在图里」的孤儿子节点也会被摆到顶层
+ * （否则坐标全停在 (0,0)，堆在原点）。加新节点类型不再需要记得改这里。
+ */
 function gridLayout(nodes: Node[], edges: Edge[]): { positioned: Node[]; bounds: { width: number; height: number } } {
   const positioned: Node[] = [];
+  const placed = new Set<string>();
+  const place = (n: Node, x: number, y: number) => {
+    positioned.push({ ...n, position: { x, y } });
+    placed.add(String(n.id));
+  };
+
   const partNodes = nodes.filter((n) => !n.parentId && (n.type === 'sysmlPartDef' || n.type === 'sysmlPartUsage'));
   const portDefNodes = nodes.filter((n) => n.type === 'sysmlPortDef');
-  const childPortNodes = nodes.filter((n) => n.parentId);
-  // M10: 行为/需求/约束节点（M5 引入的状态/活动/需求/约束块）
-  const behaviorNodes = nodes.filter(
-    (n) => n.type === 'sysmlState' || n.type === 'sysmlAction'
+  // M17 S8：状态机 / 活动是一等容器节点；state / action 成了它们的真子节点
+  const behaviorContainerNodes = nodes.filter(
+    (n) => !n.parentId && (n.type === 'sysmlStateMachine' || n.type === 'sysmlActivity'),
   );
   const requirementNodes = nodes.filter((n) => n.type === 'sysmlRequirement');
   const constraintNodes = nodes.filter((n) => n.type === 'sysmlConstraint');
   // M16 P4 合成视图画布：跨包 expose 元素（不可编辑、只展示）
   const ghostNodes = nodes.filter((n) => n.type === 'sysmlGhost');
 
+  /** 所有带 parentId 的节点按父分组（端口徽标 + 状态机内的 state/活动内的 action） */
+  const childByParent = new Map<string, Node[]>();
+  for (const c of nodes) {
+    if (!c.parentId) continue;
+    const key = String(c.parentId);
+    const arr = childByParent.get(key);
+    if (arr) arr.push(c);
+    else childByParent.set(key, [c]);
+  }
+
   let cursorX = ORIGIN_X;
   let cursorY = ORIGIN_Y;
   let rowHeight = 0;
-  const childByParent = new Map<string, Node[]>();
-  for (const c of childPortNodes) {
-    const arr = childByParent.get(String(c.parentId)) ?? [];
-    arr.push(c);
-    childByParent.set(String(c.parentId), arr);
-  }
+  /** 起一个新行（把 cursorY 推到下一行并回到最左列） */
+  const newRow = () => {
+    cursorX = ORIGIN_X;
+    cursorY += rowHeight + ROW_GAP;
+    rowHeight = 0;
+  };
+  /** 摆一个顶层节点，按列宽推进游标，超出 MAX_COL_X 自动换行 */
+  const placeTop = (n: Node) => {
+    place(n, cursorX, cursorY);
+    cursorX += PART_WIDTH + COL_GAP;
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+    if (cursorX > MAX_COL_X) newRow();
+  };
+  /** 摆一段横向序列（portDef 等不需要按 PART_WIDTH 间隔的窄节点） */
+  const placeTopRow = (list: Node[], width: number) => {
+    if (list.length > 0 && rowHeight > 0) newRow();
+    for (const n of list) {
+      place(n, cursorX, cursorY);
+      cursorX += width + COL_GAP;
+    }
+    rowHeight = Math.max(rowHeight, PART_HEIGHT);
+  };
 
+  // ── 结构树（part def / part usage），端口徽标骑在其边框上 ──
   for (const n of partNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    const kids = childByParent.get(String(n.id)) ?? [];
+    placeTop(n);
     let py = PORT_Y_START;
-    for (const k of kids) {
-      positioned.push({ ...k, position: { x: PORT_X_OFFSET, y: py } });
+    for (const k of childByParent.get(String(n.id)) ?? []) {
+      place(k, PORT_X_OFFSET, py);
       py += PORT_GAP;
     }
-    cursorX += PART_WIDTH + COL_GAP;
     rowHeight = Math.max(rowHeight, py + 24);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-  }
-  if (portDefNodes.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
-  }
-  for (const n of portDefNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    cursorX += PART_WIDTH + COL_GAP;
   }
 
-  // M10: 行为节点（状态/活动）放右侧第二列
-  if (behaviorNodes.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
+  placeTopRow(portDefNodes, PART_WIDTH);
+
+  // ── 行为容器（状态机 / 活动）：容器本身顶层，state / action 排在其内部 ──
+  if (behaviorContainerNodes.length > 0 && rowHeight > 0) newRow();
+  for (const n of behaviorContainerNodes) {
+    placeTop(n);
+    let py = BEHAVIOR_CHILD_Y;
+    for (const k of childByParent.get(String(n.id)) ?? []) {
+      place(k, BEHAVIOR_CHILD_X, py);
+      py += BEHAVIOR_CHILD_GAP;
     }
-    cursorX = ORIGIN_X;
-  }
-  for (const n of behaviorNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, PART_HEIGHT);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
+    // 容器高度随子节点数增长，避免子节点溢到框外
+    rowHeight = Math.max(rowHeight, py + 24);
   }
 
-  // M10: 需求节点
-  if (requirementNodes.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
-  }
-  for (const n of requirementNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, PART_HEIGHT);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-  }
+  placeTopRow(requirementNodes, PART_WIDTH);
+  placeTopRow(constraintNodes, PART_WIDTH);
+  placeTopRow(ghostNodes, PART_WIDTH);
 
-  // M10: 约束节点
-  if (constraintNodes.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
+  // ── 兜底桶：没被上面任何显式桶摆过的节点 ──
+  // 结构定义（item def / calc def / use case def …）、item usage、reference usage
+  // 都在这里。以前它们在这里被**丢掉**，现在排队画出来。
+  const leftovers = nodes.filter((n) => !placed.has(String(n.id)));
+  // 父节点确实在图里、只是上面没摆它（例如父是兜底桶）→ 跟着父走
+  const looseChildren = leftovers.filter((n) => n.parentId && positioned.some((p) => String(p.id) === String(n.parentId)));
+  for (const c of looseChildren) {
+    const owner = positioned.find((p) => String(p.id) === String(c.parentId))!;
+    place(c, owner.position.x + BEHAVIOR_CHILD_X, owner.position.y + BEHAVIOR_CHILD_Y);
   }
-  for (const n of constraintNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, PART_HEIGHT);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-  }
-
-  // M16 P4 合成视图画布：跨包 expose 元素（只读 + 源包 tooltip）
-  if (ghostNodes.length > 0) {
-    if (rowHeight > 0) {
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
-    cursorX = ORIGIN_X;
-  }
-  for (const n of ghostNodes) {
-    positioned.push({ ...n, position: { x: cursorX, y: cursorY } });
-    cursorX += PART_WIDTH + COL_GAP;
-    rowHeight = Math.max(rowHeight, PART_HEIGHT);
-    if (cursorX > MAX_COL_X) {
-      cursorX = ORIGIN_X;
-      cursorY += rowHeight + ROW_GAP;
-      rowHeight = 0;
-    }
+  // 剩下的（含孤儿子节点）当顶层排开：宁可位置难看，也不能凭空消失
+  const looseTops = leftovers.filter((n) => !placed.has(String(n.id)));
+  for (const n of looseTops) {
+    if (rowHeight > 0) newRow();
+    placeTop(n);
   }
 
   const maxX = positioned.filter((n) => !n.parentId).reduce(
@@ -815,6 +821,52 @@ function collectMembers(
   }
 }
 
+// ─── M17 S8：状态机 / 活动容器节点 ─────────────────────────────────
+
+/**
+ * 状态机容器节点。
+ *
+ * `parentId` 让 state 成为真子节点 —— 与 `makePortNode` 同一条机制，
+ * `layoutEngine.toElkTree` 按 parentId 通用嵌套，ELK 会把 state 排进
+ * 状态机内部（而不是把它们当独立顶层节点，凭空多出层级）。
+ *
+ * 刻意**不设** `extent: 'parent'`：state 是内容节点，夹在容器里正是想要的，
+ * 不需要像端口那样「骑在边框上」。详见 makePortNode 注释里关于
+ * clampPositionToParent 的说明。
+ */
+function makeStateMachineNode(id: string, sm: StateMachine, stableKey: string): Node {
+  return {
+    id,
+    type: 'sysmlStateMachine',
+    position: { x: 0, y: 0 },
+    data: {
+      label: sm.name,
+      kind: 'stateMachine',
+      stateCount: sm.states.length,
+      transitionCount: sm.transitions.length,
+      location: sm.location,
+      stableKey,
+    },
+  };
+}
+
+/** 活动容器节点 —— 与状态机同构。 */
+function makeActivityNode(id: string, act: Activity, stableKey: string): Node {
+  return {
+    id,
+    type: 'sysmlActivity',
+    position: { x: 0, y: 0 },
+    data: {
+      label: act.name,
+      kind: 'activity',
+      actionCount: act.actions.length,
+      flowCount: act.flows.length,
+      location: act.location,
+      stableKey,
+    },
+  };
+}
+
 // ─── M5: 状态机构造 ────────────────────────────────────────────────
 
 function makeStateNode(
@@ -822,12 +874,14 @@ function makeStateNode(
   name: string,
   isInitial: boolean,
   isFinal: boolean,
-  stableKey: string
+  stableKey: string,
+  parentId: string
 ): Node {
   return {
     id,
     type: 'sysmlState',
     position: { x: 0, y: 0 },
+    parentId,
     data: {
       label: name,
       kind: 'stateDef',
@@ -843,12 +897,14 @@ function makeActionNode(
   name: string,
   isInitial: boolean,
   isFinal: boolean,
-  stableKey: string
+  stableKey: string,
+  parentId: string
 ): Node {
   return {
     id,
     type: 'sysmlAction',
     position: { x: 0, y: 0 },
+    parentId,
     data: {
       label: name,
       kind: 'actionDef',

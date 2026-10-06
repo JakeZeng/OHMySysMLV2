@@ -190,6 +190,10 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlAnalysisCaseDef: 'partDef',
   sysmlVerificationCaseDef: 'partDef',
   sysmlState: null,
+  // M17 S8：状态机 / 活动成为一等容器节点 —— 矩阵里这两行早已编码为
+  // ContainerKind，之前缺的是画布节点，现在补上了
+  sysmlStateMachine: 'stateMachine',
+  sysmlActivity: 'activity',
   sysmlAction: null,
   sysmlRequirement: null,
   sysmlConstraint: 'constraintBlock',
