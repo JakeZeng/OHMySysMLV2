@@ -238,10 +238,64 @@ migration **008**，因为列表接口按设计不返回 content。
 
 ## 10. 下一步
 
-1. **补齐 §9 的置灰项**：优先 `if/loop`（ActionFlowView 控制结构）与
-   `perform` / `message`（SequenceView）—— 先查官方记号原文再写产生式，
-   写完必须让 `viewToolbox.test.ts` 的差分变绿。
+### 10.1 置灰项的官方记号（已查证，下一轮可直接开工，不要再猜）
+
+来源：`sysml.library/Systems Library/Actions.sysml`（官方原文，本轮已 fetch）。
+
+**控制结构**（`ActionFlowView` 的「Control structures」契约项）对应的类：
+
+| 类 | 关键特征 |
+|---|---|
+| `IfThenAction` | `in ifTest[1]; in action thenClause[0..1];` |
+| `IfThenElseAction` | ↑ + `in action elseClause[0..1];` |
+| `LoopAction` | `in ref iterator; in action body[0..*];` |
+| `WhileLoopAction` | `in whileTest default {true}; in untilTest default {false};` |
+| `ForLoopAction` | `protected ref var[0..1]; in ref seq;` |
+
+**记号原文**就在 `ForLoopAction` 的 body 里（这段是标准库自己写的，最可靠）：
+
+```
+private action initialization
+    assign index := 1;
+then private action whileLoop
+    while index <= size(seq) {
+        assign var := seq#(index);
+        then perform body;
+        then assign index := index + 1;
+    }
+```
+
+即：**`assign <目标> := <表达式>;` / `then` / `perform <名称>;` / `while <表达式> { … }`**
+都是官方关键字，不是自造方言。`if` / `loop` 的具体表面形式需再查
+`ControlPerformances.sysml` 或规范 §7.7.5 图形/文本记号章节确认。
+
+**send / accept**（`ActionFlowView` 的「Send and accept actions」契约项）——
+记号在 `TransitionAction` 的 definition body 里：
+
+```
+state aState  {
+    transition aTransition first start accept apayload: Anything via receiver then done;
+}
+```
+
+即 `accept <payload> via <port>` 与 `then done`。`SendAction` / `AcceptMessageAction`
+的 payload 是 `in` / `inout` 参数。
+
+**Control nodes**：`MergeAction` / `DecisionAction` / `JoinAction` / `ForkAction` 都是
+`ControlAction` 的特化，`bind start = done;`（瞬时节点，无固有行为）—— 本轮实现的
+`fork` / `join` / `decide` / `merge` 记号与之相符。
+
+**SequenceView 的 `perform`**：官方确实用 `perform`（见上面的 `then perform body;`），
+但那是「执行一个动作」；生命线上的**事件发生**是另一套（`EventOccurrenceUsage`），
+需要查 `Occurrences.sysml` 确认，**不要拿 `perform` 直接当事件发生用**。
+
+### 10.2 其余待办
+
+1. 按 §10.1 的查证结果补齐置灰项：优先 `assign` / `then` / `perform` / `while`，
+   写完必须让 `viewToolbox.test.ts` 的差分变绿（该测试会自动指出还有哪些写不出来）。
 2. **e2e**：`e2e/m19-view-standard.spec.ts` —— 向导建 8 种视图 → 工具箱按类型分化 →
    插入内容契约元素上画布 → 徽章显示标准类型。
 3. **视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档，
    应展示特化引用 / rendering 类别 / 官方内容契约清单。
+4. **参数上画布**：`in p : Real;` / `out p : Real;` 语法可解析但不渲染节点
+   （attribute 全局都不渲染，属既有行为；若要修需同步动包侧布局）。
