@@ -96,6 +96,28 @@ export function createApi(
         config.headers = config.headers ?? {};
         config.headers['Authorization'] = `Bearer ${token}`;
       }
+
+      // ⚠️ FormData 必须把 Content-Type **整个删掉**（不是设成 undefined）。
+      //
+      // 本实例的默认 header 是 application/json，axios 见到它就会走 JSON
+      // 分支：FormData 被 `JSON.stringify` 成 `{"file":{},"projectId":"..."}`
+      // 发出去，服务端 `c.PostForm("projectId")` / `c.Request.FormFile("file")`
+      // 全部拿到空值 → 400「缺少 projectId」。
+      // 删掉之后由浏览器自己生成带 boundary 的 multipart/form-data。
+      //
+      // 影响的是**所有走 getApi() 上传文件的页面**（M6 的 Papyrus / Capella
+      // 导入就是其中一个：ImportPage 的注释写的是「不显式设置 Content-Type，
+      // 让浏览器自动生成 boundary」，但默认 header 又把它按住了，两边互相打架）。
+      if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+        config.headers = config.headers ?? {};
+        config.headers.delete?.('Content-Type');
+        // axiosHeaders 与普通对象两种形态都要处理，取决于调用方怎么构造 config
+        if (typeof config.headers.delete !== 'function') {
+          delete config.headers['Content-Type'];
+          delete config.headers['content-type'];
+        }
+      }
+
       // CSRF：mutating 方法从 csrf_token cookie 读取并写到 X-CSRF-Token header
       const m = (config.method || '').toUpperCase();
       if (m === 'POST' || m === 'PUT' || m === 'DELETE' || m === 'PATCH') {

@@ -38,9 +38,15 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 		req.Format = "md"
 	}
 
-	// 获取模型
-	m, err := h.repo.GetModel(c, req.ModelID)
+	// 取源码：先按旧模型查，查不到再按 M12 之后的包查
+	// （前端 ReportPage 传的是 modelStore.modelId，M12 之后那是 package id，
+	//  只查 models 表会让报告生成对每个工程都稳定 404 —— 与 codegen 同因）。
+	content, name, version, ok, err := h.resolveReportSource(c, req.ModelID)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取模型内容失败"})
+		return
+	}
+	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "模型不存在"})
 		return
 	}
@@ -54,25 +60,40 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 
 	title := req.Title
 	if title == "" {
-		title = m.Name
+		title = name
 	}
 
 	// 生成文档
-	var content string
+	var out string
 	if req.Format == "html" {
-		content = generateHTML(p.Name, title, m.Content, m.Version)
+		out = generateHTML(p.Name, title, content, version)
 	} else {
-		content = generateMarkdown(p.Name, title, m.Content, m.Version)
+		out = generateMarkdown(p.Name, title, content, version)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
 			"title":   title,
 			"format":  req.Format,
-			"content": content,
-			"size":    len(content),
+			"content": out,
+			"size":    len(out),
 		},
 	})
+}
+
+// resolveReportSource 按 id 取 SysML 源码 + 显示名 + 版本。
+//
+// 先试旧的 `models` 表，再试 M12 之后的 `packages` 表。返回
+// (content, name, version, found, err)；found=false 表示两张表都没有该 id。
+func (h *Handler) resolveReportSource(c *gin.Context, id string) (string, string, int, bool, error) {
+	if m, err := h.repo.GetModel(c, id); err == nil && m != nil {
+		return m.Content, m.Name, m.Version, true, nil
+	}
+	p, err := h.repo.GetPackage(c, id)
+	if err != nil || p == nil {
+		return "", "", 0, false, nil
+	}
+	return p.Content, p.Name, p.Version, true, nil
 }
 
 // ─── Markdown 生成 ────────────────────────────────────────────────

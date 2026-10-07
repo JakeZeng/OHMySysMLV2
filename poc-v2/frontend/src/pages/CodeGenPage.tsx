@@ -102,7 +102,14 @@ export const CodeGenPage: React.FC = () => {
           </div>
           <div className="flex-1">
             <label className="block text-xs font-medium text-gray-700">当前模型</label>
-            <p className="mt-1 text-sm text-gray-900">{modelName || '未打开模型'}</p>
+            {/* 判据用 modelId 而不是 modelName：store 的 name 默认值是
+                'untitled'（非空），`modelName || '未打开模型'` 那个兜底分支
+                **永远进不去**，于是没打开模型时这里显示的是 "untitled"。
+                真正的判据是 modelId —— 它为 null 才代表「没打开任何模型」，
+                也正是下面按钮 disabled 的依据。 */}
+            <p className="mt-1 text-sm text-gray-900">
+              {modelId ? modelName || '未命名模型' : '未打开模型'}
+            </p>
           </div>
           <Button onClick={() => void handleGenerate()} disabled={generating || !modelId}>
             {generating ? (

@@ -253,8 +253,32 @@ async function openProject(page: Page, auth: Auth, expandIds: string[] = []): Pr
     }
     if ((await row.getAttribute('aria-expanded')) !== 'true') {
       await toggle.click();
-      await page.waitForTimeout(800);
     }
+
+    // ⚠️ 展开后**不要**只 sleep 固定时长：包内元素是懒加载的
+    // （usePackageElements(expandedPackageIds)），全量 73 条 headed 连跑时
+    // 单条要多花好几秒，固定 800ms 会让元素行还没到就被断言「找不到」——
+    // 本轮全量回归就是这么红的，单跑又绿。
+    //
+    // 这里轮询等元素行出现，**但超时不算失败**：有些包本来就是「只有视图、
+    // 没有元素」的（m16 自己的注释提到过这个循环依赖），对它们等元素行是
+    // 永远等不到的。所以只把「提前返回」当收益，不把「等不到」当错误。
+    //
+    // ⚠️ 上限必须**远小于**用例的 30s 总预算（本文件 timeout 就是 30s）：
+    // 一开始给到 30s，结果 openProject 自己就把预算吃光，
+    // 后面 `view-expose-summary` 断言直接超时。8s 足够覆盖「固定 800ms
+    // 在连跑时不够」这一种真实抖动，又不会挤掉后面的断言。
+    try {
+      await expect
+        .poll(
+          async () => (await row.locator('[data-testid^="tree-row-elem:"]').count()) > 0,
+          { timeout: 8_000, intervals: [250, 500, 1000] },
+        )
+        .toBe(true);
+    } catch {
+      // 该包确实没有元素行（例如只挂了视图），交给后续断言去判
+    }
+    await page.waitForTimeout(200);
   }
 }
 

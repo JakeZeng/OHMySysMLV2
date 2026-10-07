@@ -128,13 +128,24 @@ export const shareApi = {
    * 用 token 拉取只读项目视图。404/无效统一处理。
    */
   async getSharedProject(token: string): Promise<SharedProjectView> {
+    // ⚠️ 这里**必须**用裸 axios 而不是 getApi()：访客没有登录态，
+    //    getApi() 的请求拦截器会顺手带上 localStorage 里的 token，
+    //    公开端点带 JWT 反而会被 AuthRequired 之外的中间件语义带偏。
     const anon = axios.create({
       baseURL: API_BASE,
       timeout: 15_000,
       headers: { 'Content-Type': 'application/json' },
     });
-    const { data } = await anon.get<SharedProjectView>(`/shared/${token}`);
-    return data;
+    const { data } = await anon.get<SharedProjectView | { data: SharedProjectView }>(
+      `/shared/${token}`,
+    );
+    // 代价是**丢掉了 getApi() 响应拦截器的 `{ data: T }` 解包**，
+    // 得自己剥这层信封。漏剥的话调用方拿到的是 `{ data: {...} }`，
+    // `view.project` 为 undefined → SharedProjectPage 渲染时抛
+    // 「Cannot read properties of undefined」，整页变成
+    // 「Unexpected Application Error!」（这条 e2e 就是它抓出来的）。
+    const body = data as { data?: SharedProjectView };
+    return body && typeof body === 'object' && 'data' in body ? body.data! : (data as SharedProjectView);
   },
 };
 

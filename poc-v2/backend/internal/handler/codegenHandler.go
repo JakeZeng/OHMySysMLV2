@@ -18,13 +18,16 @@ import (
 
 // CodeGenRequest 代码生成请求
 type CodeGenRequest struct {
+	// ModelID 既接受旧 `models` 表里的模型 id，也接受 M12 之后的一等公民 **包** id。
+	// 前端 CodeGenPage 传的是 `useModelStore(s => s.modelId)`，而 M12 之后那个字段
+	// 装的是 package id（modelStore 的 entityKind 才是二者之分），所以这里必须两条路都走。
 	ModelID  string `json:"modelId" binding:"required"`
 	Language string `json:"language" binding:"required"` // "python" or "cpp"
 }
 
 // CodeGenResponse 代码生成响应
 type CodeGenResponse struct {
-	Language string `json:"language"`
+	Language string        `json:"language"`
 	Files    []CodeGenFile `json:"files"`
 }
 
@@ -42,15 +45,23 @@ func (h *Handler) GenerateCode(c *gin.Context) {
 		return
 	}
 
-	// 获取模型
-	m, err := h.repo.GetModel(c, req.ModelID)
+	// 取内容：先按旧模型查，查不到再按包查。
+	//
+	// 只查 models 表的话，M12「Package 一等公民」之后前端传的必然是 package id，
+	// 于是每个工程都稳定返回 404「模型不存在」—— 代码生成功能等于完全不可用
+	// （本轮 e2e 实测：传 package id → 404；传真 model id → 200）。
+	content, ok, err := h.resolveCodegenSource(c, req.ModelID)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取模型内容失败"})
+		return
+	}
+	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "模型不存在"})
 		return
 	}
 
-	// 解析模型内容，提取 part def
-	elements := extractPartDefs(m.Content)
+	// 解析内容，提取 part def
+	elements := extractPartDefs(content)
 
 	// 根据语言生成代码
 	var files []CodeGenFile
@@ -71,6 +82,24 @@ func (h *Handler) GenerateCode(c *gin.Context) {
 }
 
 // ─── 元素提取 ─────────────────────────────────────────────────────
+
+/**
+ * resolveCodegenSource 按 id 取 SysML 源码内容。
+ *
+ * 先试旧的 `models` 表，再试 M12 之后的 `packages` 表。返回 (content, found, err)：
+ *   - found=false  → 两条路都没有这个 id → 404
+ *   - err != nil   → 数据库层出错 → 500（区别于「不存在」，别混成 404）
+ */
+func (h *Handler) resolveCodegenSource(c *gin.Context, id string) (string, bool, error) {
+	if m, err := h.repo.GetModel(c, id); err == nil && m != nil {
+		return m.Content, true, nil
+	}
+	p, err := h.repo.GetPackage(c, id)
+	if err != nil || p == nil {
+		return "", false, nil
+	}
+	return p.Content, true, nil
+}
 
 type PartDef struct {
 	Name       string
@@ -107,7 +136,15 @@ func extractPartDefs(content string) []PartDef {
 		trimmed := strings.TrimSpace(line)
 
 		if strings.HasPrefix(trimmed, "part def ") {
-			name := strings.TrimSuffix(strings.TrimPrefix(trimmed, "part def "), " {")
+			// 去掉声明尾部：`<name> {`（块体）或 `<name>;`（无体声明）。
+			//
+			// ⚠️ 之前只 TrimSuffix " {"，于是 `part def Vehicle;` 的名字会变成
+			// "Vehicle;" —— 直接漏进生成结果：文件名 `vehicle;.py`、
+			// class Vehicle; —— 生成的是**语法非法的代码**。两种尾都要剥。
+			name := strings.TrimPrefix(trimmed, "part def ")
+			name = strings.TrimSuffix(name, " {")
+			name = strings.TrimSuffix(strings.TrimSpace(name), ";")
+			name = strings.TrimSpace(name)
 			defs = append(defs, PartDef{Name: name})
 			current = &defs[len(defs)-1]
 			indent = 1
@@ -166,7 +203,7 @@ func generatePython(elements []PartDef) []CodeGenFile {
 
 	// 生成 __init__.py
 	files = append(files, CodeGenFile{
-		Name:    "__init__.py",
+		Name: "__init__.py",
 		Content: `"""Auto-generated from SysML v2 model."""
 `,
 	})

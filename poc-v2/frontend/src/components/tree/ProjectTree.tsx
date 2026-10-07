@@ -45,6 +45,16 @@ export interface ProjectTreeProps {
   viewNodeCounts?: Record<string, number>;
   /** M14：每个 package 内的元素节点列表（key = packageId） */
   packageElements?: Record<string, ElementNodeInfo[]>;
+  /**
+   * M18：已经加载过元素列表的 packageId。
+   *
+   * 包内元素懒加载（`usePackageElements` 只为已展开的包发请求），所以
+   * 「有元素的包」在加载前 `node.children` 是空的 → 若只按 children 判箭头，
+   * 就形成死循环：**没有箭头 → 无法展开 → 元素永远加载不出来**。传进来这份
+   * 「已加载」名单后，未加载的包也放行箭头（未知即允许展开），加载完发现
+   * 真的是空包，箭头自然消失。
+   */
+  loadedPackageIds?: readonly string[];
   onAction: (action: TreeAction) => void;
   /** 选中变化（宿主用于同步 URL） */
   onSelect?: (encodedId: string | null) => void;
@@ -61,6 +71,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   error = null,
   viewNodeCounts,
   packageElements,
+  loadedPackageIds,
   onAction,
   onSelect,
   className,
@@ -107,6 +118,28 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
   const rows = React.useMemo(
     () => visibleRows(root, expandedIds),
     [root, expandedIds],
+  );
+
+  /**
+   * M18：这一行能不能展开。
+   *
+   * - 有子节点（子包 / 视图 / 视角 / 已加载的元素）→ 能
+   * - 包但元素**还没加载** → 也放行（点了就会触发 `usePackageElements` 请求）
+   * - 其余（叶元素、加载完确认是空的包）→ 不能
+   *
+   * 刻意不在这里发请求：一次加载 = 一个 `GET /packages/:id`，工程里几十个包
+   * 全量预取会把首屏打爆。放行箭头只是让用户能点。
+   */
+  const loadedPackages = React.useMemo(
+    () => new Set(loadedPackageIds ?? []),
+    [loadedPackageIds],
+  );
+  const isExpandable = React.useCallback(
+    (node: TreeNode) => {
+      if (node.children.length > 0) return true;
+      return node.kind === 'package' && !loadedPackages.has(node.id);
+    },
+    [loadedPackages],
   );
 
   const handleSelect = React.useCallback(
@@ -229,7 +262,9 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
       const { node: current, depth } = rows[idx];
 
       const isExpanded = expandedIds.has(current.encodedId);
-      const hasChildren = current.children.length > 0;
+      // M18：与箭头同一套判定（包元素未加载时也算可展开），否则键盘用户
+      // 在「有元素但没加载」的包上按 → 毫无反应。
+      const hasChildren = isExpandable(current);
 
       switch (e.key) {
         case 'ArrowDown':
@@ -246,14 +281,15 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
           e.preventDefault();
           if (hasChildren && !isExpanded) {
             expand(current.encodedId);
-          } else if (hasChildren && isExpanded) {
+          } else if (isExpanded && current.children.length > 0) {
             focusRow(current.children[0].encodedId);
           }
           break;
 
         case 'ArrowLeft': {
           e.preventDefault();
-          if (hasChildren && isExpanded) {
+          // 已展开 → 先折叠（不管有没有子节点：包可能展开着还没加载出元素）
+          if (isExpanded) {
             collapse(current.encodedId);
             break;
           }
@@ -338,6 +374,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
       collapse,
       focusRow,
       handleSelect,
+      isExpandable,
       onAction,
     ],
   );
@@ -394,6 +431,7 @@ export const ProjectTree: React.FC<ProjectTreeProps> = ({
             node={node}
             depth={depth}
             expanded={expandedIds.has(node.encodedId)}
+            expandable={isExpandable(node)}
             selected={selectedId === node.encodedId}
             focused={(focusedId ?? selectedId ?? root.encodedId) === node.encodedId}
             badge={

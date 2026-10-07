@@ -15,6 +15,7 @@ import { useModelStore } from '../../stores/modelStore';
 import { useUIStore } from '../../stores/uiStore';
 import { schemaFor, type FormSchema, type FormField, type RepeatableFieldTemplate, type SectionKey } from '../../lib/elementFormSchema';
 import { applyFieldEdit, applyListEdit, type ListItem } from '../../lib/reverseSerialize';
+import { NameField } from './NameField';
 import { Button } from '../ui/Button';
 
 const KIND_COLOR: Record<string, string> = {
@@ -26,6 +27,29 @@ const KIND_COLOR: Record<string, string> = {
   sysmlRequirement: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
   sysmlConstraint: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
 };
+
+/**
+ * 取字段的显示值。
+ *
+ * M18：schema 的身份字段叫 `name`，而画布节点（modelToFlow）把元素名统一放在
+ * `data.label` 上 —— 只读 `data.name` 会让「名称」框永远空白（连画布选中也一样，
+ * 这是既有缺陷）。名字字段回退读 label，其余字段照旧。
+ *
+ * 纯读，不回写：FieldEditor 只在用户输入时回调，不会因为这里补了值就把
+ * content 改一遍。
+ */
+export function resolveFieldValue(
+  data: Record<string, unknown>,
+  fieldKey: string,
+): unknown {
+  const direct = data[fieldKey];
+  if (direct !== undefined && direct !== null) return direct;
+  if (fieldKey === 'name') {
+    const label = data.label;
+    if (typeof label === 'string') return label;
+  }
+  return '';
+}
 
 export interface ElementFormPanelProps {
   selectedNode: Node | null;
@@ -126,6 +150,33 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
     );
     if (result.changed) {
       setContent(result.text);
+    }
+  };
+
+  /**
+   * M18.1：名称提交（与信息卡共用 `NameField`，改法保持一致）。
+   *
+   * `applyFieldEdit` → `renameNode` 对非法标识符是**抛异常**的，而调用点原先在
+   * debounce 定时器里，没有任何 try/catch —— 结果是 uncaught error + 输入框里
+   * 留着没生效的名字。现在改成返回 `{ ok, reason }`，交给 NameField 行内报错
+   * 并把草稿弹回原值。
+   */
+  const handleNameCommit = (next: string): { ok: boolean; reason?: string } => {
+    if (effectiveReadOnly || !isFromModel) {
+      return { ok: false, reason: '该元素当前不可改名（只读 / 不来自模型内容）' };
+    }
+    try {
+      const result = applyFieldEdit(
+        useModelStore.getState().content,
+        pipeline.model,
+        String(selectedNode.id),
+        { fieldKey: 'name', value: next }
+      );
+      if (!result.changed) return { ok: false, reason: '改名没有生效（元素定位失败）' };
+      setContent(result.text);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message };
     }
   };
 
@@ -253,15 +304,29 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
               />
             ) : (
               <div className="space-y-2">
-                {section.fields.map((field) => (
-                  <FieldEditor
-                    key={field.key}
-                    field={field}
-                    value={data[field.key] ?? ''}
-                    onChange={(v) => handleFieldChange(field.key, v)}
-                    disabled={effectiveReadOnly || !isFromModel}
-                  />
-                ))}
+                {section.fields.map((field) =>
+                  // M18.1：名称字段走共享 NameField（与信息卡同一套改法：
+                  // 常驻输入框 + debounce 自动写回 + Enter 提交 + Esc 撤销）。
+                  // 其余字段仍走通用 FieldEditor。
+                  field.key === 'name' ? (
+                    <NameField
+                      key={field.key}
+                      value={String(resolveFieldValue(data, 'name') ?? '')}
+                      onCommit={handleNameCommit}
+                      disabled={effectiveReadOnly || !isFromModel}
+                      label={field.label}
+                      required={field.required}
+                    />
+                  ) : (
+                    <FieldEditor
+                      key={field.key}
+                      field={field}
+                      value={resolveFieldValue(data, field.key)}
+                      onChange={(v) => handleFieldChange(field.key, v)}
+                      disabled={effectiveReadOnly || !isFromModel}
+                    />
+                  ),
+                )}
               </div>
             )}
           </div>

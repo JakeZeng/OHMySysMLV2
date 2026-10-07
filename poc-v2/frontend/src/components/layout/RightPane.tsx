@@ -11,6 +11,7 @@ import { ViewPropertiesForm } from '../forms/ViewPropertiesForm';
 import { ProjectPropertiesForm } from '../forms/ProjectPropertiesForm';
 import { EmptyPropertiesPane } from '../forms/EmptyPropertiesPane';
 import { ElementFormPanel } from '../forms/ElementFormPanel';
+import { ElementInfoPanel } from '../forms/ElementInfoPanel';
 import { ConnectionFormPanel } from '../forms/ConnectionFormPanel';
 import { useProjectStore } from '../../stores/projectStore';
 import { usePackages } from '../../hooks/usePackages';
@@ -21,6 +22,7 @@ import { useModelStore } from '../../stores/modelStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Package, PackageSummary } from '../../types/package';
 import type { View, ViewSummary } from '../../types/view';
+import type { ResolvedTreeElement } from '../../lib/treeSelection';
 
 export interface RightPaneProps {
   project: Project;
@@ -32,6 +34,16 @@ export interface RightPaneProps {
    * 开头），但**删除**与**跳转源码**仍然可用。
    */
   selectedEdge?: Edge | null;
+  /**
+   * M18：工程树上选中的元素（已解析出身份）。
+   *
+   * 只在「画布上没有对应节点」时才会走到这里的分支 —— ProjectDetail 已把
+   * 能映射成画布节点的元素转成了 `selectedNode`（优先级 1），所以到第 3 档
+   * 说明这是 attributeUsage 这类不进画布的元素，给它只读信息卡而不是空白。
+   */
+  selectedElement?: ResolvedTreeElement | null;
+  /** 归属 namespace 名称（信息卡展示用） */
+  selectedElementOwnerName?: string;
   /** 选中连线后跳转源码行 */
   onJumpToEdgeSource?: (line: number) => void;
   /** 删除连线（走既有 deleteConnection 文本算子） */
@@ -41,6 +53,10 @@ export interface RightPaneProps {
    * 自增计数（而不是 boolean）：连续两次双击时 boolean 不变，第二次不会重新全选。
    */
   focusNameTick?: number;
+  /** 树选中元素（已解析出身份）的改名（M18.1） */
+  onRenameSelectedElement?: (
+    newName: string,
+  ) => { ok: boolean; reason?: string } | Promise<{ ok: boolean; reason?: string }>;
   onClearedSelection: () => void;
   onOpenSettings: () => void;
   onOpenShare: () => void;
@@ -52,9 +68,12 @@ export const RightPane: React.FC<RightPaneProps> = ({
   selectedViewId,
   selectedNode,
   selectedEdge,
+  selectedElement,
+  selectedElementOwnerName,
   onJumpToEdgeSource,
   onDeleteEdge,
   focusNameTick,
+  onRenameSelectedElement,
   onClearedSelection,
   onOpenSettings,
   onOpenShare,
@@ -126,7 +145,21 @@ export const RightPane: React.FC<RightPaneProps> = ({
     );
   }
 
-  // 3. 包
+  // 3. 树选中元素（M18）
+  //    画布上有节点的情况已被 ProjectDetail 转成 selectedNode（档位 1）走到这；
+  //    到这里说明元素不进画布节点范围，给它自己的属性卡（可改名），别退回包属性假装没选中。
+  if (selectedElement) {
+    return (
+      <ElementInfoPanel
+        element={selectedElement}
+        ownerName={selectedElementOwnerName}
+        onClear={onClearedSelection}
+        onRename={onRenameSelectedElement}
+      />
+    );
+  }
+
+  // 4. 包
   if (selectedPackageId) {
     // 详情数据未到位：用 summary 凑一个最小 Package（含 content=空）；fallback
     const pkg: Package | null =

@@ -12,6 +12,7 @@
 import { create } from 'zustand';
 import { packageApi } from '../services/packageApi';
 import { runPipeline, EMPTY_PIPELINE } from '../lib/pipeline';
+import type { SysMLModel } from '@ast/model';
 import type { ElementNodeInfo } from '../lib/tree';
 
 interface ElementTreeCacheState {
@@ -33,6 +34,7 @@ interface ElementTreeCacheState {
 }
 
 interface MemberLike {
+  id?: string;
   name?: string;
   kind?: string;
   body?: MemberLike[];
@@ -48,12 +50,16 @@ export const IMPLICIT_ROOT_LABEL = '<模型根>';
  * M16 P2：改为**真递归**——body（def/usage 的 ownership 链）与 members
  * （content 内嵌套 `package {}` 块）都逐层展开。
  * view/viewpoint 成员跳过（它们由后端 View/Viewpoint 实体节点呈现，避免重复）。
+ *
+ * astId：带上 NamespaceMember.id 供属性窗展示/同名消歧用。注意它**不能**跨解析
+ * 拿去匹配画布节点 id（解析器 id 计数器全局递增），理由见 lib/treeSelection.ts。
  */
 function toElementInfo(m: MemberLike): ElementNodeInfo | null {
   const name = m.name;
   if (!name) return null;
   if (m.kind === 'view' || m.kind === 'viewpoint') return null;
   const info: ElementNodeInfo = { name, kind: m.kind ?? '' };
+  if (m.id) info.astId = m.id;
   const kids = [...(m.body ?? []), ...(m.members ?? [])];
   if (kids.length > 0) {
     const children: ElementNodeInfo[] = [];
@@ -75,15 +81,26 @@ function toElementInfo(m: MemberLike): ElementNodeInfo | null {
  * M16 P2（Q6/Q19）：
  *   - content 只有一个命名包且无裸顶层成员 → 平铺该包成员（既有 UX 不变，
  *     实体包节点即命名空间，不再多一层同名文本包）
- *   - content 含多个命名包 / 命名包+裸成员混合 → 命名包成子树（kind 'package'），
+ *   - content 含多个命名包 / 命名包+裸成员混合 → 命名包成子树（kind 'package')，
  *     裸顶层成员（解析器归入 isImplicitRoot 隐式根包）挂虚拟 `<模型根>` 分组
+ *
+ * ⚠️ M18.1：真正干活的是 `extractElementsFromModel`。
+ * 编辑器里 modelStore 已经有一份 parse 结果（`pipeline.model`），树直接复用它
+ * 即可，不必为树再 parse 一次文本 —— 也因此树能反映**本地未保存**的改动
+ * （属性窗改名 / 画布插入元素 / 文本模式编辑）。
  */
 export function extractElements(content: string): ElementNodeInfo[] {
   if (!content?.trim()) return [];
   try {
-    const pipeline = runPipeline(content);
-    const model = pipeline.model;
+    return extractElementsFromModel(runPipeline(content).model);
+  } catch {
+    return [];
+  }
+}
 
+/** 与 `extractElements` 同逻辑，但直接吃 model（避免重复 parse）。 */
+export function extractElementsFromModel(model: SysMLModel): ElementNodeInfo[] {
+  {
     const bareMembers: MemberLike[] = [];
     const namedPkgs: MemberLike[] = [];
     for (const pkg of (model.packages ?? []) as MemberLike[]) {
@@ -151,8 +168,6 @@ export function extractElements(content: string): ElementNodeInfo[] {
       for (const b of bareAll) pushInfo(b);
     }
     return out;
-  } catch {
-    return [];
   }
 }
 

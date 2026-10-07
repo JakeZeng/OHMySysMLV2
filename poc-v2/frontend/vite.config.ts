@@ -27,7 +27,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': {
+      // ⚠️ 必须是 `'^/api/'` 而不是 `'/api'`。proxy 的 key 是**前缀匹配**，
+      // 写成 `'/api'` 会把 SPA 自己的 `/api-keys` 路由也代理到后端 ——
+      // 后端没有这条路径，于是 API Keys 页在 dev 下直接 404「page not found」
+      // （`/apikeys` 同理）。加 `^…/` 之后只匹配真正的后端路径段。
+      '^/api/': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

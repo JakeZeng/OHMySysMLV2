@@ -28,6 +28,15 @@ export interface ElementNodeInfo {
   /** AST kind（partDef / portDef / state / ...） */
   kind: string;
   /**
+   * AST 元素 id（`extractElements` 从 NamespaceMember.id 带下来）。
+   *
+   * ⚠️ **不能**用它去匹配画布节点 id：peggy 的 id 计数器跨次解析全局递增，
+   * 同一份 content 被树侧和画布侧各解析一次，拿到的 id 不同（实测
+   * `partDef_2` vs `pd:partDef_6`）。它只在「同名元素消歧」时作为末位兜底，
+   * 跨解析场景下匹配不上也不影响正确性。详见 `findElementCanvasNode` 注释。
+   */
+  astId?: string;
+  /**
    * M15：嵌套子元素（`part def X { part sub; }` 的 body）。
    * 递归上树，缩进展示 SysML v2 ownership 链。
    */

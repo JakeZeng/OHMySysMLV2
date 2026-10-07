@@ -892,6 +892,8 @@ export interface DiagramCanvasHandle {
   focusNode(nodeId: string): void;
   /** M14：通过元素名（label）查找并聚焦节点 */
   focusNodeByName(name: string): boolean;
+  /** M18：按节点 id 选中并聚焦（工程树点元素时用，见实现处注释） */
+  selectNodeById(nodeId: string): boolean;
   exportPng(): Promise<Blob | null>;
   exportSvg(): Promise<Blob | null>;
 }
@@ -1112,6 +1114,60 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     highlightTimerRef.current = setTimeout(() => setHighlightedNodeId(null), 2000);
   }, []);
 
+  /**
+   * M18：外部（工程树）请求选中的节点，可能**此刻还不在画布上**。
+   *
+   * 树的点击会触发 scope content 的异步加载 → pipeline → ELK 布局，这条链走完
+   * 之前 `nodes` 还是上一轮的值（甚至空）。所以不能「找不到就放弃」——
+   * 记下 id，等 `nodes` 里真出现它时再应用（见下方 nodes effect）。
+   */
+  const pendingSelectIdRef = React.useRef<string | null>(null);
+
+  /** 应用 pendingSelectIdRef：节点在场就选中并上抛，成功则清空 pending */
+  const applyPendingSelect = useCallback((): boolean => {
+    const wanted = pendingSelectIdRef.current;
+    if (!wanted) return false;
+    const target = nodes.find((n) => String(n.id) === wanted);
+    if (!target) return false;
+    pendingSelectIdRef.current = null;
+    selectedRef.current = new Map([
+      [wanted, { type: target.type, label: (target.data as { label?: string })?.label }],
+    ]);
+    setSelectedNodeIds(new Set([wanted]));
+    // 上抛一次，宿主据此渲染右栏元素表单（与 handleNodeDoubleClick 同一条通道）
+    onSelectionChange?.(target);
+    const instance = rfInstanceRef.current;
+    if (instance) {
+      instance.fitView({ nodes: [target], duration: 500, padding: 0.5 });
+      setHighlightedNodeId(wanted);
+      scheduleClear();
+    }
+    return true;
+  }, [nodes, onSelectionChange, scheduleClear]);
+
+  // 节点到位（pipeline / 布局回来）后补选：只在有 pending 时跑，不干扰正常交互
+  React.useEffect(() => {
+    if (!pendingSelectIdRef.current) return;
+    applyPendingSelect();
+  }, [nodes, applyPendingSelect]);
+
+  /**
+   * M18.2：给 imperative handle 一个**永远新鲜**的 `applyPendingSelect`。
+   *
+   * ⚠️ `useImperativeHandle` 的依赖数组是 `[]`（见下方），handle 对象只在首帧
+   * 建一次，于是它闭包里的 `applyPendingSelect` 捕获的是**首帧那份 nodes
+   * （通常是空数组）**。后果：
+   *   - 宿主每次调 `selectNodeById(x)` → 记 pending → 用陈旧 nodes 找 → 必然失败；
+   *   - 只剩「等 nodes 变化时补选」那一条路（上面的 effect）。
+   *   - 于是**首次**点树上元素能选中（content 异步加载让 nodes 恰好变了一次），
+   *     但**再点一次同一个元素**时 nodes 没变 → effect 不跑 → pending 永不应用 →
+   *     属性窗还钉在上一次画布点中的节点上（用户实测报「树上选中没同步」）。
+   *
+   * 修法：把最新闭包喂进 ref，handle 本身保持 `[]`（引用稳定，不牵连其它方法）。
+   */
+  const applyPendingSelectRef = React.useRef(applyPendingSelect);
+  applyPendingSelectRef.current = applyPendingSelect;
+
   useImperativeHandle(ref, () => ({
     focusNode(nodeId: string) {
       const instance = rfInstanceRef.current;
@@ -1134,6 +1190,29 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       setHighlightedNodeId(target.id);
       scheduleClear();
       return true;
+    },
+    /**
+     * M18：由外部（工程树选元素）驱动画布选中。
+     *
+     * 为什么必须走画布自己的选中 state，而不是宿主直接 `setSelectedNode`：
+     * 画布的选中是**受控回写**的（`handleNodesChange` 把 RF 的 select 变化写进
+     * 本地 `selectedNodeIds`/`selectedRef`，再由 `onSelectionChange` 上抛）。
+     * 宿主若只塞父组件的 state，RF 会在下一次 nodes 同步时把选中清掉，
+     * 紧接着 `onSelectionChange(null)` 把父组件的选中也抹了 —— 症状就是
+     * 「树点元素 → 画布高亮闪一下 → 属性窗退回包属性」。
+     *
+     * 这里与双击改名的选中回写（`handleNodeDoubleClick`）是同一套写法：
+     * 本地 state + 身份 ref + 主动上抛一次。
+     *
+     * 节点还没渲染出来时**不失败**：记进 pendingSelectIdRef，等 nodes 里出现它
+     * 再应用（见 applyPendingSelect）。树点元素时 content 是异步加载的，
+     * 调用那一刻画布上通常还没有这个节点。
+     */
+    selectNodeById(nodeId: string): boolean {
+      pendingSelectIdRef.current = String(nodeId);
+      // 必须走 ref：handle 的依赖是 []，直接用 applyPendingSelect 会拿到首帧的
+      // 陈旧 nodes（见 applyPendingSelectRef 上方注释）。
+      return applyPendingSelectRef.current();
     },
     async exportPng(): Promise<Blob | null> {
       const rfElement = document.querySelector('.react-flow') as HTMLElement | null;

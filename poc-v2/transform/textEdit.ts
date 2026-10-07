@@ -59,12 +59,67 @@ export interface EditResult {
 
 // ─── 公共：找到原始位置（offset）────────────────────────────────────
 
+/**
+ * 可命名声明的 kind。
+ *
+ * M18：这里原本只有 6 个（partDef / partUsage / portDef / portUsage /
+ * connection / attribute），于是 `item def` / `state` / `requirement def` /
+ * `constraint def` / `ref` / 状态机 / 活动 这些**画布上有节点、属性窗里也
+ * 有「名称」输入框**的元素，改名走到 `findDecl` 一律返回 undefined →
+ * 静默 no-op（用户改完看不到任何变化，也没报错）。这里补齐全量具名节点。
+ */
 interface EditableDecl {
-  kind: 'partDef' | 'partUsage' | 'portDef' | 'portUsage' | 'connection' | 'attribute';
+  kind:
+    | 'partDef'
+    | 'partUsage'
+    | 'portDef'
+    | 'portUsage'
+    | 'connection'
+    | 'attribute'
+    // ── M18 补齐 ──
+    | 'itemUsage'
+    | 'referenceUsage'
+    | 'structureDef' // itemDef / attributeDef / … / verificationCaseDef（11 种同构）
+    | 'stateMachine'
+    | 'stateDef'
+    | 'activity'
+    | 'actionDef'
+    | 'requirement'
+    | 'constraintBlock'
+    | 'constraintParam'
+    | 'enumDef'
+    | 'alias'
+    | 'view'
+    | 'viewpoint'
+    | 'stakeholderUsage'
+    | 'frameConcern';
   id: string;
   name: string;
   location: { line: number; column: number; offset: number };
 }
+
+/**
+ * StructureDefinition 的 11 个 kind 在结构上完全同构（特化 + body），
+ * 统一按 `structureDef` 收编，避免 11 处重复分支。
+ */
+const STRUCTURE_DEF_KINDS = new Set<string>([
+  'itemDef',
+  'attributeDef',
+  'interfaceDef',
+  'occurrenceDef',
+  'connectionDef',
+  'actionDefinition',
+  'stateDefinition',
+  'calcDefinition',
+  'useCaseDef',
+  'analysisCaseDef',
+  'verificationCaseDef',
+]);
+
+/** 声明位置上、名字 token 之前可能出现的关键字（`findIdentifierOffset` 用）。 */
+const DECL_KEYWORDS =
+  'part|port|def|in|out|inout|item|ref|attribute|state|machine|action|' +
+  'requirement|constraint|enum|view|viewpoint|alias|abstract|initial|final';
 
 /**
  * 把 AST 全部可命名节点摊平到一个数组，便于按 nodeId 反查。
@@ -82,7 +137,41 @@ export function flattenDeclarations(model: SysMLModel): EditableDecl[] {
       location: conn.location,
     });
   }
+  // ── M18：顶层非包命名空间也要能被改名 ──
+  for (const sm of model.stateMachines ?? []) {
+    pushNamed(out, 'stateMachine', sm);
+    for (const s of sm.states ?? []) pushNamed(out, 'stateDef', s);
+  }
+  for (const act of model.activities ?? []) {
+    pushNamed(out, 'activity', act);
+    for (const a of act.actions ?? []) pushNamed(out, 'actionDef', a);
+  }
+  for (const req of model.requirements ?? []) pushNamed(out, 'requirement', req);
+  for (const cb of model.constraintBlocks ?? []) {
+    pushNamed(out, 'constraintBlock', cb);
+    for (const p of (cb as any).parameters ?? []) pushNamed(out, 'constraintParam', p);
+  }
+  for (const en of model.enums ?? []) pushNamed(out, 'enumDef', en);
+  for (const v of model.views ?? []) {
+    pushNamed(out, 'view', v);
+    collectMembers(v?.members, out);
+  }
+  for (const vp of model.viewpoints ?? []) {
+    pushNamed(out, 'viewpoint', vp);
+    collectMembers(vp?.members, out);
+  }
   return out;
+}
+
+/** 带 name 的 AST 节点 → EditableDecl（无名节点静默跳过）。 */
+function pushNamed(out: EditableDecl[], kind: EditableDecl['kind'], node: any): void {
+  if (!node || typeof node.name !== 'string' || !node.name) return;
+  out.push({ kind, id: node.id, name: node.name, location: node.location });
+}
+
+/** namespace members 数组 → out（递归交给调用方的 collect* 处理）。 */
+function collectMembers(members: any[] | undefined, out: EditableDecl[]): void {
+  for (const m of members ?? []) collectFromPackage(m as any, out);
 }
 
 function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
@@ -143,7 +232,70 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
         collectFromPackage(m, out);
         break;
       case 'import':
-        // 不参与图形节点编辑
+        // 不参与图形节点编辑（落到 default 也不会命中 STRUCTURE_DEF_KINDS，
+        // 但显式写出来是为了让人一眼看到「这里有意不收」）
+        break;
+      // ── M18：以下几类原本被 switch 漏掉，导致改名 / 删除对它们静默失效 ──
+      case 'itemUsage':
+        out.push({ kind: 'itemUsage', id: m.id, name: m.name, location: m.location });
+        collectBody(m.body, out, pkg.name);
+        break;
+      case 'referenceUsage':
+        out.push({
+          kind: 'referenceUsage',
+          id: m.id,
+          name: m.name,
+          location: m.location,
+        });
+        break;
+      case 'stateMachine':
+        pushNamed(out, 'stateMachine', m);
+        for (const s of m.states ?? []) pushNamed(out, 'stateDef', s);
+        break;
+      case 'activity':
+        pushNamed(out, 'activity', m);
+        for (const a of m.actions ?? []) pushNamed(out, 'actionDef', a);
+        break;
+      case 'requirement':
+        out.push({ kind: 'requirement', id: m.id, name: m.name, location: m.location });
+        break;
+      case 'constraintBlock':
+        pushNamed(out, 'constraintBlock', m);
+        for (const p of (m as any).parameters ?? []) pushNamed(out, 'constraintParam', p);
+        break;
+      case 'enumDef':
+        pushNamed(out, 'enumDef', m);
+        break;
+      case 'alias':
+        pushNamed(out, 'alias', m);
+        break;
+      case 'view':
+        pushNamed(out, 'view', m);
+        collectMembers(m.members, out);
+        break;
+      case 'viewpoint':
+        pushNamed(out, 'viewpoint', m);
+        collectMembers(m.members, out);
+        break;
+      case 'stakeholderUsage':
+        pushNamed(out, 'stakeholderUsage', m);
+        break;
+      case 'frameConcern':
+        pushNamed(out, 'frameConcern', m);
+        break;
+      default:
+        // StructureDefinition 的 11 个 kind（itemDef / attributeDef / interfaceDef /
+        // occurrenceDef / connectionDef / actionDefinition / stateDefinition /
+        // calcDefinition / useCaseDef / analysisCaseDef / verificationCaseDef）
+        if (STRUCTURE_DEF_KINDS.has(m.kind)) {
+          out.push({
+            kind: 'structureDef',
+            id: m.id,
+            name: m.name,
+            location: m.location,
+          });
+          collectBody(m.body, out, pkg.name);
+        }
         break;
     }
   }
@@ -154,7 +306,7 @@ function collectBody(
   out: EditableDecl[],
   _pkgName: string
 ): void {
-  for (const m of body) {
+  for (const m of body ?? []) {
     if (m.kind === 'portUsage') {
       out.push({
         kind: 'portUsage',
@@ -169,6 +321,27 @@ function collectBody(
         name: m.name,
         location: m.location,
       });
+    } else if (m.kind === 'partUsage') {
+      out.push({ kind: 'partUsage', id: m.id, name: m.name, location: m.location });
+      collectBody((m as PartUsage).body, out, _pkgName);
+    } else if (m.kind === 'itemUsage') {
+      out.push({ kind: 'itemUsage', id: m.id, name: m.name, location: m.location });
+    } else if (m.kind === 'referenceUsage') {
+      out.push({ kind: 'referenceUsage', id: m.id, name: m.name, location: m.location });
+    } else if (STRUCTURE_DEF_KINDS.has(m.kind)) {
+      out.push({
+        kind: 'structureDef',
+        id: m.id,
+        name: m.name,
+        location: m.location,
+      });
+      collectBody((m as any).body, out, _pkgName);
+    } else if (m.kind === 'partDef') {
+      out.push({ kind: 'partDef', id: m.id, name: m.name, location: m.location });
+      collectBody(m.body, out, _pkgName);
+    } else if (m.kind === 'portDef') {
+      out.push({ kind: 'portDef', id: m.id, name: m.name, location: m.location });
+      collectBody(m.body, out, _pkgName);
     }
   }
 }
@@ -177,26 +350,103 @@ function collectBody(
 
 /**
  * 把 React Flow 节点 id 解析为 AST 声明。
- * 我们的 nodeId 格式：`pd:<id>` / `pu:<id>` / `portdef:<id>` / `port:<id>`。
+ *
+ * 我们的 nodeId 格式：`pd:<id>` / `pu:<id>` / `portdef:<id>` / `port:<id>`，
+ * M17/M18 又加了 `iu:` / `ru:` / `sd:` / `sm:` / `state:` / `act:` / `action:` /
+ * `req:` / `cb:` …… 前缀表不可能一直补得齐。
+ *
+ * M18 改为：**前缀只当 kind 提示，定位一律靠 astId**。解析器（peggy `nextId`）
+ * 在一次 parse 内生成全局唯一 id，而 nodeId 里带的 astId 正是同一次 parse 的
+ * model 里的 id，所以「剥掉第一个 `:` 之前的部分再全表匹配」就够用了。
+ * 前缀表退化成消歧提示（同名多解时优先），不改变既有语义。
  */
 export function findDecl(
   model: SysMLModel,
   nodeId: string
 ): EditableDecl | undefined {
   const all = flattenDeclarations(model);
-  const map: Record<string, EditableDecl['kind']> = {
-    'pd:': 'partDef',
-    'pu:': 'partUsage',
-    'portdef:': 'portDef',
-    'port:': 'portUsage',
-  };
-  for (const [prefix, kind] of Object.entries(map)) {
-    if (nodeId.startsWith(prefix)) {
-      const astId = nodeId.slice(prefix.length);
-      return all.find((d) => d.id === astId && d.kind === kind);
-    }
+  const colon = nodeId.indexOf(':');
+  if (colon < 0) return all.find((d) => d.id === nodeId);
+  const prefix = nodeId.slice(0, colon + 1);
+  const astId = nodeId.slice(colon + 1);
+
+  const hintedKind: EditableDecl['kind'] | undefined = PREFIX_KIND_HINTS[prefix];
+  if (hintedKind) {
+    const byHintedKind = all.find((d) => d.id === astId && d.kind === hintedKind);
+    if (byHintedKind) return byHintedKind;
   }
-  return undefined;
+  return all.find((d) => d.id === astId);
+}
+
+/** 已知前缀 → AST kind（仅作消歧提示；未列出的前缀走纯 astId 匹配）。 */
+const PREFIX_KIND_HINTS: Record<string, EditableDecl['kind']> = {
+  'pd:': 'partDef',
+  'pu:': 'partUsage',
+  'portdef:': 'portDef',
+  'port:': 'portUsage',
+};
+
+/**
+ * M18：按**限定名**反查 React Flow 节点 id。
+ *
+ * 存在的理由：属性窗（ElementInfoPanel）拿到的是工程树里的元素，它所在的
+ * 那棵 AST 是**另一次 parse** 的（`usePackageElements` 自己 parse 一份），
+ * astId 因此对不上画布/pipeline 的 model（peggy `nextId` 全局递增，见
+ * `lib/treeSelection.ts` 的踩坑注释）。名字在同一份 content 内才是稳定的，
+ * 所以这里按限定名在 **pipeline 的 model** 里重新定位一次。
+ *
+ * 匹配顺序：先精确匹配完整限定名；找不到就退化成「最后一段（元素名）相同」
+ * 的第一个命中 —— 与 `findElementCanvasNode` 的 label 优先策略一致。
+ */
+export function findNodeIdByQualifiedName(
+  model: SysMLModel,
+  qualifiedName: string
+): string | null {
+  const index = buildQualifiedNameIndex(model);
+  const exact = index.get(qualifiedName);
+  if (exact) return `decl:${exact.id}`;
+
+  const leaf = qualifiedName.split('::').pop() ?? qualifiedName;
+  for (const [path, decl] of index) {
+    if ((path.split('::').pop() ?? path) === leaf) return `decl:${decl.id}`;
+  }
+  return null;
+}
+
+/** 限定名 → { id }（按 AST 结构逐层拼 `A::B::X`）。 */
+function buildQualifiedNameIndex(model: SysMLModel): Map<string, { id: string }> {
+  const index = new Map<string, { id: string }>();
+  const register = (node: any, prefix: string) => {
+    if (!node) return;
+    const name = typeof node.name === 'string' && node.name ? node.name : '';
+    const path = name ? (prefix ? `${prefix}::${name}` : name) : prefix;
+    if (name && typeof node.id === 'string' && !index.has(path)) {
+      index.set(path, { id: node.id });
+    }
+    walk(node.body, path);
+    walk(node.states, path);
+    walk(node.actions, path);
+    walk(node.parameters, path);
+    walk(node.members, path);
+  };
+  const walk = (list: any[] | undefined, prefix: string) => {
+    for (const m of list ?? []) register(m, prefix);
+  };
+
+  for (const pkg of model.packages ?? []) register(pkg, '');
+  for (const list of [
+    model.stateMachines,
+    model.activities,
+    model.requirements,
+    model.constraintBlocks,
+    model.enums,
+    model.comments,
+  ]) {
+    walk(list as any[] | undefined, '');
+  }
+  for (const v of model.views ?? []) register(v, '');
+  for (const vp of model.viewpoints ?? []) register(vp, '');
+  return index;
 }
 
 /**
@@ -233,12 +483,35 @@ function collectConnRef(pkg: Package, partName: string, out: Connection[]): void
 // ─── 重命名节点 ────────────────────────────────────────────────────────
 
 /**
- * renameNode — 修改 SysML 文本中指定节点的 name，并把所有 connect 引用一并改掉。
+ * 会产生「文本级引用」的声明 kind —— 改名时除声明本身外还要改引用点。
+ *
+ * 不在这个表里的（attribute / constraintParam / enumDef / view / viewpoint /
+ * stakeholderUsage / frameConcern / alias）要么没人引用，要么引用由后端
+ * `expose` / `satisfy` 解析另行处理，只改声明即可。
+ */
+const REFERENCED_DECL_KINDS: ReadonlySet<EditableDecl['kind']> = new Set([
+  'partDef',
+  'partUsage',
+  'portDef',
+  'portUsage',
+  'itemUsage',
+  'structureDef',
+  'stateDef',
+  'actionDef',
+  'requirement',
+]);
+
+/**
+ * renameNode — 修改 SysML 文本中指定节点的 name，并把所有引用一并改掉。
  *
  * @param text  原文本
  * @param model  解析后的 AST
- * @param nodeId  React Flow 节点 id（`pd:xxx` / `pu:xxx` / `portdef:xxx` / `port:xxx`）
+ * @param nodeId  React Flow 节点 id（`pd:xxx` / `state:xxx` / `req:xxx` / `sd:xxx` …）
  * @param newName  新名字（需符合 SysML identifier 规则）
+ *
+ * M18：覆盖全部具名 AST 节点（此前只有 partDef / partUsage / portDef / portUsage
+ * 四类能改名，state / action / requirement / constraint / itemDef / itemUsage /
+ * refUsage / 状态机 / 活动 全是静默 no-op）。
  */
 export function renameNode(
   text: string,
@@ -257,6 +530,10 @@ export function renameNode(
 
   // 1) 修改声明本身：找到 name 标识符的 offset
   const nameOffset = findIdentifierOffset(text, decl.location.offset, decl.name);
+  // 定位不到就整体放弃 —— 宁可什么都不改，也不能把关键字当名字改坏文本
+  if (nameOffset < 0) {
+    return { text, edits: [] };
+  }
   const edits: TextEdit[] = [
     {
       offset: nameOffset,
@@ -266,15 +543,10 @@ export function renameNode(
   ];
 
   // 2) 修改所有引用 —— M16 P0：AST 作用域解析（替代全文 \bName\b 正则）。
-  //    只有真正在 AST 上引用了该声明的语句（connect 端点 / part usage typeRef /
-  //    port usage typeRef / trace 端点）才会在其语句范围内做名字替换，
+  //    只有真正在 AST 上引用了该声明的语句（connect 端点 / usage typeRef /
+  //    transition / controlFlow / trace 端点）才会在其语句范围内做名字替换，
   //    注释、文档字符串、同名无关元素不再被误伤。
-  if (
-    decl.kind === 'partDef' ||
-    decl.kind === 'partUsage' ||
-    decl.kind === 'portDef' ||
-    decl.kind === 'portUsage'
-  ) {
+  if (REFERENCED_DECL_KINDS.has(decl.kind)) {
     const seen = new Set<number>([nameOffset]);
     for (const [start, end] of collectReferenceSpans(model, decl, text)) {
       for (const off of findNameOccurrencesInRange(text, decl.name, start, end)) {
@@ -289,17 +561,23 @@ export function renameNode(
 }
 
 /**
- * 从 `startOffset` 位置开始向前扫描，跳过关键字（part/port/def/in/out/inout），
- * 找到第一个标识符（name 本身）的精确 offset。
+ * 从 `startOffset` 位置开始向前扫描，跳过声明关键字，找到 name token 的精确 offset。
+ *
+ * M18：关键字表从 `part|port|def|in|out|inout` 扩到 DECL_KEYWORDS —— 否则
+ * `item def X`、`state X`、`requirement def X`、`ref X` 这些声明会停在关键字上。
+ *
+ * ⚠️ 兜底很关键：跳完关键字后如果**对不上 name**，绝不能直接返回 startOffset
+ * （那会让替换从 `item` / `state` 开始，把关键字本身吃掉，产出无法解析的文本）。
+ * 改为在声明头范围内（第一个 `{` / `;` / 换行之前）扫描 `\b<name>\b`。
  */
 function findIdentifierOffset(text: string, startOffset: number, name: string): number {
   let i = startOffset;
-  // 跳过 keyword + 空白
+  // 跳过关键字 + 空白
   while (i < text.length) {
     // 跳过空白
     while (i < text.length && /\s/.test(text[i])) i++;
-    // 跳过关键字（part/port/def/in/out/inout）
-    const m = text.slice(i).match(/^(part|port|def|in|out|inout)\b/);
+    // 跳过关键字（part/port/def/in/out/inout/item/state/...）
+    const m = text.slice(i).match(new RegExp(`^(${DECL_KEYWORDS})\\b`));
     if (m) {
       i += m[0].length;
     } else {
@@ -308,8 +586,16 @@ function findIdentifierOffset(text: string, startOffset: number, name: string): 
   }
   // 现在应该正好是 name
   if (text.slice(i, i + name.length) === name) return i;
-  // fallback: 用 location.column 二次尝试
-  return startOffset;
+
+  // 兜底：在声明头范围内找第一个独立出现的 name token
+  const headerEnd = findHeaderEnd(text, startOffset);
+  const re = new RegExp(`\\b${escapeRegex(name)}\\b`, 'g');
+  re.lastIndex = startOffset;
+  const m2 = re.exec(text);
+  if (m2 && m2.index < headerEnd) return m2.index;
+
+  // 真的定位不到：返回 -1，让调用方放弃这次改名（宁可什么都不改，也不能改坏文本）
+  return -1;
 }
 
 /**
@@ -347,7 +633,10 @@ function collectReferenceSpans(
     if (typeof off !== 'number') return;
     switch (n.kind) {
       case 'connection': {
-        const matchPart = decl.kind === 'partDef' || decl.kind === 'partUsage';
+        const matchPart =
+          decl.kind === 'partDef' ||
+          decl.kind === 'partUsage' ||
+          decl.kind === 'itemUsage';
         const matchPort = decl.kind === 'portUsage' || decl.kind === 'portDef';
         if (
           (matchPart && (n.source?.partName === name || n.target?.partName === name)) ||
@@ -358,6 +647,7 @@ function collectReferenceSpans(
         break;
       }
       case 'partUsage':
+        // 定义侧被引用：`part x : <defName>`
         if (decl.kind === 'partDef' && n.typeRef === name) {
           push(off, findHeaderEnd(text, off));
         }
@@ -365,6 +655,32 @@ function collectReferenceSpans(
       case 'portUsage':
         if (decl.kind === 'portDef' && (n.typeRef === name || n.redefines === name)) {
           push(off, findLineEnd(text, off));
+        }
+        break;
+      // ── M18：item / ref 用法的 typeRef，以及 11 种 def 同理 ──
+      case 'itemUsage':
+      case 'referenceUsage':
+        if (decl.kind === 'structureDef' && (n.typeRef === name || n.inherits === name)) {
+          push(off, findHeaderEnd(text, off));
+        }
+        break;
+      // ── M18：`transition A to B` 的端点按状态名引用 ──
+      case 'transition':
+        if (decl.kind === 'stateDef' && (n.source === name || n.target === name)) {
+          push(off, findStatementEnd(text, off));
+        }
+        break;
+      // ── M18：`flow A to B` 的端点按动作名引用 ──
+      case 'controlFlow':
+        if (decl.kind === 'actionDef' && (n.source === name || n.target === name)) {
+          push(off, findStatementEnd(text, off));
+        }
+        break;
+      // ── M18：需求被满足 / 验证 / 精化时的引用 ──
+      case 'satisfiedRequirement':
+      case 'assumedConstraint':
+        if (decl.kind === 'requirement' && n.typeRef === name) {
+          push(off, findStatementEnd(text, off));
         }
         break;
       case 'trace':
@@ -382,7 +698,10 @@ function collectReferenceSpans(
       return;
     }
     visit(node);
-    for (const key of ['members', 'body']) {
+    // ⚠️ M18：`states` / `actions` / `transitions` / `flows` / `parameters` /
+    // `members` / `body` 都要走 —— 原来只有 members/body，状态机里的
+    // transition / 活动里的 flow 根本没被遍历到，改名后引用会悬空。
+    for (const key of ['members', 'body', 'states', 'actions', 'transitions', 'flows', 'parameters']) {
       if (Array.isArray(node[key])) walk(node[key]);
     }
   };
@@ -390,6 +709,10 @@ function collectReferenceSpans(
   walk(model.packages);
   walk(model.connections);
   walk(model.traceLinks);
+  walk(model.stateMachines);
+  walk(model.activities);
+  walk(model.requirements);
+  walk(model.constraintBlocks);
   walk(model.views);
   walk(model.viewpoints);
   return spans;
@@ -442,8 +765,10 @@ function findNameOccurrencesInRange(
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null && m.index < end) {
     const off = m.index;
-    const before = text.slice(Math.max(start, off - 12), off);
-    if (/\b(part|port|def|in|out|inout|abstract)\s+$/.test(before)) continue;
+    const before = text.slice(Math.max(start, off - 14), off);
+    // 前面是声明关键字（`item def X` / `state X` / `transition A to B` 里的 A 不匹配）
+    // → 这是「另一个同名元素的声明」，不是对本 decl 的引用，跳过。
+    if (new RegExp(`\\b(${DECL_KEYWORDS})\\s+$`).test(before)) continue;
     out.push(off);
     re.lastIndex = off + name.length;
   }

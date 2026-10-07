@@ -430,12 +430,18 @@ test.describe('M17 画布交互', () => {
     // 断言的是「不产生平移」，不是「零像素漂移」。d3-zoom 在每次手势起止时会
     // 重新落一次 transform（@xyflow/react 的 XYPanZoom → applyTransform，
     // src 见 @xyflow_react.js:8582），即便 panOnDrag=false 把真正的位移拦掉，
-    // 那两次 applyTransform 仍会各写一版 transform，y 分量实测会漂 2-3 px。
-    // 这不是用户能感知的平移，但写死 `toBeCloseTo(..., 0)` 会被它顶红。
-    // 给到 5 px 既能挡住真正的平移（160 px 的拖拽要小于 5 px 才是「无平移」）
-    // 又放掉 d3-zoom 的状态机噪声。
-    expect(Math.abs(afterDrag.x - before.x)).toBeLessThan(5);
-    expect(Math.abs(afterDrag.y - before.y)).toBeLessThan(5);
+    // 那两次 applyTransform 仍会各写一版 transform。
+    //
+    // ⚠️ 这个噪声**不是固定值**：同一台机器上先后实测到 2.85px 和 5.32px
+    // （受 ELK 布局耗时 / 帧时序影响）。所以不能拿一个拍脑袋的绝对阈值去卡 ——
+    // 卡 5px 就会被噪声顶红（本轮全量回归就是这么红的，单跑又绿）。
+    //
+    // 判据改成「相对拖拽距离的比例」：本次拖了 160×80 px，若真的发生了平移，
+    // 偏移会同量级（≥ 16px）。留 10% 阈值既能稳定地证明「没有平移」，
+    // 又能把任何量级的抖动放掉，且不会随机器性能漂移。
+    const NO_PAN_RATIO = 0.1;
+    expect(Math.abs(afterDrag.x - before.x)).toBeLessThan(160 * NO_PAN_RATIO);
+    expect(Math.abs(afterDrag.y - before.y)).toBeLessThan(80 * NO_PAN_RATIO);
   });
 
   test('A2. 不按空格拖节点仍然移动节点（空格只是临时切平移）', async ({ page, request }) => {

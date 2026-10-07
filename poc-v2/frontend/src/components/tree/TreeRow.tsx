@@ -42,6 +42,15 @@ export interface TreeRowProps {
   expanded: boolean;
   selected: boolean;
   focused: boolean;
+  /**
+   * M18：是否可以展开（比 `hasChildren` 更宽）。
+   *
+   * 包内元素是**懒加载**的（`usePackageElements` 只为已展开的包发请求），
+   * 所以一个「有元素但还没加载」的包 `node.children` 是空的 —— 若只按
+   * children 判定，它永远没有箭头 → 没法展开 → 元素永远加载不出来。
+   * ProjectTree 对这种包传 `expandable=true`（未知即允许展开）。
+   */
+  expandable?: boolean;
   onToggle: (encodedId: string) => void;
   onSelect: (encodedId: string) => void;
   onContextMenu: (e: React.MouseEvent, encodedId: string) => void;
@@ -68,6 +77,7 @@ export const TreeRow: React.FC<TreeRowProps> = ({
   expanded,
   selected,
   focused,
+  expandable,
   onToggle,
   onSelect,
   onContextMenu,
@@ -80,6 +90,11 @@ export const TreeRow: React.FC<TreeRowProps> = ({
   dropTargetEncodedId,
 }) => {
   const hasChildren = node.children.length > 0;
+  /**
+   * 能否展开 = 有子节点 ∨ 宿主说「可能还有」（包元素懒加载中）∨ 本身已展开
+   * （已展开但加载完发现是空的，仍要留箭头让用户能折回去）。
+   */
+  const canExpand = hasChildren || expandable === true || expanded;
 
   const isElement = node.kind === 'element';
   const elementMeta = isElement
@@ -123,7 +138,7 @@ export const TreeRow: React.FC<TreeRowProps> = ({
       role="treeitem"
       aria-level={depth + 1}
       aria-selected={selected}
-      aria-expanded={hasChildren ? expanded : undefined}
+      aria-expanded={canExpand ? expanded : undefined}
       data-testid={`tree-row-${node.encodedId}`}
       data-kind={node.kind}
       tabIndex={focused ? 0 : -1}
@@ -168,25 +183,32 @@ export const TreeRow: React.FC<TreeRowProps> = ({
       )}
       style={{ paddingLeft: depth * 14 + 4 }}
     >
-      {/* chevron：有子节点才可点，点击不改变选中 */}
+      {/* chevron：可展开时才有意义，点击不改变选中 */}
       <button
         type="button"
         tabIndex={-1}
         aria-label={expanded ? '折叠' : '展开'}
+        title={
+          canExpand
+            ? expanded
+              ? '折叠'
+              : '展开'
+            : '无可展开的下级'
+        }
         data-testid={`tree-toggle-${node.encodedId}`}
-        disabled={!hasChildren}
+        disabled={!canExpand}
         onClick={(e) => {
           e.stopPropagation();
-          if (hasChildren) onToggle(node.encodedId);
+          if (canExpand) onToggle(node.encodedId);
         }}
         className={cn(
           'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-          hasChildren
+          canExpand
             ? 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
             : 'text-transparent',
         )}
       >
-        {hasChildren &&
+        {canExpand &&
           (expanded ? (
             <ChevronDown className="h-3.5 w-3.5" />
           ) : (

@@ -94,7 +94,12 @@ export const ReportPage: React.FC = () => {
           </div>
           <div className="flex-1">
             <label className="block text-xs font-medium text-gray-700">当前模型</label>
-            <p className="mt-1 text-sm text-gray-900">{modelName || '未打开模型'}</p>
+            {/* 同 CodeGenPage：兜底判据必须是 modelId。
+                modelStore 的 name 默认值是 'untitled'（非空），
+                用 `modelName || '未打开模型'` 的话这个分支永远进不去。 */}
+            <p className="mt-1 text-sm text-gray-900">
+              {modelId ? modelName || '未命名模型' : '未打开模型'}
+            </p>
           </div>
           <Button onClick={() => void handleGenerate()} disabled={generating || !modelId}>
             {generating ? (

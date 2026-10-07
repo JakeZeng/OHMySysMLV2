@@ -43,15 +43,23 @@ import { ProjectTree } from '../components/tree/ProjectTree';
 import { ResizableSplit } from '../components/layout/ResizableSplit';
 import { MiddlePane } from '../components/layout/MiddlePane';
 import { RightPane } from '../components/layout/RightPane';
-import { useTreeStore, decodeNodeId, encodeNodeId } from '../stores/treeStore';
+import { useTreeStore, decodeNodeId, decodeElementId, encodeNodeId } from '../stores/treeStore';
 import { useModelStore } from '../stores/modelStore';
 import { useUIStore } from '../stores/uiStore';
-import { useElementTreeCacheStore } from '../stores/elementTreeCacheStore';
+import { useElementTreeCacheStore, extractElementsFromModel } from '../stores/elementTreeCacheStore';
 import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
 import { generateUniqueName } from '../lib/naming';
+import type { ElementNodeInfo } from '../lib/tree';
 import { insertSnippetScoped, extractDefinition } from '../lib/textOps';
+import {
+  resolveOwnerKind,
+  resolveTreeElement,
+  findElementCanvasNode,
+  type ElementOwnerKind,
+} from '../lib/treeSelection';
 import { renameElementByName, deleteElementByName } from '../../../transform/textEdit';
+import { renameInSessionContent } from '../lib/elementRename';
 import type { TreeAction, TreeEntityKind, ElementRef } from '../components/tree/types';
 
 const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
@@ -163,11 +171,74 @@ export const ProjectDetail: React.FC = () => {
     return ids;
   }, [expandedEncodedIds]);
 
-  const packageElements = usePackageElements(expandedPackageIds);
+  /**
+   * M18：为已展开的包触发元素加载（hook 的返回值**不喂给树**，见下面）。
+   */
+  usePackageElements(expandedPackageIds);
+
+  /**
+   * 树与元素解析共用的元素数据 —— 取 store 的**完整缓存**，不是
+   * `usePackageElements` 那份「只含已展开的包」的切片。
+   *
+   * ⚠️ 这里曾经是个真 bug（用户实测：`Package_1` 折叠后再也展不开）：
+   * 折叠 → 该包从切片里消失 → `buildTree` 把它已加载的元素子节点一起摘掉
+   * → `node.children.length === 0` → 箭头判定「已加载且确实为空」→ disabled，
+   * 于是**永久**展不开（只有元素、没有子包/视图的包必中；包里还挂了视图的包
+   * 因为 children 还剩视图行，看不出这个毛病）。
+   *
+   * 用完整缓存就没这个问题：折叠的包照样带着元素子节点，
+   * `visibleRows` 只渲染**已展开**节点的子树，所以视觉上零成本，
+   * 而 `hasChildren` 从此一直是对的。
+   *
+   * 另一个要点：包里**没有任何元素**的包，折起来之后箭头才该消失（此时
+   * 「已加载」= 缓存里有 key），这正是上面注释里说的「空包折起来箭头不诈尸」。
+   */
+  const elementCacheByPackageId = useElementTreeCacheStore((s) => s.byPackageId);
+  /** 已加载过元素列表的 packageId（折叠后仍保留） */
+  const loadedPackageIds = React.useMemo(
+    () => Object.keys(elementCacheByPackageId),
+    [elementCacheByPackageId],
+  );
+  /**
+   * 喂给树的 packageElements：剥掉 `undefined` 值（加载失败的包在 store 里是
+   * `[]`，但类型上仍可能 undefined，`buildTree` 会 `for...of` 解构它）。
+   *
+   * ## M18.1：当前打开的包用「本地未保存」的 content 覆盖
+   *
+   * 缓存里的元素列表是从**服务端** content 解析的，而属性窗改名 / 画布插入 /
+   * 文本编辑都只改本地 `modelStore.content`（脏数据）。于是树停在旧名字，
+   * 而树行 id 是 `elem:<ownerId>:<name>` —— **名字就编码在 id 里** → 行指向
+   * 一个模型里已不存在的元素 → 点它像没反应，再改名报「找不到元素」。
+   *
+   * `invalidate()` 救不了：它会去**重新拉服务端 content**，服务端还是旧版本。
+   *
+   * ⚠️ 这里刻意**只做纯派生、不写 store**。第一版把本地结果写回
+   * `elementTreeCacheStore.byPackageId`，结果每次 pipeline 跑完都多一轮
+   * 「store 写入 → ProjectDetail 重渲染 → 整棵子树重渲染」，实测把状态机
+   * 画布搞坏：两个 state 节点不渲染、`dragConnect` 拖不出连线
+   * （m17 D2 repeat-each=5 → 4 failed；撤掉这层写入 → 5 passed）。
+   * 纯派生只影响树与选中，碰不到画布。
+   */
+  const openScopeKind = useModelStore((s) => s.entityKind);
+  const openScopeId = useModelStore((s) => s.entityId);
+  const openScopeModel = useModelStore((s) => s.pipeline.model);
+
+  const packageElements = React.useMemo(() => {
+    const out: Record<string, ElementNodeInfo[]> = {};
+    for (const [id, els] of Object.entries(elementCacheByPackageId)) {
+      if (els) out[id] = els;
+    }
+    if (openScopeKind === 'package' && openScopeId) {
+      out[openScopeId] = extractElementsFromModel(openScopeModel);
+    }
+    return out;
+  }, [elementCacheByPackageId, openScopeKind, openScopeId, openScopeModel]);
 
   const queryPackage = searchParams.get('package');
   const queryView = searchParams.get('view');
   const queryViewpoint = searchParams.get('viewpoint');
+  /** M18：树选中元素 → `?package=<ownerId>&element=elem:<ownerId>:<name>` */
+  const queryElement = searchParams.get('element');
 
   // 工程是否已加载完（ProjectTree 只在此后挂载）
   const projectReady = current !== null;
@@ -190,9 +261,13 @@ export const ProjectDetail: React.FC = () => {
     // 因而排在 setProject 之后，选中态得以保留。
     if (!projectReady) return;
 
-    // 优先 package，再 view，再 viewpoint；都不存在选工程根
+    // 优先 element（最具体的选中），再 package / view / viewpoint；都不存在选工程根。
+    // ⚠️ element 必须排在最前：URL 上 scope 与 element 是**并存**的
+    // （`?package=A&element=elem:A:Vehicle`），若按 package 优先，
+    // 元素行刚点上就会被包行顶掉选中态。
     let encoded: string | null;
-    if (queryPackage) encoded = encodeNodeId('package', queryPackage);
+    if (queryElement && decodeElementId(queryElement)) encoded = queryElement;
+    else if (queryPackage) encoded = encodeNodeId('package', queryPackage);
     else if (queryView) encoded = encodeNodeId('view', queryView);
     else if (queryViewpoint) encoded = encodeNodeId('viewpoint', queryViewpoint);
     else encoded = encodeNodeId('project', projectId);
@@ -208,6 +283,12 @@ export const ProjectDetail: React.FC = () => {
     //    症状：直接打开一个包（或在它树上右键新建元素）后，工程树看不到该包的
     //    任何元素，刷新页面才对 —— 画布和编辑器却是实时更新的。
     if (queryPackage) toExpand.push(encodeNodeId('package', queryPackage));
+    // M18：元素选中同理 —— 元素行必须可见，且它所属的包要先展开
+    //（不展开 → 元素懒加载不发请求 → 行根本不存在，也就无从「选中」）。
+    if (queryElement) {
+      const elem = decodeElementId(queryElement);
+      if (elem) toExpand.push(encodeNodeId('package', elem.ownerId));
+    }
     if (queryView || queryViewpoint) {
       const { views: vs, viewpoints: vps } = listsRef.current;
       const ownerPackageId = queryView
@@ -221,6 +302,7 @@ export const ProjectDetail: React.FC = () => {
     queryPackage,
     queryView,
     queryViewpoint,
+    queryElement,
     projectId,
     treeSelect,
     treeExpandAll,
@@ -231,21 +313,44 @@ export const ProjectDetail: React.FC = () => {
   // 因此不会覆盖用户之后的手动选择。
   React.useEffect(() => {
     if (!projectReady) return;
-    if (!queryView && !queryViewpoint) return;
-    const ownerPackageId = queryView
-      ? views.find((v) => v.id === queryView)?.packageId
-      : viewpoints.find((vp) => vp.id === queryViewpoint)?.packageId;
-    if (!ownerPackageId) return;
+    if (!queryView && !queryViewpoint && !queryElement) return;
+
+    // M18：元素选中的归属可能是包（无需查表），也可能是视图/视角
+    //（元素行挂在视图/视角节点下，得先展开它所在的包才可见）。
+    let targetPackageId: string | undefined;
+    if (queryElement) {
+      const elem = decodeElementId(queryElement);
+      if (!elem) return;
+      const ownerKind = resolveOwnerKind(elem.ownerId, {
+        packages,
+        views,
+        viewpoints,
+      });
+      targetPackageId =
+        ownerKind === 'package'
+          ? elem.ownerId
+          : ownerKind === 'view'
+            ? views.find((v) => v.id === elem.ownerId)?.packageId
+            : viewpoints.find((vp) => vp.id === elem.ownerId)?.packageId;
+    } else {
+      targetPackageId = queryView
+        ? views.find((v) => v.id === queryView)?.packageId
+        : viewpoints.find((vp) => vp.id === queryViewpoint)?.packageId;
+    }
+
+    if (!targetPackageId) return;
     treeExpandAll([
       encodeNodeId('project', projectId),
-      encodeNodeId('package', ownerPackageId),
+      encodeNodeId('package', targetPackageId),
     ]);
   }, [
     projectReady,
     queryView,
     queryViewpoint,
+    queryElement,
     views,
     viewpoints,
+    packages,
     projectId,
     treeExpandAll,
   ]);
@@ -256,11 +361,71 @@ export const ProjectDetail: React.FC = () => {
     () => decodeNodeId(treeSelectedId),
     [treeSelectedId],
   );
+
+  /**
+   * M18：选中的是**元素**行时，中栏必须停在它所属的 scope。
+   *
+   * 之前 `decoded.kind === 'element'` 会让三个 selected*Id 全为 null → 中栏
+   * 空白、右栏退回工程属性，点元素像「什么都没发生」。元素的归属 namespace 有
+   * 三种（§7.26：包 / 视图 / 视角），这里按归属补上对应 scope。
+   */
+  const selectedElementOwnerKind = React.useMemo<ElementOwnerKind | null>(() => {
+    if (decoded?.kind !== 'element' || !treeSelectedId) return null;
+    const elem = decodeElementId(treeSelectedId);
+    if (!elem) return null;
+    return resolveOwnerKind(elem.ownerId, { packages, views, viewpoints });
+  }, [decoded?.kind, treeSelectedId, packages, views, viewpoints]);
+
+  const elementOwnerId =
+    decoded?.kind === 'element' && treeSelectedId
+      ? (decodeElementId(treeSelectedId)?.ownerId ?? null)
+      : null;
+
   const selectedPackageId =
-    decoded?.kind === 'package' ? decoded.id : null;
-  const selectedViewId = decoded?.kind === 'view' ? decoded.id : null;
+    decoded?.kind === 'package'
+      ? decoded.id
+      : selectedElementOwnerKind === 'package'
+        ? elementOwnerId
+        : null;
+  const selectedViewId =
+    decoded?.kind === 'view'
+      ? decoded.id
+      : selectedElementOwnerKind === 'view'
+        ? elementOwnerId
+        : null;
   const selectedViewpointId =
-    decoded?.kind === 'viewpoint' ? decoded.id : null;
+    decoded?.kind === 'viewpoint'
+      ? decoded.id
+      : selectedElementOwnerKind === 'viewpoint'
+        ? elementOwnerId
+        : null;
+
+  /**
+   * M18：当前选中的树元素（完整身份：名字 / kind / astId / 归属）。
+   *
+   * 右栏用它决定「画布上有节点 → ElementFormPanel；没有 → 只读信息卡」，
+   * 两处共用同一份解析结果（`lib/treeSelection.ts`），不会出现口径漂移。
+   * 解析不出来（包元素还在懒加载）时为 null —— 先不渲染，加载完自然补上。
+   */
+  const selectedTreeElement = React.useMemo(
+    () =>
+      resolveTreeElement(treeSelectedId, {
+        packages,
+        views,
+        viewpoints,
+        packageElements,
+      }),
+    [treeSelectedId, packages, views, viewpoints, packageElements],
+  );
+
+  /** 归属 namespace 的显示名（信息卡展示「包「VehicleModel」」） */
+  const selectedTreeElementOwnerName = React.useMemo(() => {
+    if (!selectedTreeElement) return undefined;
+    const { ownerId, ownerKind } = selectedTreeElement;
+    if (ownerKind === 'viewpoint') return viewpoints.find((v) => v.id === ownerId)?.name;
+    if (ownerKind === 'view') return views.find((v) => v.id === ownerId)?.name;
+    return packages.find((p) => p.id === ownerId)?.name;
+  }, [selectedTreeElement, packages, views, viewpoints]);
 
   // ── 画布节点选中（提升到 ProjectDetail 共享给 RightPane） ──
   const [selectedCanvasNode, setSelectedCanvasNode] = React.useState<Node | null>(
@@ -287,6 +452,109 @@ export const ProjectDetail: React.FC = () => {
   const deleteCanvasEdge = React.useCallback((edgeId: string) => {
     useModelStore.getState().deleteConnection(edgeId);
   }, []);
+
+  /**
+   * M18.1：改名成功后把「选中态」从旧名字迁到新名字。
+   *
+   * 树元素行的 id 是 `elem:<ownerId>:<name>` —— **名字编码在 id 里**。改名只改
+   * 本地 content（未保存），URL / treeStore 里还指着 `...:mass`，而模型里已经没有
+   * `mass` 了 → `resolveTreeElement` 返回 null → 右栏当场退回「包属性」，
+   * 用户看着像「改个名把选中弄丢了」。
+   *
+   * 两边都要迁：URL 的 `element=` 参数（深链 / 刷新复现）与 treeStore 的选中行。
+   */
+  const migrateSelectionToRenamedElement = React.useCallback(
+    (ownerId: string, oldName: string, newName: string) => {
+      if (oldName === newName) return;
+      const oldEncoded = `elem:${ownerId}:${oldName}`;
+      const newEncoded = `elem:${ownerId}:${newName}`;
+
+      const decoded = decodeNodeId(treeSelectedId);
+      if (decoded?.kind === 'element' && treeSelectedId === oldEncoded) {
+        useTreeStore.getState().select(newEncoded);
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set('element', newEncoded);
+            return next;
+          },
+          { replace: true },
+        );
+      }
+    },
+    [treeSelectedId, setSearchParams],
+  );
+
+  /**
+   * M18.1：右栏属性卡改名「树选中元素」（画布上没节点的那种）。
+   *
+   * 三种归属 namespace 分两条路：
+   *   - 包 / 视图 → content 在 modelStore 里，走 `renameInSessionContent`
+   *     （按**限定名**定位：树的 astId 与 pipeline 的 model 来自不同 parse，
+   *     见 lib/elementRename.ts 开头）；
+   *   - 视角     → ViewpointModelingPane 自持状态，不进 modelStore，
+   *     直接拉 content、改完 PUT 回去。
+   *
+   * 返回 `{ ok, reason }` 给面板显示，不抛异常 —— 面板要保留编辑态让用户改。
+   */
+  const handleRenameSelectedElement = React.useCallback(
+    async (newName: string): Promise<{ ok: boolean; reason?: string }> => {
+      const el = selectedTreeElement;
+      if (!el) return { ok: false, reason: '没有选中元素' };
+      const next = newName.trim();
+      if (!next) return { ok: false, reason: '名称不能为空' };
+
+      // 视角私有元素：不进 modelStore，走独立 PUT
+      if (el.ownerKind === 'viewpoint') {
+        try {
+          const vp = await viewpointApi.get(el.ownerId);
+          const result = renameElementByName(
+            vp.content ?? '',
+            el.kind,
+            el.name,
+            next,
+          );
+          if (result.text === (vp.content ?? '')) {
+            return { ok: false, reason: `改名没有生效（内容里找不到「${el.name}」）` };
+          }
+          await viewpointApi.update(el.ownerId, {
+            name: vp.name,
+            packageId: vp.packageId,
+            description: vp.description ?? '',
+            content: result.text,
+            stakeholder: vp.stakeholder ?? '',
+            concern: vp.concern ?? '',
+            metadata: vp.metadata ?? {},
+            version: vp.version,
+          });
+          showToast({ title: `已重命名为「${next}」`, variant: 'success' });
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, reason: (e as Error).message };
+        }
+      }
+
+      // 包 / 视图：scope 必须已经切到该元素所属的 namespace，否则 model 不是它的
+      const store = useModelStore.getState();
+      if (store.entityId !== el.ownerId) {
+        return { ok: false, reason: '当前加载的不是该元素所属的包 / 视图，请稍候重试' };
+      }
+      const outcome = renameInSessionContent(
+        store.content,
+        store.pipeline.model,
+        { qualifiedName: el.qualifiedName || el.name, name: el.name },
+        next,
+      );
+      if (!outcome.ok || outcome.text === undefined) {
+        return { ok: false, reason: outcome.reason ?? '改名失败' };
+      }
+      store.setContent(outcome.text);
+      migrateSelectionToRenamedElement(el.ownerId, el.name, next);
+      showToast({ title: `已重命名为「${next}」`, variant: 'success' });
+      return { ok: true };
+    },
+    [selectedTreeElement, showToast, migrateSelectionToRenamedElement],
+  );
 
   /**
    * 连线属性窗「在文本编辑器中查看」→ 切到文本模式并定位到该行。
@@ -347,6 +615,60 @@ export const ProjectDetail: React.FC = () => {
     const t = setTimeout(() => setPendingFocusName(null), 5000);
     return () => clearTimeout(t);
   }, [pendingFocusName]);
+
+  /**
+   * M18：树选中元素 → 画布同步选中（属性窗因此显示这个元素）。
+   *
+   * 为什么不在 `handleSelect` 里直接选中：树的点击先换 scope（改 URL），
+   * 新 scope 的 content 是**异步**拉取的，此刻 `pipeline.nodes` 还是上一个
+   * scope 的 —— 直接拿名字去匹配会选到同名但无关的元素。所以这里等
+   * `entityId` 与归属对上之后再定位。
+   *
+   * 定位不到画布节点（attributeUsage 这类不进画布的元素）是正常情况：
+   * 保留 `selectedTreeElement`，右栏会退化成只读信息卡，见 ElementInfoPanel。
+   */
+  const modelStoreEntityId = useModelStore((s) => s.entityId);
+  /**
+   * M18.2：树点击计数。
+   *
+   * `selectedTreeElement` 是 useMemo，**同一个行再点一次时 memo 不重算**，
+   * effect 的依赖也就没变 → 不会重跑。所以「再点一次同一个元素」必须靠这个
+   * tick 才会被当成一次新的同步请求。`handleSelect` 每次点击都 +1。
+   */
+  const [treeSelectTick, setTreeSelectTick] = React.useState(0);
+  const handledTreeElementRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!selectedTreeElement) {
+      // 选中态被清掉（点了包/视图行、或点了属性窗的 ✕）→ 允许下次重新定位，
+      // 否则「选中 A 元素 → 点包行 → 再点 A 元素」第二次会被 ref 挡掉。
+      handledTreeElementRef.current = null;
+      return;
+    }
+    // 等 scope 真的切到元素归属的那个 namespace
+    if (modelStoreEntityId !== selectedTreeElement.ownerId) return;
+    // 每次「选中一个元素」只自动选一次：pipeline.nodes 在编辑内容后会整体换
+    // 身份，若跟着重跑，用户后来在画布上手动点的节点会被这行抢回去。
+    // ⚠️ M18.2：这个守卫**必须**在每次树点击时被复位（handleSelect 里做了），
+    // 否则「树点 A → 画布点 B → 再点树上的 A」第二次会被挡掉，属性窗不跟着切。
+    const key = `${selectedTreeElement.encodedId}@${selectedTreeElement.ownerId}`;
+    if (handledTreeElementRef.current === key) return;
+    const node = findElementCanvasNode(modelStoreNodes, selectedTreeElement);
+    if (!node) {
+      // 该元素没有画布节点（attributeUsage 这类）：必须把上一个元素的画布
+      // 选中清掉，否则右栏会一直显示**上一个**元素的表单 —— 用户点的是
+      // 属性，看到的却是 Vehicle 的属性。清空后右栏落到只读信息卡。
+      //
+      // ⚠️ 这里**不**写 ref：树的 content 是异步加载的，可能这次还没有画布
+      // 节点、等 nodes 到位后才有。不设守卫才能在 nodes 变化时自动补选一次。
+      setSelectedCanvasNode(null);
+      return;
+    }
+    handledTreeElementRef.current = key;
+    // 走画布自己的选中通道（它会再上抛 onSelectionChange → 这里拿到节点）：
+    // 宿主直接 setSelectedCanvasNode 会被画布的受控选中同步抹掉 ——
+    // 症状是「高亮闪一下，属性窗又退回包属性」。
+    diagramHandleRef.current?.selectNodeById(node.id);
+  }, [selectedTreeElement, modelStoreEntityId, modelStoreNodes, treeSelectTick]);
 
   // ── 模态：Share / Settings / Delete ───────────────────────
   const [showShare, setShowShare] = React.useState(false);
@@ -1065,21 +1387,105 @@ export const ProjectDetail: React.FC = () => {
     (encodedId: string | null) => {
       const dec = decodeNodeId(encodedId);
       if (!dec) return;
-      // 切 scope 前清画布选中：连线的身份是 stableKey，换包之后同名键可能
-      // 指向完全不同的关系，不清的话新页面的右栏会显示上一份模型的连线。
-      setSelectedCanvasNode(null);
-      setSelectedCanvasEdge(null);
-      if (dec.kind === 'package') setSearchParams({ package: dec.id });
-      else if (dec.kind === 'view') setSearchParams({ view: dec.id });
-      else if (dec.kind === 'viewpoint') setSearchParams({ viewpoint: dec.id });
-      else setSearchParams({});
+
+      // M18.2：每次树点击都算一次**新的用户意图** —— 复位「已同步过」的守卫并
+      // 自增 tick，让下方同步 effect 必定重跑一次。
+      //
+      // 为什么需要 tick：守卫原本只在选中态变空时复位，而**点画布不会让它复位**。
+      // 于是「树点 A → 画布点 B → 再点树上的 A」里，第二次点 A 的 key 与上次
+      // 相同，被守卫挡掉 → 属性窗还钉在 B 上，用户看着像"树上选中没同步"。
+      // （用户实测报的就是这个。②e 用例钉死。）
+      handledTreeElementRef.current = null;
+      setTreeSelectTick((t) => t + 1);
+
+      // 先算「目标 scope」：普通节点就是自己，元素行则是它所属的 namespace。
+      let nextPackageId: string | null = null;
+      let nextViewId: string | null = null;
+      let nextViewpointId: string | null = null;
+      let elementParam: string | null = null;
+
+      if (dec.kind === 'element' && encodedId) {
+        /**
+         * M18：元素行 → 进入所属 scope。
+         *
+         * 之前这里只认 package/view/viewpoint，`element` 落到最后的
+         * `else setSearchParams({})` —— 点元素等于「跳回工程根」，中栏空白、
+         * 右栏显示工程属性。现在按归属把 URL 写成 scope + element 双参数：
+         * scope 决定中栏开什么，`element` 让元素行保持选中（可深链、可刷新）。
+         */
+        const elem = decodeElementId(encodedId);
+        if (elem) {
+          const ownerKind = resolveOwnerKind(elem.ownerId, {
+            packages,
+            views,
+            viewpoints,
+          });
+          // 归属包已不存在（树缓存陈旧）→ 别把中栏指到一个查不到的包上
+          if (ownerKind !== 'package' || packages.some((p) => p.id === elem.ownerId)) {
+            if (ownerKind === 'viewpoint') nextViewpointId = elem.ownerId;
+            else if (ownerKind === 'view') nextViewId = elem.ownerId;
+            else nextPackageId = elem.ownerId;
+            elementParam = encodedId;
+          }
+        }
+      } else if (dec.kind === 'package') nextPackageId = dec.id;
+      else if (dec.kind === 'view') nextViewId = dec.id;
+      else if (dec.kind === 'viewpoint') nextViewpointId = dec.id;
+
+      /**
+       * 只有 scope 真换了才清画布选中。
+       *
+       * 换 scope 必须清：连线的身份是 stableKey，换包之后同名键可能指向
+       * 完全不同的关系，不清的话新页面的右栏会显示上一份模型的连线。
+       * 反过来，同 scope 内点元素行不能清 —— 否则「点同一个元素行两次」
+       * 会把右栏打成只读信息卡（画布节点选中被清空，而元素没变、定位
+       * effect 不会重跑）。同 scope 内的切换交给下面的定位 effect。
+       */
+      if (
+        nextPackageId !== selectedPackageId ||
+        nextViewId !== selectedViewId ||
+        nextViewpointId !== selectedViewpointId
+      ) {
+        setSelectedCanvasNode(null);
+        setSelectedCanvasEdge(null);
+      }
+
+      // 注意：URL 上 scope 与 element 是并存的两个参数，不写成
+      // `{ package, ...(el ? { element: el } : {}) }` —— 那个 spread 的联合类型
+      // 过不了 setSearchParams 的 URLSearchParamsInit（element?: undefined）。
+      if (nextPackageId) {
+        setSearchParams(
+          elementParam ? { package: nextPackageId, element: elementParam } : { package: nextPackageId },
+        );
+      } else if (nextViewId) {
+        setSearchParams(
+          elementParam ? { view: nextViewId, element: elementParam } : { view: nextViewId },
+        );
+      } else if (nextViewpointId) {
+        setSearchParams(
+          elementParam
+            ? { viewpoint: nextViewpointId, element: elementParam }
+            : { viewpoint: nextViewpointId },
+        );
+      } else setSearchParams({});
     },
-    [setSearchParams],
+    [
+      setSearchParams,
+      packages,
+      views,
+      viewpoints,
+      selectedPackageId,
+      selectedViewId,
+      selectedViewpointId,
+    ],
   );
 
   const clearSelection = React.useCallback(() => {
     setSelectedCanvasNode(null);
     setSelectedCanvasEdge(null);
+    // M18：连树上的元素选中一起清。否则属性窗的 ✕ 只清了画布节点，
+    // 下一帧又冒出「树选中元素」的只读信息卡，用户以为 ✕ 没生效。
+    useTreeStore.getState().select(null);
   }, []);
 
   // ── Header：项目信息 + 操作按钮（压缩条） ────────────────
@@ -1181,6 +1587,7 @@ export const ProjectDetail: React.FC = () => {
               packages={packages}
               views={views}
               viewpoints={viewpoints}
+              loadedPackageIds={loadedPackageIds}
               packageElements={packageElements}
               loading={pkgsLoading || viewsLoading || vpsLoading}
               error={pkgsError ?? viewsError ?? vpsError ?? null}
@@ -1211,9 +1618,12 @@ export const ProjectDetail: React.FC = () => {
               selectedViewId={selectedViewId}
               selectedNode={selectedCanvasNode}
               selectedEdge={selectedCanvasEdge}
+              selectedElement={selectedTreeElement}
+              selectedElementOwnerName={selectedTreeElementOwnerName}
               onJumpToEdgeSource={handleJumpToEdgeSource}
               onDeleteEdge={deleteCanvasEdge}
               focusNameTick={renameFocusTick}
+              onRenameSelectedElement={handleRenameSelectedElement}
               onClearedSelection={clearSelection}
               onOpenSettings={() => setShowSettings(true)}
               onOpenShare={() => setShowShare(true)}
