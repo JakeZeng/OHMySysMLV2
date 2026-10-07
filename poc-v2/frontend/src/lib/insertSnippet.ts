@@ -41,6 +41,7 @@ export type PaletteKind =
   // 与 `actionDef` 的 `action def n {}`（TypeDefinition）是两回事 ——
   // 之前调色板只有 actionDef，活动容器因此是空壳，拖不进任何东西。
   | 'activityAction'
+  | 'activityFlow'
   // ── 需求 / 分析（5 个 def） ──
   | 'requirementDef'
   | 'constraintDef'
@@ -267,6 +268,19 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'action n;  ——活动里的一个动作（只能放进 activity）',
     defaultName: 'NewAction',
     generate: (n) => `  action ${n};`,
+  },
+  {
+    // 与 `transition` 同一套路：两端都要名字，所以占用 name + name2 两个参数。
+    kind: 'activityFlow',
+    label: 'flow（活动控制流）',
+    icon: '⇢',
+    category: '行为',
+    form: 'usage',
+    specRef: '§7.7.4 FlowUsage',
+    description: 'flow A to B;  ——活动里两个动作之间的控制流（只能放进 activity）',
+    defaultName: 'NewFlow',
+    defaultName2: 'TargetAction',
+    generate: (n, t = 'TargetAction') => `  flow ${n} to ${t};`,
   },
 
   // ───────────────────────── 行为（状态机节点）──────────────────────────

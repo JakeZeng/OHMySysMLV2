@@ -158,7 +158,7 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   // 活动成员是 `action n;`（usage 形态）与 `flow ...`。
   // M17.S9 起调色板有了「活动动作」条目，活动不再是空壳。
   // `actionDef` 生成的是 `action def n {}`（TypeDefinition），**不是**活动成员。
-  activity: ['activityAction'],
+  activity: ['activityAction', 'activityFlow'],
   constraintBlock: ['attributeUsage'],
 };
 

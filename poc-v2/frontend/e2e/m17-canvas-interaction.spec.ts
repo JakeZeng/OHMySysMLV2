@@ -171,6 +171,80 @@ async function gotoVehicleCanvas(page: Page, auth: Auth): Promise<Locator> {
   return node;
 }
 
+/**
+ * 从 `src` 拖一条连线到 `tgt`，返回是否真的画出了边。
+ *
+ * ⚠️ **必须从 React Flow 的可见 Handle 起手，不能用边框带。**
+ *    state 是容器的**子节点**，子节点上的 `AnchorStrips` 不生效 ——
+ *    实测按边框带取点时 `elementFromPoint` 命中的是 className 为空的元素、
+ *    连预览线都不出现（preview=0），手势根本没发起；换 `.react-flow__handle.source`
+ *    立刻就通（第二次尝试 preview=1、用例通过）。
+ *
+ * ⚠️ 也不能从节点中心起手 —— 那是节点拖拽。
+ *    终点用「朝向对方的那一边」：ELK 的 layered（direction=RIGHT）会把两个
+ *    state 排成斜向（实测 dx=144 / dy=116），按主轴固定 left/right 会让
+ *    起点终点互相嵌套在对方盒子里。`depth=4` 是从边框线往盒子**内部**的距离
+ *    （边框带厚 8px），终点落在目标节点的边框上。
+ */
+async function dragConnect(
+  page: Page,
+  src: Locator,
+  tgt: Locator,
+): Promise<boolean> {
+  const before = await page.locator('.react-flow__edge').count();
+  const a = (await src.boundingBox())!;
+  const b = (await tgt.boundingBox())!;
+  const ca = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
+  const cb = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  const D = 4; // 边框带厚 8px，正中
+
+  const facing = (box: typeof a, toward: { x: number; y: number }) => {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const ddx = toward.x - cx;
+    const ddy = toward.y - cy;
+    if (Math.abs(ddx) >= Math.abs(ddy)) {
+      return ddx >= 0
+        ? { x: box.x + box.width - D, y: cy }
+        : { x: box.x + D, y: cy };
+    }
+    return ddy >= 0
+      ? { x: cx, y: box.y + box.height - D }
+      : { x: cx, y: box.y + D };
+  };
+  const to = facing(b, ca);
+
+  const srcHandle = src.locator('.react-flow__handle.source').first();
+  const sb = (await srcHandle.boundingBox())!;
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  await page.mouse.move((sb.x + to.x) / 2, (sb.y + to.y) / 2, { steps: 12 });
+  await page.waitForTimeout(80);
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.waitForTimeout(80);
+  await page.mouse.up();
+  await page.waitForTimeout(1500);
+  return (await page.locator('.react-flow__edge').count()) > before;
+}
+
+/**
+ * 读一条边的两端节点 id。
+ *
+ * ⚠️ React Flow 的 `<g class="react-flow__edge">` 上**没有** `data-source` /
+ *    `data-target`（它们只在内部 store 里，DOM 上读不到）。唯一稳定的端点
+ *    信息是 `aria-label="Edge from <source> to <target>"`。
+ *    `data-source` / `data-target` 读出来是 null —— 这就是待办里那条
+ *    「端点判定」问题的正解。
+ */
+async function edgeEndpoints(
+  edge: Locator,
+): Promise<{ source: string; target: string } | null> {
+  const label = await edge.getAttribute('aria-label');
+  const m = /^Edge from (.+) to (.+)$/.exec(label ?? '');
+  return m ? { source: m[1], target: m[2] } : null;
+}
+
 /** 画布平移量：读 viewport 的 inline transform（translate 的 x/y） */
 async function viewportOffset(page: Page): Promise<{ x: number; y: number }> {
   const style = (await page.locator('.react-flow__viewport').getAttribute('style')) ?? '';
@@ -814,5 +888,79 @@ test.describe('M17 画布交互', () => {
     // 断言的是「没有新建元素」这个契约，而不是逐字节比对 ——
     // 保存时后端会规范化内容（注释/换行），逐字节比对会把规范化也当成失败。
     expect(content, `视图里被写入了元素：${content}`).not.toMatch(/part\s+def/i);
+  });
+
+  // M17.S9：把「连线手势 → transition 写进状态机 body」这条链接回 e2e。
+  // 之前只由 modelStore 单测守着，因为边框带取点在子节点斜向布局下会算错边。
+  test('D2. 状态机内画线 → transition 落进状态机 body（不是当前包）', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17d2');
+    await injectAuth(page, auth);
+
+    // bootstrap 已经建了一个包，这里直接 POST 建**带状态机内容**的新包。
+    //
+    // ⚠️ 不要用 PUT 改内容：PUT 是 mutating 方法，CSRF 中间件会拦，
+    //    而 e2e 的 `request` fixture 拿不到页面上那份 csrf cookie
+    //    （`csrfToken` 是 bootstrap 在自己的 context 里存的）。
+    //    POST 建包在其它 spec 里一直是这个用法，稳定。
+    const pkgResp = await request.post(`/api/v1/projects/${auth.projectId}/packages`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+      data: {
+        name: 'SMModel',
+        parentPackageId: '',
+        description: '',
+        content: `package SMModel {
+  state machine SM {
+    state Off;
+    state On;
+  }
+}`,
+      },
+    });
+    const smBody: any = await pkgResp.json();
+    const smPkgId = (smBody?.data?.id ?? smBody?.id ?? '') as string;
+    expect(smPkgId, `建状态机包失败：${await pkgResp.text()}`).toBeTruthy();
+
+    await page.goto(`/projects/${auth.projectId}?package=${smPkgId}`);
+    await expect(page.locator('[data-testid^="tree-row-pkg:"]').first()).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator('.react-flow__node[data-id^="state:"]')).toHaveCount(2, {
+      timeout: 20_000,
+    });
+    await page.waitForTimeout(2000);
+
+    const off = page.locator('.react-flow__node[data-id^="state:"]').first();
+    const on = page.locator('.react-flow__node[data-id^="state:"]').nth(1);
+
+    // 手势可能因布局抖动丢一次，重试
+    let drew = false;
+    for (let i = 0; i < 2 && !drew; i++) {
+      drew = await dragConnect(page, off, on);
+    }
+    expect(drew, '画了两次都没画出连线').toBe(true);
+
+    // 边的端点就是那两个 state（端点判定走 aria-label，见 edgeEndpoints 注释）
+    const eps = await edgeEndpoints(page.locator('.react-flow__edge').first());
+    expect(eps, '读不到边的端点（aria-label 格式变了？）').not.toBeNull();
+    const ids = await page
+      .locator('.react-flow__node[data-id^="state:"]')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-id')));
+    expect(ids).toContain(eps!.source);
+    expect(ids).toContain(eps!.target);
+
+    // 保存后回读：transition 必须落在 state machine 的 {} 内部
+    await page.getByTestId('save-content').click();
+    await page.waitForTimeout(2500);
+    const res = await request.get(`/api/v1/packages/${smPkgId}`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    const body: any = await res.json();
+    const content: string = body?.data?.content ?? body?.content ?? '';
+    expect(content, '文本里没有 transition').toMatch(/transition\s+Off\s+to\s+On\s*;/);
+    const smAt = content.indexOf('state machine SM');
+    const trAt = content.search(/transition\s+Off\s+to\s+On\s*;/);
+    const smClose = content.indexOf('}', smAt);
+    expect(trAt, 'transition 落到了状态机外面').toBeGreaterThan(smAt);
+    expect(trAt).toBeLessThan(smClose);
   });
 });
