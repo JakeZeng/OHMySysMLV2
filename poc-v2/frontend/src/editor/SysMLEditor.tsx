@@ -21,6 +21,7 @@ import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
 import type { ValidationIssue } from '@validator/validator';
 import type { ParseError } from '@ast/model';
+import { formatSysMLSafe, type FormatOutcome } from '../lib/sysmlFormat';
 
 // ─── 组件 Props & Ref Handle ────────────────────────────────────────────
 
@@ -41,6 +42,11 @@ interface SysMLEditorProps {
   wordWrap?: 'on' | 'off';
   /** M4.5 增量：光标位置变化回调 */
   onCursorChange?: (position: { line: number; column: number }) => void;
+  /**
+   * 格式化结果回调（成功 / 被安全守卫拦下都会回调）。
+   * 宿主据此弹 toast —— 否则 `Shift + Alt + F` 被拦下时用户只会觉得「键没反应」。
+   */
+  onFormatResult?: (outcome: FormatOutcome) => void;
 }
 
 /** 暴露给父组件的操作接口 */
@@ -51,6 +57,14 @@ export interface SysMLEditorHandle {
   getEditor(): Monaco.editor.IStandaloneCodeEditor | null;
   /** 获取 Monaco 命名空间 */
   getMonaco(): typeof Monaco | null;
+  /**
+   * 触发「格式化文档」。
+   *
+   * 刻意**不自己实现**排版，而是执行 Monaco 内建的 `editor.action.formatDocument`，
+   * 于是工具栏按钮、`Shift + Alt + F`、右键菜单「格式化文档」、F1 命令面板
+   * 四条入口收敛到同一个 provider，行为完全一致。
+   */
+  formatDocument(): void;
 }
 
 // ─── SysML Monarch Tokenizer ────────────────────────────────────────────
@@ -131,7 +145,30 @@ const language: Monaco.languages.IMonarchLanguage = {
   },
 };
 
+/**
+ * 格式化结果的回报出口。
+ *
+ * Monaco 的 DocumentFormattingEditProvider 只接受「一组编辑」，没有失败通道；
+ * 而本项目的格式化带安全守卫（指纹 + 解析不劣化），被拦下时必须让用户知道，
+ * 否则表现就是「按了快捷键什么也没发生」。provider 拿到结果后调它。
+ *
+ * 用模块级单槽而不是把回调塞进注册时的闭包：语言只注册一次（见 languageRegistered），
+ * 回调却必须指向当前挂载的那一个编辑器实例。
+ */
+let reportFormatResult: ((outcome: FormatOutcome) => void) | null = null;
+
+/**
+ * `beforeMount` 每次挂载都会跑，而注册 token 词表 / provider 是**全局**的。
+ * 不加这道闸，反复切「文本 / 可视化」模式会一次次叠加 provider：
+ * 补全表现为候选重复，格式化更糟 —— N 个 provider 各返回一份全文替换，
+ * Monaco 会把 N 份编辑依次应用，文本直接被搅乱。
+ */
+let languageRegistered = false;
+
 function registerSysMLLanguage(monacoInstance: typeof Monaco) {
+  if (languageRegistered) return;
+  languageRegistered = true;
+
   monacoInstance.languages.register({ id: 'sysml', extensions: ['.sysml'] });
   monacoInstance.languages.setMonarchTokensProvider('sysml', language);
   monacoInstance.languages.setLanguageConfiguration('sysml', {
@@ -275,6 +312,23 @@ function registerSysMLLanguage(monacoInstance: typeof Monaco) {
       return { suggestions };
     },
   });
+
+  // SysML v2 快速格式化。
+  //
+  // 注册这一个 provider，Monaco 会自动接上 `Shift + Alt + F`、右键菜单
+  // 「格式化文档」、F1 命令面板 —— 三条入口都落到这里，不用再各绑一遍快捷键。
+  //
+  // 安全：编辑内容来自 `formatSysMLSafe`。被守卫拦下（改了内容 / 结果解析不过）
+  // 时返回空编辑 = 什么都不改，并通过 `reportFormatResult` 把原因报给宿主弹 toast。
+  monacoInstance.languages.registerDocumentFormattingEditProvider('sysml', {
+    displayName: 'SysML v2',
+    provideDocumentFormattingEdits(model) {
+      const outcome = formatSysMLSafe(model.getValue());
+      reportFormatResult?.(outcome);
+      if (!outcome.ok || !outcome.changed) return [];
+      return [{ range: model.getFullModelRange(), text: outcome.content }];
+    },
+  });
 }
 
 // ─── 组件实现 ─────────────────────────────────────────────────────────────
@@ -288,6 +342,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   showMinimap = false,
   wordWrap = 'on',
   onCursorChange,
+  onFormatResult,
 }, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -327,7 +382,22 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
     getMonaco() {
       return monacoRef.current;
     },
+    formatDocument() {
+      // 走 Monaco 内建 action：`Shift + Alt + F` / 右键 / F1 走的是同一条路，
+      // 所以按钮和快捷键不可能出现行为差异。
+      editorRef.current?.getAction('editor.action.formatDocument')?.run();
+    },
   }), []);
+
+  // 把格式化结果的回调挂到模块级出口（provider 只注册一次，回调要跟着实例走）
+  const formatResultRef = useRef(onFormatResult);
+  formatResultRef.current = onFormatResult;
+  useEffect(() => {
+    reportFormatResult = (outcome) => formatResultRef.current?.(outcome);
+    return () => {
+      reportFormatResult = null;
+    };
+  }, []);
 
   // 完整的端到端 pipeline：text → parse → validate
   const runPipeline = useCallback(

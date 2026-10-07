@@ -190,3 +190,65 @@ typecheck clean、`e2e/m18-tree-element-select.spec.ts` **6 passed**（headed �
   一串 `401 Unauthorized`；单独跑 `e2e/smoke` 是 **7/7 全过**。八成是后端鉴权/限流：
   本机 :8080 那个实例**不是**带 `RATE_LIMIT_DISABLE=1` 起的，连跑 9 分钟的鉴权请求会被拒。
   要跑全量记得先确认后端带这个环境变量。
+
+## M18.3 文本建模快速格式化（2026-10-07，`next/dev`）
+
+`KeyboardShortcutsModal` 里一直挂着 `Shift + Alt + F 格式化文档`，**但代码里从来没实现**
+（`grep -rn formatDocument poc-v2` 只匹配到那行文案本身）。本轮补齐。
+
+### 为什么不做「AST → 重新打印」
+
+本项目 AST **不保留注释、`doc` 块正文、原始空白**，且 `sysml.pegjs` 的 `nextId` 全局递增
+（跨次 parse 的 id 不可比，见上文「解析器 id 跨次解析不可比」）。走 AST 重打印会：
+吃掉注释与 doc 正文 / 用户正写到一半（parse 有错）时直接丢内容 / 靠重建 AST 改写成员顺序与分号。
+
+所以 `lib/sysmlFormat.ts` 走**保内容的重排版**：只动空白与换行，不增删任何非空白字符。
+
+### 核心不变式（机械校验，不是靠人盯）
+
+`formatSysMLSafe` 是 UI 层唯一入口，两道闸：
+
+1. **指纹不变式** —— `tokenFingerprint` = 去掉空白的 token 流（字符串 / 注释原样保留）。
+   格式化前后必须逐字节相同，否则判定失败并回退原文。这条**兜住 formatter 自身的 bug**
+   （开发过程中真的抓到过：`[4` 没被单独切成一个 unit → 被拼成 `wheels [4]`；`==` 被切成
+   `=` `=` → 拼成 `a = = 1`）。
+2. **解析不劣化** —— 原文能解析、结果不能 → 回退原文。原文本来就解析不过时**允许**格式化
+   （用户正写到一半，硬拦只会让人连排版都用不了）。
+
+外加**幂等**：`format(format(x)) === format(x)`，单测里对 10 组样本逐一钉死。
+
+### 排版规则
+
+`{` 留在声明头同一行（Allman 会被收拢）· `}` 独占一行退级、紧跟的 `;` 合成 `};` ·
+`;` 各自成行 · `//` 换行、`/* … */` 保持行内且**续行原样保留** · 连续空行折叠为 1、
+`{` 后与 `}` 前的空行丢弃 · `;` `,` `)` `]` `(` `[` 前不留空、`(` `[` 后不留空 ·
+`::` 与 `..` 两侧不留空 · CRLF 统一为 LF。
+
+### 四个入口收敛到同一个 Monaco action
+
+`SysMLEditor` 注册 `registerDocumentFormattingEditProvider('sysml')` 后，Monaco 自动接上
+`Shift + Alt + F` / 右键「格式化文档」/ F1 命令面板；工具栏 📐 按钮则执行
+`editor.getAction('editor.action.formatDocument')` —— **不自己实现排版**，四条入口不可能分叉。
+
+⚠️ **顺带修掉一个既有缺陷**：`registerSysMLLanguage` 原先每次 `beforeMount` 都重跑一遍，
+等于反复叠加 provider（补全表现为候选重复）。格式化 provider 若同样叠加会**更糟** ——
+N 个 provider 各返回一份全文替换，Monaco 依次应用 N 次，文本直接被搅乱。加了
+`languageRegistered` 一次性闸。
+
+反馈通道：Monaco 的 provider API 只有「一组编辑」，没有失败通道，被守卫拦下时静默无响应
+= 用户以为键坏了。所以用模块级单槽 `reportFormatResult` 把结果回报给宿主弹 toast。
+
+### 验证
+
+`sysmlFormat.test.ts` **68 条**（含「格式化后 `modelToFlow` 节点/边与 `validate` 结论完全
+一致」这条架构不变式断言）、frontend **779 vitest 全绿**、根目录 **454 全绿**、Go 全绿、
+typecheck clean、`e2e/m18-quick-format.spec.ts` **5 passed**（headed 真跑）；
+编辑器回归 `smoke` + `m17-s5-s8-syntax` **13 passed**。
+
+⚠️ **两个 e2e 写法坑**（本轮各踩一次）：
+- Radix Toast 除了可见的 title，还会渲染一份 `aria-live` 副本 → 按文案 `getByText`
+  会 strict mode violation。已给 `Toast.tsx` 的 Root 加 `data-testid="toast"`，
+  新用例请用 `getByTestId('toast').filter({ hasText: … })`。
+- **别点 `.monaco-editor textarea`**：那是 `aria-hidden` 的 IME 输入层，被 `.view-lines`
+  盖住，Playwright 的可点性检查会一直判定「被拦截」而超时。要给编辑器焦点就点
+  `.monaco-editor .view-lines`。

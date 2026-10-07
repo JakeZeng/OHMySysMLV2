@@ -17,6 +17,7 @@ import {
   Download,
   Sparkles,
   Layers,
+  Wand2,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useUIStore, type ModelingMode } from '../../stores/uiStore';
@@ -38,6 +39,8 @@ export interface ModelingToolbarProps {
   onExportSysML: () => void;
   onOpenTemplate: () => void;
   onOpenAIGenerate: () => void;
+  /** 快速格式化（仅文本模式显示）；由宿主转发到文本编辑器的 formatDocument */
+  onFormatDocument?: () => void;
   /** M13：协同条插槽（Presences + LockBadge） */
   collabStrip?: React.ReactNode;
 }
@@ -57,6 +60,7 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
   onExportSysML,
   onOpenTemplate,
   onOpenAIGenerate,
+  onFormatDocument,
   collabStrip,
 }) => {
   const modelingMode = useUIStore((s) => s.modelingMode);
@@ -145,6 +149,20 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
 
       {/* M16 P2（Q2）：跨包视图选择器 */}
       <ViewSwitcher />
+
+      {/* 快速格式化：只对文本有意义（可视化模式下没有可排版的文本） */}
+      {modelingMode === 'text' && onFormatDocument && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onFormatDocument}
+          disabled={loading}
+          data-testid="format-document"
+          title="格式化文档（Shift + Alt + F）"
+        >
+          <Wand2 className="h-3.5 w-3.5" /> 格式化
+        </Button>
+      )}
 
       <Button
         variant="ghost"

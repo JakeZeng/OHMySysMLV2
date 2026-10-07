@@ -83,6 +83,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
               if (!open) dismiss(t.id);
             }}
             duration={t.duration ?? 5000}
+            // e2e 需要稳定钩子：Radix 会额外渲染一份 aria-live 副本，
+            // 按可见文案 getByText 会 strict mode violation。
+            data-testid="toast"
             className={cn(
               'toast-root pointer-events-auto relative flex w-80 ' +
                 'items-start gap-3 rounded-lg border p-4 shadow-lg ' +

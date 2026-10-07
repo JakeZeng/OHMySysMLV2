@@ -39,6 +39,7 @@ import type { PipelineResult } from '../../lib/pipeline';
 import { PalettePanel } from '../diagram/PalettePanel';
 import { CollabStrip } from '../collab/CollabStrip';
 import { ConflictModal } from '../modals/ConflictModal';
+import { formatStats, type FormatOutcome } from '../../lib/sysmlFormat';
 
 /**
  * ModelingPane 与具体实体解耦的接口。
@@ -343,6 +344,37 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
     sysmlEditorRef.current?.revealPosition(line, 1);
   }, []);
 
+  // 快速格式化：走文本编辑器的内建 action（与 Shift + Alt + F 同一条路）。
+  //
+  // 真正的排版与安全校验都在 lib/sysmlFormat 里；这里只负责把结果讲给用户听 ——
+  // 被安全守卫拦下时静默失败会让人以为「键坏了」。
+  const handleFormatDocument = React.useCallback(() => {
+    if (modelingMode !== 'text') {
+      showToast({ title: '请先切到文本建模模式', variant: 'default' });
+      return;
+    }
+    sysmlEditorRef.current?.formatDocument();
+  }, [modelingMode, showToast]);
+
+  const handleFormatResult = React.useCallback(
+    (outcome: FormatOutcome) => {
+      if (!outcome.ok) {
+        showToast({ title: '格式化已取消', description: outcome.reason, variant: 'warning' });
+        return;
+      }
+      if (!outcome.changed) {
+        showToast({ title: '排版已规范', description: '无需调整', variant: 'default' });
+        return;
+      }
+      showToast({
+        title: '已格式化',
+        description: `共 ${formatStats(outcome.content).lines} 行`,
+        variant: 'success',
+      });
+    },
+    [showToast],
+  );
+
   // 连线属性窗「在文本编辑器中查看」→ 定位到该语句所在行。
   // 延到下一拍：宿主切 modelingMode 与本次渲染是同一批 state 更新，
   // 但 SysMLEditor 挂载后 ref 才绑定，同一 tick 内读还是 null。
@@ -371,6 +403,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
         onExportSysML={adapter.onExportSysML}
         onOpenTemplate={adapter.onOpenTemplate}
         onOpenAIGenerate={adapter.onOpenAIGenerate}
+        onFormatDocument={handleFormatDocument}
         collabStrip={
           <CollabStrip
             entityKind={entityKind}
@@ -414,6 +447,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
                 onChange={(v) => adapter.setContent(v)}
                 onPipelineResult={() => {}}
                 onCursorChange={() => {}}
+                onFormatResult={handleFormatResult}
                 readOnly={false}
               />
             </div>
