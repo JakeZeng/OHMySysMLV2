@@ -26,6 +26,14 @@
 //   每个备选独立匹配，方向消耗后再校验类型关键字；任一不匹配立即回溯。
 
 {{
+  // M19：标准视图类型（§9.2.20）/ Rendering 类（§9.2.19）判定走**视图目录单一真源**。
+  // 语法层不自己维护那份清单 —— 之前 palette / renderer / 树徽章各自猜一套，
+  // 结果「前端以为是状态机图、后端以为是快照表」。
+  //
+  // `resolveStandardView` / `renderingKindOf` 由 parser/build.ts 生成的
+  // import 语句注入（见该文件 banner）—— peggy 生成的 ES 模块里没有
+  // require，初始化器块只能直接引用已导入的绑定名。
+
   // 定位工具：offset → {line, column}（1-based）
   function locationOf(offset) {
     const src = globalThis.__SYSML_SOURCE || '';
@@ -115,7 +123,10 @@
   //   · 移除 legacy 布尔位 isDefinition（消费方一律用 declKind）
   //   · expose 只出现在 ViewUsage（语法层由 ViewBody / ViewDefBody 拆分保证）
   //   · 官方约束「每个 view 至多一个 render」→ 超出时置 multipleRenders，validator 报 E306
-  function makeView(loc, name, declKind, viewDefinitionRef, prefixes, clauses) {
+  // M19：standardView（§9.2.20 的 8 个标准视图类型）由**特化关系**判定 ——
+  //   `view def V :> StandardViewDefinitions::ActionFlowView` 即 ActionFlowView。
+  //   视图名本身是标准名时（标准库自带定义）同样命中。
+  function makeView(loc, name, declKind, viewDefinitionRef, prefixes, clauses, restrictedName, isAbstract) {
     const reveals = [];
     const filters = [];
     const members = [];
@@ -155,9 +166,15 @@
       name,
       // 'definition' | 'usage' | 'shorthand'（shorthand = 无 def 引用的合法 ViewUsage）
       declKind,
+      // M19：`abstract view def` —— 标准库 Views::View 等基定义是抽象的
+      isAbstract: isAbstract || undefined,
       // ViewUsage 的实例化目标（`view Name : Def`）
       viewDefinitionRef: viewDefinitionRef || undefined,
       specializes: specializes || undefined,
+      // M19：标准视图类型（特化优先，其次 view 名本身）+ rendering 类别
+      standardView: (resolveStandardView(specializes) || resolveStandardView(name) || {}).name,
+      renderingKind: renderingKindOf(renderingRef) || undefined,
+      restrictedName: restrictedName || undefined,
       satisfies: satisfies || undefined,
       reveals,
       filters,
@@ -177,7 +194,7 @@
    * `frame concern c : Concern;`、doc 注释成员）表达。
    * M16 P1：移除自造的 legacy `stakeholder: 文本;` / `concern: 文本;` 方言。
    */
-  function makeViewpoint(loc, name, declKind, viewpointDefinitionRef, clauses) {
+  function makeViewpoint(loc, name, declKind, viewpointDefinitionRef, clauses, isAbstract, specializes) {
     const members = [];
     let subject;
     for (const cl of clauses) {
@@ -191,6 +208,10 @@
       id: nextId('vp'),
       name,
       declKind,
+      // M19：`abstract viewpoint def`（标准库 ViewpointCheck 是抽象基定义）
+      isAbstract: isAbstract || undefined,
+      // M19：`:> Base` 特化（ViewpointDefinition 特化 RequirementCheck）
+      specializes: specializes || undefined,
       viewpointDefinitionRef: viewpointDefinitionRef || undefined,
       subject,
       members,
@@ -321,10 +342,21 @@ ViewDecl
   / ViewUsageDecl
   / ViewShorthandDecl
 
+// M19：§7.6.7 受限名 —— 官方标准库源码的写法是
+//     `view def <gv> GeneralView { ... }`
+// （受限名放在真名前面，不是替代真名）。裸 `<gv>` 只是受限名记号本身，
+// 不带真名不是合法声明，所以这里必须强制要求后面的 Name。
+RestrictedName
+  = _ "<" _ r:Identifier _ ">" { return r; }
+
 // ViewDefinition　`view def Name …`（body 不含 expose —— 官方硬约束）
+//
+// ⚠️ `abstract` 前缀：官方标准库 Views 包里的基定义全是抽象的
+// （`abstract view def View :> Part { }` / `abstract viewpoint def ViewpointCheck`），
+// 少这一项就装不下标准库本身。
 ViewDefDecl
-  = "view" WS "def" WS name:Name pref:ViewSpecializes* body:ViewDefBody
-    { return makeView(location().start.offset, name, 'definition', undefined, pref, body); }
+  = isAbstract:(AbstractKw WS)? "view" WS "def" WS rn:RestrictedName? _ name:Name pref:ViewSpecializes* body:ViewDefBody
+    { return makeView(location().start.offset, name, 'definition', undefined, pref, body, rn, !!isAbstract); }
 
 // ViewUsage　`view Name : Def …`（标准形式）
 ViewUsageDecl
@@ -414,11 +446,21 @@ SatisfyStatement
 // M16 P1：自造的 `stakeholder: 文本;` / `concern: 文本;` 方言已移除（Q18=B）。
 // 官方约束：expose 只能出现在 ViewUsage 体内 → viewpoint body 不含 expose。
 
+// M19：`abstract` 前缀 —— 标准库 `abstract viewpoint def ViewpointCheck :> RequirementCheck`
+// 是抽象基定义，缺这一项同样装不下标准库。
+//
+// ⚠️ `:>` 优先于 `:`（PEG 有序选择，`:` 会先把冒号吃掉导致后面 `>` 匹配失败）——
+// `:> X` 是**特化**（ViewpointDefinition 特化 RequirementCheck），`: X` 是既有的
+// 「引用哪个视角定义」语义，两者必须分开产出字段。
 ViewpointDecl
-  = "viewpoint" WS "def" WS name:Name _ ":" _ def:QName body:ViewpointBody
-    { return makeViewpoint(location().start.offset, name, 'definition', def, body); }
-  / "viewpoint" WS "def" WS name:Name body:ViewpointBody
-    { return makeViewpoint(location().start.offset, name, 'definition', undefined, body); }
+  = isAbstract:(AbstractKw WS)? "viewpoint" WS "def" WS name:Name _ ":>" _ def:QName body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'definition', undefined, body, !!isAbstract, def); }
+  / isAbstract:(AbstractKw WS)? "viewpoint" WS "def" WS name:Name _ ":" _ def:QName body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'definition', def, body, !!isAbstract); }
+  / isAbstract:(AbstractKw WS)? "viewpoint" WS "def" WS name:Name body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'definition', undefined, body, !!isAbstract); }
+  / "viewpoint" WS name:Name _ ":>" _ def:QName body:ViewpointBody
+    { return makeViewpoint(location().start.offset, name, 'usage', undefined, body, false, def); }
   / "viewpoint" WS name:Name _ ":" _ def:QName body:ViewpointBody
     { return makeViewpoint(location().start.offset, name, 'usage', def, body); }
   / "viewpoint" WS name:Name body:ViewpointBody
@@ -479,7 +521,7 @@ FrameConcern
 // 关键：doc 的内容**就是**一段块注释，所以不能用 WS/_ 跳过它（那会把注释吃掉）。
 // 用裸 whitespace* + 显式块注释捕获；text = 去掉注释定界符后的内容。
 DocStatement
-  = "doc" whitespace* body:DocBlockComment whitespace* ";"
+  = "doc" whitespace* body:DocBlockComment whitespace* ";"?
     {
       return {
         kind: 'doc',
@@ -582,6 +624,10 @@ PackageMember
     / RequirementDef
     / ConstraintBlockDef
     / AllocationStatement
+    // M19：rendering 定义/用法是包成员 —— 官方标准库 Views 包正是这么写的
+    // （`rendering def R { }` + `rendering asTreeDiagram : GraphicalRendering;`）
+    / RenderingDefinition
+    / RenderingUsage
 
     / TraceStatement
     / EnumDef
@@ -686,6 +732,16 @@ PartBodyMember
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  // ── M19：标准视图的内容契约元素 ──────────────────────────────
+  // 官方 8 个标准视图的「Valid nodes and edges」逐条对应下面这些产生式。
+  // 缺任何一条，工具箱列出来的元素用户就写不出来（目录与语法必须同批交付）。
+  / RenderingDefinition
+  / RenderingUsage
+  // `action def X {}` 必须排在 ActionUsage 前（ActionUsage 吃 `action <name>`）
+  / ActionUsageInBody
+  / ControlNodeUsage
+  / BindingConnectorUsage
+  / StateActionUsage
   / DocStatement
   / EnumDef
   // M17.S9：需求定义也可以内联嵌套在 def body 里
@@ -749,6 +805,99 @@ StructureDefBody
   / _ ";" { return []; }
 
 // ─── Port Definition ───────────────────────────────────────────────────
+
+// ─── M19：标准视图的内容契约元素 ────────────────────────────────────────
+//
+// §9.2.20 八个标准视图的 doc 里逐条列出了合法内容（views/sysmlViewCatalog.ts
+// 的 validContent 保留原文）。这些产生式就是那几条内容契约的语法落点：
+// 视图工具箱列出来的每个元素都必须能被这里的某条产生式解析，否则用户一点
+// 就是「工具箱骗人」。
+//
+// §8.2.2.26 记号：
+//   RenderingDefinition = OccurrenceDefinitionPrefix 'rendering' 'def' Definition
+//   RenderingUsage     = OccurrenceUsagePrefix 'rendering' Usage
+
+RenderingDefinition
+  = isAbstract:(AbstractKw WS)? "rendering" WS "def" !IdentifierChar WS name:Identifier spec:StructureDefSpec? body:StructureDefBody
+    { return makeStructureDef('renderingDef', location().start.offset, name, !!isAbstract, spec, body); }
+
+// `rendering r : GraphicalRendering;` —— 官方 4 个标准渲染使用就是这种形态
+RenderingUsage
+  = "rendering" WS name:Identifier typeRef:UsageTypeSpec? _ ";"
+    {
+      return {
+        kind: 'renderingUsage',
+        id: nextId('rendering'),
+        name,
+        typeRef: typeRef || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.2 ActionUsage：`action a;` / `action a : T;`（可带 body 嵌套子动作）
+//
+// ⚠️ 命名：既有 `ActionDef` 产生式（activity 里的 `action n;`）已经把 kind
+// 'actionDef' 占用了 —— 但它其实是 **usage**（§7.7 ActionUsage）。这里用
+// 'actionUsage' 是为了不改动既有 kind 契约（modelToFlow / palette / 测试
+// 都按 kind 字符串判分），代价是 AST 里两种命名并存，已在 ast/model.ts 注明。
+ActionUsageInBody
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS name:Identifier typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
+    {
+      return {
+        kind: 'actionUsage',
+        id: nextId('actionUsage'),
+        name,
+        typeRef: typeRef || undefined,
+        isInitial: !!isInitial,
+        isFinal: !!isFinal,
+        body: body || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.5 ControlNodeUsage：`fork f;` / `join j;` / `decide d;` / `merge m;`
+// ActionFlowView 的「Control nodes」内容契约项。
+// 关键字取官方动词形态，不与 `decision` 混搭。
+ControlNodeUsage
+  = type:("fork" / "join" / "decide" / "merge") WS name:Identifier _ ";"
+    {
+      return {
+        kind: 'controlNode',
+        id: nextId('ctl'),
+        name,
+        controlType: type,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.11 BindingConnectorUsage：`bind p = q;`
+// ActionFlowView 的「Binding connections between parameters」内容契约项。
+BindingConnectorUsage
+  = "bind" WS src:Identifier WS "=" _ tgt:Identifier _ ";"
+    {
+      return {
+        kind: 'bindingConnector',
+        id: nextId('bind'),
+        source: src,
+        target: tgt,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.3 状态的 entry / do / exit 动作（EntryActionUsage / DoActionUsage /
+// ExitActionUsage）—— StateTransitionView 的内容契约项。
+// 官方是 `entry action a;`（方向词 + 动作用法），不是 `entry a;`。
+StateActionUsage
+  = phase:("entry" / "do" / "exit") WS "action" WS name:Identifier _ ";"
+    {
+      return {
+        kind: 'stateAction',
+        id: nextId('stateAction'),
+        name,
+        phase,
+        location: locationOf(location().start.offset),
+      };
+    }
 
 PortDef
   = isAbstract:(AbstractKw WS)? "port" WS "def" WS name:Identifier dir:(WS Direction)? specialization:PortDefSpecialization? body:PortDefBody

@@ -19,6 +19,10 @@
  *     后续做图遍历和 React Flow 边生成
  */
 
+// M19：标准视图类型 / Rendering 类的类型定义来自视图目录（§9.2.19 / §9.2.20）。
+// `import type` 是纯类型导入（编译期擦除），与下方 AST 定义不构成运行期循环依赖。
+import type { StandardViewName, RenderingKind } from '../views/sysmlViewCatalog';
+
 // ─── Source Location ─────────────────────────────────────────────────────
 
 export interface SourceLocation {
@@ -82,6 +86,7 @@ export type NamespaceMember =
   | DocMember
   | StakeholderUsage
   | FrameConcernMember
+  | M19ViewContentMember
   | CommentBlock;
 
 /** `import Foo::*;` 或 `import Bar;`（官方 MemberPrefix 可见性可选，如 `public import`） */
@@ -149,6 +154,10 @@ export interface PortDefinition extends SysMLNode {
  * ⚠️ `actionDefinition` / `stateDefinition` **不是** `actionDef` / `stateDef`：
  * 后两个 kind 已被 activity / state-machine 内的 usage（`action n;` / `state s;`）
  * 占用（见下方 StateDefinition / ActionDefinition 接口）。
+ *
+ * M19：`renderingDef` 是 §7.26.4 RenderingDefinition —— 它是 PartDefinition 的
+ * 特化（`checkRenderingDefinitionSpecialization → Views::Rendering`），所以与
+ * 其它结构定义同构（特化 + body），同样用这个 union 承载。
  */
 export type StructureDefinitionKind =
   | 'itemDef'
@@ -161,7 +170,8 @@ export type StructureDefinitionKind =
   | 'calcDefinition'
   | 'useCaseDef'
   | 'analysisCaseDef'
-  | 'verificationCaseDef';
+  | 'verificationCaseDef'
+  | 'renderingDef';
 export interface StructureDefinition extends SysMLNode {
   kind: StructureDefinitionKind;
   name: string;
@@ -178,9 +188,73 @@ export type PartBodyMember =
   | PortDefinition
   | StructureDefinition
   | EnumDefinition
+  | M19ViewContentMember
   | DocMember
   | CommentBlock;
 export type PortBodyMember = AttributeUsage | PortUsage;
+
+// ─── M19：标准视图内容契约元素（§9.2.20 各视图的合法内容）────────────────
+//
+// 这批元素在规范里都属于「某个标准视图类型下允许出现的节点/边」。
+// 之前语法层完全不认识它们，于是工具箱即便按官方 validContent 列出来，
+// 用户一点就写不出合法 SysML —— 目录与语法必须同时到位。
+// 每一类都对应标准库 doc 里逐条列出的内容契约项（见 views/sysmlViewCatalog.ts）。
+
+/**
+ * §7.26.4 RenderingUsage：`rendering r : GraphicalRendering;`
+ *
+ * 官方 4 个标准渲染使用（asTextualNotation / asTreeDiagram /
+ * asInterconnectionDiagram / asElementTable）就是这种形态。
+ * （RenderingDefinition 走 StructureDefinition，kind = 'renderingDef'。）
+ */
+export interface RenderingUsage extends SysMLNode {
+  kind: 'renderingUsage';
+  name: string;
+  typeRef?: string;
+}
+
+/** §7.7.2 ActionUsage：`action a;` —— ActionFlowView 的主节点（可嵌套动作） */
+export interface ActionUsage extends SysMLNode {
+  kind: 'actionUsage';
+  name: string;
+  typeRef?: string;
+  isInitial?: boolean;
+  isFinal?: boolean;
+  body?: PartBodyMember[];
+}
+
+/** §7.7.5 ControlNodeUsage：`fork f;` / `join j;` / `decide d;` / `merge m;` */
+export interface ControlNodeUsage extends SysMLNode {
+  kind: 'controlNode';
+  name: string;
+  controlType: 'fork' | 'join' | 'decide' | 'merge';
+}
+
+/** §7.7.11 BindingConnectorUsage：`bind p = q;` —— ActionFlowView 的绑定边 */
+export interface BindingConnectorUsage extends SysMLNode {
+  kind: 'bindingConnector';
+  source: string;
+  target: string;
+}
+
+/**
+ * §7.7.3 状态的 entry / do / exit 动作
+ * （EntryActionUsage / DoActionUsage / ExitActionUsage）
+ */
+export interface StateActionUsage extends SysMLNode {
+  kind: 'stateAction';
+  name: string;
+  phase: 'entry' | 'do' | 'exit';
+}
+
+/** M19 视图内容成员 union（PartBodyMember / NamespaceMember 共用子集） */
+export type M19ViewContentMember =
+  | StructureDefinition
+  | RenderingUsage
+  | ActionUsage
+  | ControlNodeUsage
+  | BindingConnectorUsage
+  | StateActionUsage;
 
 // ─── Usage ──────────────────────────────────────────────────────────────
 
@@ -401,6 +475,8 @@ export interface SysMLView {
    *   - `shorthand`   ← `view Name { }`             （ViewUsage 省略 `: Def`，语法里 `type?` 可选）
    */
   declKind?: 'definition' | 'usage' | 'shorthand';
+  /** M19：`abstract view def` —— 标准库 Views::View 等基视图定义是抽象的 */
+  isAbstract?: boolean;
   /** ViewUsage 的实例化目标，解析自 `view Name : Def` */
   viewDefinitionRef?: string;
   /** 解析自 `view Name :> Base` 的特化目标（subclassification） */
@@ -427,6 +503,23 @@ export interface SysMLView {
   renderingRef?: string;
   /** 官方约束「每个 view 至多一个 render」；true = 文本里出现多条 render（validator 报 E306） */
   multipleRenders?: boolean;
+  /**
+   * M19：本视图属于哪个**标准视图类型**（OMG §9.2.20 的 8 个之一）。
+   *
+   * 由 `view def X :> StandardViewDefinitions::ActionFlowView` 的特化关系推导
+   * （视图名本身是标准名时也命中）。决定 UI 挂哪套工具箱。
+   *
+   * ⚠️ 与 `renderKind` 正交：`standardView` 说的是「这是哪种视图」，
+   * `renderKind` 说的是「用哪个 renderer 画」。GeneralView 也能 render 成表格。
+   */
+  standardView?: StandardViewName;
+  /**
+   * M19：rendering usage 落在官方 4 个标准渲染之一时的 Rendering 类
+   * （textual / graphical / tabular）；非标准渲染引用为 undefined。
+   */
+  renderingKind?: RenderingKind;
+  /** M19：§7.6.7 受限名（官方标准库源码的 `view def <gv> GeneralView` 形态） */
+  restrictedName?: string;
   /** body 内 owned 成员（与 package body 同一套成员规则） */
   members: NamespaceMember[];
   location: SourceLocation;
@@ -445,8 +538,12 @@ export interface SysMLViewpoint {
   id: string;
   name: string;
   declKind?: 'definition' | 'usage' | 'shorthand';
+  /** M19：`abstract viewpoint def` —— 标准库 ViewpointCheck 是抽象基定义 */
+  isAbstract?: boolean;
   /** 解析自 `viewpoint Name : Def` */
   viewpointDefinitionRef?: string;
+  /** M19：解析自 `viewpoint def Name :> Base` 的特化目标 */
+  specializes?: string;
   /** 标准：`subject : Vehicle;` */
   subject?: string;
   members: NamespaceMember[];

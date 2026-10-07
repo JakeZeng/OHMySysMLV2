@@ -43,3 +43,6 @@ export {
   type Color,
   type CycleReport,
 } from './cycle';
+// M19：SysML v2 标准视图定义目录（OMG §9.2.19 / §9.2.20）—— parser / validator /
+// frontend 共用同一份，避免「前端认为是通用视图、后端认为是状态机图」这类漂移。
+export * from './sysmlViewCatalog';

@@ -1,0 +1,130 @@
+{
+  "_comment": [
+    "M19 双端一致性 fixture：SysML v2 标准视图定义目录（OMG SysML v2 §9.2.20 StandardViewDefinitions）。",
+    "TS 端 tests/sysmlViewCatalog.test.ts 与 Go 端 backend/internal/parser/view_standard_test.go 跑同一份用例。",
+    "数据来源：官方标准库源码 sysml.library/Systems Library/StandardViewDefinitions.sysml（原始文本见 source）。",
+    "任何一端改错都会让对端失败 —— 这就是「双端必须一致」的机械保证。"
+  ],
+  "source": "sysml.library/Systems Library/StandardViewDefinitions.sysml",
+  "renderings": [
+    { "name": "asTextualNotation", "kind": "textual", "typeQname": "Views::TextualRendering" },
+    { "name": "asTreeDiagram", "kind": "graphical", "typeQname": "Views::GraphicalRendering" },
+    { "name": "asInterconnectionDiagram", "kind": "graphical", "typeQname": "Views::GraphicalRendering" },
+    { "name": "asElementTable", "kind": "tabular", "typeQname": "Views::TabularRendering" }
+  ],
+  "views": [
+    {
+      "name": "GeneralView",
+      "shortName": "<gv>",
+      "qname": "StandardViewDefinitions::GeneralView",
+      "specializes": null,
+      "frameless": true,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "InterconnectionView",
+      "shortName": "<iv>",
+      "qname": "StandardViewDefinitions::InterconnectionView",
+      "specializes": null,
+      "frameless": true,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "ActionFlowView",
+      "shortName": "<afv>",
+      "qname": "StandardViewDefinitions::ActionFlowView",
+      "specializes": "InterconnectionView",
+      "frameless": true,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "StateTransitionView",
+      "shortName": "<stv>",
+      "qname": "StandardViewDefinitions::StateTransitionView",
+      "specializes": "InterconnectionView",
+      "frameless": true,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "SequenceView",
+      "shortName": "<sv>",
+      "qname": "StandardViewDefinitions::SequenceView",
+      "specializes": null,
+      "frameless": true,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "GeometryView",
+      "shortName": "<gev>",
+      "qname": "StandardViewDefinitions::GeometryView",
+      "specializes": null,
+      "frameless": false,
+      "recommendedRendering": "asInterconnectionDiagram"
+    },
+    {
+      "name": "GridView",
+      "shortName": "<grv>",
+      "qname": "StandardViewDefinitions::GridView",
+      "specializes": null,
+      "frameless": false,
+      "recommendedRendering": "asElementTable"
+    },
+    {
+      "name": "BrowserView",
+      "shortName": "<bv>",
+      "qname": "StandardViewDefinitions::BrowserView",
+      "specializes": null,
+      "frameless": false,
+      "recommendedRendering": "asTreeDiagram"
+    }
+  ],
+  "resolveCases": [
+    { "ref": "StandardViewDefinitions::ActionFlowView", "expected": "ActionFlowView" },
+    { "ref": "ActionFlowView", "expected": "ActionFlowView" },
+    { "ref": "'Action Flow View'", "expected": null },
+    { "ref": "<afv>", "expected": "ActionFlowView" },
+    { "ref": "Views::View", "expected": null },
+    { "ref": "MyCustomView", "expected": null },
+    { "ref": "", "expected": null }
+  ],
+  "detectCases": [
+    {
+      "_case": "view def 特化标准视图 → 命中",
+      "viewName": "MyPartsView",
+      "specializes": "StandardViewDefinitions::ActionFlowView",
+      "expected": "ActionFlowView"
+    },
+    {
+      "_case": "只写特化、名字不是标准名",
+      "viewName": "Whatever",
+      "specializes": "BrowserView",
+      "expected": "BrowserView"
+    },
+    {
+      "_case": "特化非标准视图 → 回落到 view 名",
+      "viewName": "StateMachineView",
+      "specializes": "MyBase",
+      "expected": null
+    },
+    {
+      "_case": "view 名本身就是标准视图名（标准库自带定义）",
+      "viewName": "GridView",
+      "specializes": null,
+      "expected": "GridView"
+    }
+  ],
+  "baseSpecializationCases": [
+    { "standard": "ActionFlowView", "expectedBase": "InterconnectionView" },
+    { "standard": "StateTransitionView", "expectedBase": "InterconnectionView" },
+    { "standard": "InterconnectionView", "expectedBase": "InterconnectionView" },
+    { "standard": "GridView", "expectedBase": "GridView" }
+  ],
+  "renderingKindCases": [
+    { "ref": "asTreeDiagram", "expected": "graphical" },
+    { "ref": "Views::asInterconnectionDiagram", "expected": "graphical" },
+    { "ref": "asElementTable", "expected": "tabular" },
+    { "ref": "asTextualNotation", "expected": "textual" },
+    { "ref": "asStateDiagram", "expected": null },
+    { "ref": null, "expected": null }
+  ]
+}
