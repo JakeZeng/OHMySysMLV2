@@ -970,11 +970,19 @@ TransitionStatement
       };
     }
 
+// ⚠️ 括号内容的写法：`_ "[" <捕获> "]"`。
+//
+//    改造前是 `WS "[" WS t:$(!"]" .)+ WS "]"` —— **两种写法都解析不了**：
+//      · `[ keyTurn ]`：中间的 `$(!"]" .)+` 是贪婪且**不回溯**的，它把结尾的
+//        空格一起吃掉，后面的 `WS` 没空白可用 → 挂在 `]` 前；
+//      · `[keyTurn]`：开头的 `WS "["` 要求 `[` 前必须有空白 → 挂在 `[` 后。
+//    也就是说属性窗最想展示的「触发条件 / 守卫」两个重点字段，实际上**根本
+//    写不出来**。现在只保留必要的定界符，两侧空白交给 `trim()`。
 TransitionTrigger
-  = WS "[" WS t:$(!"]" .)+ WS "]" { return t.trim(); }
+  = _ "[" t:$(!"]" .)+ "]" { return t.trim(); }
 
 TransitionGuard
-  = WS "[" WS "guard" WS "=" WS g:$(!"]" .)+ WS "]" { return g.trim(); }
+  = _ "[" _ "guard" _ "=" _ g:$(!"]" .)+ "]" { return g.trim(); }
 
 // ─── Activity（M5 行为视图）────────────────────────────────────────────
 
@@ -1028,8 +1036,10 @@ FlowStatement
       };
     }
 
+// 同 TransitionTrigger：括号内外两侧的空白都交给 trim()，
+// 见该规则的注释（改造前 `[ok]` / `[ ok ]` 两种写法都解析不了）。
 FlowGuard
-  = WS "[" WS g:$(!"]" .)+ WS "]" { return g.trim(); }
+  = _ "[" g:$(!"]" .)+ "]" { return g.trim(); }
 
 // ─── Requirement（M17.S9：§7.2.3 补 body 形态 + RequirementBodyMember）──
 //

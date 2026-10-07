@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { PackageModelingPane } from '../modeling/PackageModelingPane';
 import { ViewRenderer } from '../views/ViewRenderer';
@@ -22,6 +22,8 @@ export interface MiddlePaneProps {
   selectedViewpointId?: string | null;
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
+  /** 选中的画布连线 → 右栏连线属性窗 */
+  onSelectEdge: (e: Edge | null) => void;
   onCreatePackage: () => void;
   onCreateView: () => void;
   /** M14：暴露 diagramRef 给宿主（用于树点击元素后聚焦画布节点） */
@@ -30,6 +32,8 @@ export interface MiddlePaneProps {
   onOpenViewpoint?: (viewpointId: string) => void;
   /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
   onRenameFocus?: () => void;
+  /** 连线属性窗「在文本编辑器中查看」→ 定位行 */
+  revealLineTick?: { line: number; tick: number };
 }
 
 export const MiddlePane: React.FC<MiddlePaneProps> = ({
@@ -38,11 +42,13 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
   selectedViewpointId = null,
   selectedNode,
   onSelectNode,
+  onSelectEdge,
   onCreatePackage,
   onCreateView,
   onDiagramReady,
   onOpenViewpoint,
   onRenameFocus,
+  revealLineTick,
 }) => {
   if (selectedPackageId) {
     return (
@@ -50,8 +56,10 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
         packageId={selectedPackageId}
         selectedNode={selectedNode}
         onSelectNode={onSelectNode}
+        onSelectEdge={onSelectEdge}
         onDiagramReady={onDiagramReady}
         onRenameFocus={onRenameFocus}
+        revealLineTick={revealLineTick}
       />
     );
   }
@@ -61,9 +69,11 @@ export const MiddlePane: React.FC<MiddlePaneProps> = ({
         viewId={selectedViewId}
         selectedNode={selectedNode}
         onSelectNode={onSelectNode}
+        onSelectEdge={onSelectEdge}
         onDiagramReady={onDiagramReady}
         onOpenViewpoint={onOpenViewpoint}
         onRenameFocus={onRenameFocus}
+        revealLineTick={revealLineTick}
       />
     );
   }

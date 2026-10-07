@@ -836,6 +836,14 @@ export interface DiagramCanvasProps {
   onNodesDelete?: (nodeIds: string[]) => void;
   onEdgesDelete?: (edgeIds: string[]) => void;
   /**
+   * 选中连线 → 上抛给宿主渲染连线属性窗。
+   *
+   * 与 `onSelectionChange`（节点）是**两条独立通道**，不是二选一：点一条线时
+   * RF 会同时把上一次选中的节点取消掉，所以两条通道各自报各自的空值，
+   * 由宿主（RightPane）按「节点优先、其次连线」决定右栏显示什么。
+   */
+  onEdgeSelectionChange?: (edge: Edge | null) => void;
+  /**
    * 节点位置变化。`attach` 仅端口传 —— 端口的挂点才是事实，x/y 是由它推导的
    * 结果（见 handleNodesChange）。普通元素不带这个参数。
    */
@@ -897,6 +905,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   onNodeDelete,
   onNodesDelete,
   onEdgesDelete,
+  onEdgeSelectionChange,
   onNodePositionChange,
   onSelectionChange,
   highlightNodeIds,
@@ -932,6 +941,20 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
    * value：节点 id → 节点身份（type + label）
    */
   const selectedRef = React.useRef<Map<string, { type?: string; label?: string }>>(new Map());
+
+  /**
+   * 连线选中态。
+   *
+   * 存的是 **stableKey**（`conn:A::B->C::D`）而不是 edge.id —— 与 selectedRef
+   * 同一条理由但更严重：边 id 来自解析器计数器，用户在属性窗里改任何一个字段、
+   * 甚至只是让 pipeline 重跑一次，`edge:trans_10` 就可能变成 `edge:trans_14`。
+   * 按 id 记 = 属性窗在第一次重绘后自己关掉。
+   *
+   * 同时记一份渲染态 id（`selectedEdgeId`）供 RF 画高亮 —— RF 需要的是当前帧
+   * 的 id，而身份判定要跨帧稳定，两者职责不同，不能混用一个字段。
+   */
+  const selectedEdgeKeyRef = React.useRef<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = React.useState<string | null>(null);
 
   /**
    * M17 S5：任意点连线手势的草稿。
@@ -1012,6 +1035,47 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     }
     return null;
   }, []);
+
+  /**
+   * 在给定边池里解析「用户以为选中的那条边」。
+   *
+   * 身份 = stableKey。**没有**「同名兜底」那一层：边的稳定键本身就是
+   * `conn:<源>::<目标>` 这种带方向的语义描述，两条不同的边不可能算出同一个键
+   * （重名由 StableKeys 的 `#n` 后缀消歧），所以键匹配失败就是这条边真没了
+   * —— 硬按 label 兜底反而会把选中态认到隔壁那条线上去。
+   */
+  const resolveSelectedEdge = React.useCallback((pool: Edge[]): Edge | null => {
+    const key = selectedEdgeKeyRef.current;
+    if (!key) return null;
+    for (const e of pool) {
+      if (stableKeyOf(e.data, String(e.id)) === key) return e;
+    }
+    return null;
+  }, []);
+
+  /**
+   * 边集合换血时重定位连线选中态。
+   *
+   * 与节点那条 effect 同理：文本编辑会让边 id 整体平移，但 stableKey 不变，
+   * 所以选中态要跟着新 id 迁过去，否则属性窗在用户改完一个字后就空了。
+   * 边真的消失了（那条 connect 被删）才清空 —— 这时调 onEdgeSelectionChange(null)，
+   * 让右栏回退到包 / 视图属性，与点空白的行为一致。
+   */
+  React.useEffect(() => {
+    const key = selectedEdgeKeyRef.current;
+    if (!key) return;
+    const hit = edges.find((e) => stableKeyOf(e.data, String(e.id)) === key);
+    if (!hit) {
+      selectedEdgeKeyRef.current = null;
+      setSelectedEdgeId(null);
+      onEdgeSelectionChange?.(null);
+      return;
+    }
+    const nextId = String(hit.id);
+    setSelectedEdgeId((prev) => (prev === nextId ? prev : nextId));
+    onEdgeSelectionChange?.(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edges]);
 
   // 节点集合换血（文本编辑 / 切包 / 切视图 / 删除）时重定位选中态
   React.useEffect(() => {
@@ -1236,11 +1300,16 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         const anchors = edgeAnchors?.[stableKeyOf(e.data, idStr)];
         // 没有存过锚点的边不下发这个字段，让 AnchoredEdge 用默认锚点兜底 ——
         // 空对象会让「有锚点 / 无锚点」两种态看起来一模一样，排查时分不出来。
-        return anchors
+        const next: Edge = anchors
           ? { ...e, id: idStr, data: { ...e.data, anchors } }
           : { ...e, id: idStr };
+        // 受控选中态：RF 只画 `selected: true` 的边，不回写高亮。
+        // 少了这一行，用户点了线却看不到任何选中反馈（属性窗开了、画布上
+        // 那条线却和没点过一样），像是面板自己弹出来的。
+        if (idStr === selectedEdgeId) next.selected = true;
+        return next;
       }),
-    [edges, edgeAnchors]
+    [edges, edgeAnchors, selectedEdgeId]
   );
 
   // 双击节点 → 选中 + 请右栏聚焦「名称」输入框（不再弹 window.prompt）
@@ -1342,8 +1411,16 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       selectedRef.current = new Map();
       setSelectedNodeIds(new Set());
       onSelectionChange?.(null);
+      // 连线选中态一并清：点空白 = 「我不看任何东西」，右栏该回退到包属性。
+      // 只清节点不清边的话，点空白之后属性窗还钉在那条线上 —— 而画布上
+      // 已经没有选中高亮可以解释这个面板为什么还开着。
+      if (selectedEdgeKeyRef.current !== null) {
+        selectedEdgeKeyRef.current = null;
+        setSelectedEdgeId(null);
+        onEdgeSelectionChange?.(null);
+      }
     },
-    [onSelectionChange],
+    [onSelectionChange, onEdgeSelectionChange],
   );
 
   const handleNodesChange = useCallback(
@@ -1420,10 +1497,26 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       for (const c of changes) {
         if (c.type === 'remove' && onEdgesDelete) {
           onEdgesDelete([String(c.id)]);
+          continue;
+        }
+        // 选中态：edges 同样是完全受控的（每次 pipeline 都重建），必须自己把
+        // select 变化记下来并回写到 stableEdges，否则点线选中不了 —— RF 只发
+        // change，不发「谁被选中了」，不接住就等于没接。
+        if (c.type === 'select') {
+          if (c.selected) {
+            const hit = stableEdges.find((e) => String(e.id) === String(c.id));
+            selectedEdgeKeyRef.current = stableKeyOf(hit?.data, String(c.id));
+            setSelectedEdgeId(String(c.id));
+            onEdgeSelectionChange?.(hit ?? null);
+          } else if (selectedEdgeId === String(c.id)) {
+            selectedEdgeKeyRef.current = null;
+            setSelectedEdgeId(null);
+            onEdgeSelectionChange?.(null);
+          }
         }
       }
     },
-    [onEdgesDelete]
+    [onEdgesDelete, onEdgeSelectionChange, stableEdges, selectedEdgeId]
   );
 
   const handleNodesDelete = useCallback(

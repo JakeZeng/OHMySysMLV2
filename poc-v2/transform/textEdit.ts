@@ -200,33 +200,6 @@ export function findDecl(
 }
 
 /**
- * 根据 React Flow edge id 查找连接（格式：`edge:<id>`）。
- * 同时返回所有依赖该 part 的 connect 端点（用于 deleteNode 时清理）。
- */
-export function findConnection(
-  model: SysMLModel,
-  edgeId: string
-): Connection | undefined {
-  const astId = edgeId.startsWith('edge:') ? edgeId.slice(5) : edgeId;
-  for (const pkg of model.packages) {
-    const conn = findConnInPackage(pkg, astId);
-    if (conn) return conn;
-  }
-  return model.connections.find((c) => c.id === astId);
-}
-
-function findConnInPackage(pkg: Package, id: string): Connection | undefined {
-  for (const m of pkg.members) {
-    if (m.kind === 'connection' && m.id === id) return m;
-    if (m.kind === 'package') {
-      const f = findConnInPackage(m, id);
-      if (f) return f;
-    }
-  }
-  return undefined;
-}
-
-/**
  * 找到所有引用某个 part name 的 connection（用于 deleteNode 时一并清理）。
  */
 export function findConnectionsReferencing(
@@ -654,24 +627,99 @@ function offsetToLine(text: string, offset: number): number {
 
 // ─── 删除连接 ──────────────────────────────────────────────────────────
 
+/**
+ * 删除一条连线语句（`connection` / `transition` / `flow` / `trace` / `allocation`）。
+ *
+ * 改造前只认 `edge:<connId>` → `Connection` 一种，transition / flow / trace /
+ * allocation 四类边一律 `return { text, edits: [] }` —— **静默无操作**。
+ * 用户在属性窗点「删除连线」，界面关掉了但模型纹丝不动，比没有这个按钮更糟
+ * （看起来像成功了）。现在五类边都能删。
+ *
+ * 五类的边 id 前缀各不相同（见 modelToFlow），所以先剥前缀再按 astId 全模型
+ * 搜一遍。**不**按前缀直接断定类型 —— 前缀只是命名约定，判据要用 AST 里
+ * 真实存在的那个节点，否则前缀一改就静默失效。
+ *
+ * ⚠️ 删除范围是**语句跨度**（`location.offset` 到语句末尾的 `;`），不是整行。
+ * 这一点是被测试逼出来的：transition / flow 嵌在容器 body 里，而容器体允许
+ * 写成单行 —— `state machine Ignition { state Off; transition Off to On; }`
+ * 里迁移和状态机在**同一行**。按行删会把整个状态机连同它的状态一起抹掉，
+ * 那不是「删一条连线」，是「删掉一台状态机」。语句跨度以 AST 的 offset 为准，
+ * 与排版无关，多行写也不会误伤邻居。
+ */
 export function deleteConnection(
   text: string,
   model: SysMLModel,
   edgeId: string
 ): EditResult {
-  // edgeId 格式：edge:<connId>
-  const astId = edgeId.startsWith('edge:') ? edgeId.slice(5) : edgeId;
-  const conn = findConnection(model, astId);
-  if (!conn) return { text, edits: [] };
+  const astId = stripEdgePrefix(edgeId);
+  const stmt = findRelationStmt(model, astId);
+  if (!stmt || stmt.location?.offset == null) return { text, edits: [] };
 
-  const lineRange = findLineRange(text, conn.location.line);
-  return applyEdits(text, [
-    {
-      offset: lineRange[0],
-      length: lineRange[1] - lineRange[0],
-      replacement: '',
-    },
-  ]);
+  const start = stmt.location.offset;
+  // 扫到语句自己的 `;`（含）。文法里这五种语句都不含嵌套分号，遇到第一个
+  // `;` 即为语句末尾 —— 跨行写也成立。
+  const semi = text.indexOf(';', start);
+  const end = semi >= 0 ? semi + 1 : start;
+  if (end <= start) return { text, edits: [] };
+  return applyEdits(text, [{ offset: start, length: end - start, replacement: '' }]);
+}
+
+/** 剥掉连线 id 的命名空间前缀（`edge:` / `trace:` / `alloc:`）。 */
+function stripEdgePrefix(edgeId: string): string {
+  const i = edgeId.indexOf(':');
+  return i >= 0 ? edgeId.slice(i + 1) : edgeId;
+}
+
+/** 找到任意一种关系语句（带 offset），按 astId 全模型搜索。 */
+function findRelationStmt(
+  model: SysMLModel,
+  astId: string
+): { location: { line: number; column: number; offset?: number } } | undefined {
+  const seen = new Set<string>();
+  const walk = (ns: { members: any[] }): { location: { line: number; column: number } } | undefined => {
+    for (const m of ns.members) {
+      if (seen.has(m)) continue;
+      seen.add(m);
+      // 五类关系语句都是「成员」形态，且各自持有 location
+      if (
+        m.kind === 'connection' ||
+        m.kind === 'transition' ||
+        m.kind === 'controlFlow' ||
+        m.kind === 'trace' ||
+        m.kind === 'allocation'
+      ) {
+        if (m.id === astId) return m;
+        // transition / controlFlow 嵌在 stateMachine / activity 的 body 里，
+        // 不在 Package.members 的顶层 —— 必须下潜一层。
+        if (Array.isArray(m.transitions)) {
+          const hit = m.transitions.find((t: any) => t?.id === astId);
+          if (hit) return hit;
+        }
+        if (Array.isArray(m.flows)) {
+          const hit = m.flows.find((f: any) => f?.id === astId);
+          if (hit) return hit;
+        }
+      }
+      if (m.kind === 'package') {
+        const r = walk(m);
+        if (r) return r;
+      }
+    }
+    return undefined;
+  };
+
+  for (const pkg of model.packages) {
+    const r = walk(pkg);
+    if (r) return r;
+  }
+  // 顶层平铺集合（模型根上的关系语句）
+  const flat = [
+    ...(model.connections ?? []),
+    ...(model.stateMachines ?? []).flatMap((s: any) => s.transitions ?? []),
+    ...(model.activities ?? []).flatMap((a: any) => a.flows ?? []),
+    ...(model.traceLinks ?? []),
+  ] as any[];
+  return flat.find((m) => m?.id === astId);
 }
 
 // ─── 编辑应用 ──────────────────────────────────────────────────────────

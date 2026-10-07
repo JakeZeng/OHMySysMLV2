@@ -13,7 +13,7 @@
 
 import * as React from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import {
   ArrowLeft,
   Loader2,
@@ -45,6 +45,7 @@ import { MiddlePane } from '../components/layout/MiddlePane';
 import { RightPane } from '../components/layout/RightPane';
 import { useTreeStore, decodeNodeId, encodeNodeId } from '../stores/treeStore';
 import { useModelStore } from '../stores/modelStore';
+import { useUIStore } from '../stores/uiStore';
 import { useElementTreeCacheStore } from '../stores/elementTreeCacheStore';
 import { usePackageElements } from '../hooks/usePackageElements';
 import type { DiagramCanvasHandle } from '../canvas/DiagramCanvas';
@@ -264,6 +265,45 @@ export const ProjectDetail: React.FC = () => {
   // ── 画布节点选中（提升到 ProjectDetail 共享给 RightPane） ──
   const [selectedCanvasNode, setSelectedCanvasNode] = React.useState<Node | null>(
     null,
+  );
+
+  /**
+   * 画布连线选中（与节点选中同级的第二条通道 → 右栏连线属性窗）。
+   *
+   * 切包 / 切视图时必须一起清：连线的身份是 stableKey，换一个 scope 之后
+   * 同名键可能指向完全不同的关系，留着会让新页面的右栏显示上一份模型的连线。
+   */
+  const [selectedCanvasEdge, setSelectedCanvasEdge] = React.useState<Edge | null>(
+    null,
+  );
+  const handleSelectEdge = React.useCallback((e: Edge | null) => {
+    setSelectedCanvasEdge(e);
+    // 选中连线意味着用户在看关系，不再看上一个节点 —— 清掉节点选中，
+    // 否则右栏按「节点优先」永远显示节点表单，点线像没反应。
+    if (e) setSelectedCanvasNode(null);
+  }, []);
+
+  /** 右栏「删除连线」→ 复用既有 store 算子（五类连线都支持，见 textEdit.deleteConnection） */
+  const deleteCanvasEdge = React.useCallback((edgeId: string) => {
+    useModelStore.getState().deleteConnection(edgeId);
+  }, []);
+
+  /**
+   * 连线属性窗「在文本编辑器中查看」→ 切到文本模式并定位到该行。
+   *
+   * 切模式是必须的：可视化模式下 SysMLEditor 根本不挂载，光给行号无处可去。
+   * tick 自增，保证连续两次跳同一行也会重新定位（理由同 renameFocusTick）。
+   */
+  const setModelingMode = useUIStore((s) => s.setModelingMode);
+  const [revealLine, setRevealLine] = React.useState<{ line: number; tick: number } | null>(
+    null,
+  );
+  const handleJumpToEdgeSource = React.useCallback(
+    (line: number) => {
+      setModelingMode('text');
+      setRevealLine((prev) => ({ line, tick: (prev?.tick ?? 0) + 1 }));
+    },
+    [setModelingMode],
   );
 
   /**
@@ -1025,6 +1065,10 @@ export const ProjectDetail: React.FC = () => {
     (encodedId: string | null) => {
       const dec = decodeNodeId(encodedId);
       if (!dec) return;
+      // 切 scope 前清画布选中：连线的身份是 stableKey，换包之后同名键可能
+      // 指向完全不同的关系，不清的话新页面的右栏会显示上一份模型的连线。
+      setSelectedCanvasNode(null);
+      setSelectedCanvasEdge(null);
       if (dec.kind === 'package') setSearchParams({ package: dec.id });
       else if (dec.kind === 'view') setSearchParams({ view: dec.id });
       else if (dec.kind === 'viewpoint') setSearchParams({ viewpoint: dec.id });
@@ -1035,6 +1079,7 @@ export const ProjectDetail: React.FC = () => {
 
   const clearSelection = React.useCallback(() => {
     setSelectedCanvasNode(null);
+    setSelectedCanvasEdge(null);
   }, []);
 
   // ── Header：项目信息 + 操作按钮（压缩条） ────────────────
@@ -1150,11 +1195,13 @@ export const ProjectDetail: React.FC = () => {
               selectedViewpointId={selectedViewpointId}
               selectedNode={selectedCanvasNode}
               onSelectNode={setSelectedCanvasNode}
+              onSelectEdge={handleSelectEdge}
               onCreatePackage={() => void handleCreatePackage(null)}
               onCreateView={() => void handleCreateView(null)}
               onDiagramReady={handleDiagramReady}
               onRenameFocus={handleRenameFocus}
               onOpenViewpoint={(id) => setSearchParams({ viewpoint: id })}
+              revealLineTick={revealLine ?? undefined}
             />
           }
           right={
@@ -1163,6 +1210,9 @@ export const ProjectDetail: React.FC = () => {
               selectedPackageId={selectedPackageId}
               selectedViewId={selectedViewId}
               selectedNode={selectedCanvasNode}
+              selectedEdge={selectedCanvasEdge}
+              onJumpToEdgeSource={handleJumpToEdgeSource}
+              onDeleteEdge={deleteCanvasEdge}
               focusNameTick={renameFocusTick}
               onClearedSelection={clearSelection}
               onOpenSettings={() => setShowSettings(true)}

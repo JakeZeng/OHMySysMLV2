@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import { ModelingPane, type ModelingAdapter } from './ModelingPane';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { usePackageContent } from '../../hooks/usePackageContent';
@@ -23,18 +23,24 @@ export interface PackageModelingPaneProps {
   packageId: string;
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
+  /** 选中的画布连线 → 右栏 ConnectionFormPanel */
+  onSelectEdge: (e: Edge | null) => void;
   /** M14：暴露 diagramRef 给宿主 */
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
   /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
   onRenameFocus?: () => void;
+  /** 连线属性窗「在文本编辑器中查看」→ 定位行 */
+  revealLineTick?: { line: number; tick: number };
 }
 
 export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
   packageId,
   selectedNode,
   onSelectNode,
+  onSelectEdge,
   onDiagramReady,
   onRenameFocus,
+  revealLineTick,
 }) => {
   const { showToast } = useToast();
   const content = usePackageContent(packageId);
@@ -82,6 +88,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
       edgeAnchors,
       selectedNode,
       onSelectNode,
+      onSelectEdge,
       onOpenTemplate: () => setTemplateOpen(true),
       onOpenAIGenerate: () => setAiOpen(true),
       onExportJson: () => {
@@ -98,7 +105,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
         showToast({ title: '已导出 SysML', variant: 'success' });
       },
     }),
-    [name, description, content, selectedNode, onSelectNode, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, edgeAnchors, showToast],
+    [name, description, content, selectedNode, onSelectNode, onSelectEdge, setName, setDescription, renameNode, deleteNode, deleteConnection, setNodePosition, createNodeFromPalette, addConnection, edgeAnchors, showToast],
   );
 
   return (
@@ -107,6 +114,7 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
         adapter={adapter}
         onDiagramReady={onDiagramReady}
         onRenameFocus={onRenameFocus}
+        revealLineTick={revealLineTick}
         // 包画布允许双击空白新建（元素落进包 body，画布立刻出节点）
         allowPaneDoubleClickCreate
       />

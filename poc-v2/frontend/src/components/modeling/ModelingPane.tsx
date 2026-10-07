@@ -13,7 +13,7 @@
 
 import * as React from 'react';
 import { parse } from '@parser/parser';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import SysMLEditor, { type SysMLEditorHandle, type PipelineResult as EditorPipeline } from '../../editor/SysMLEditor';
 import { DiagramCanvas, type DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { ErrorPanel } from '../../editor/ErrorPanel';
@@ -92,6 +92,13 @@ export interface ModelingAdapter {
   /** 选中的画布节点（向上抛给父组件以渲染 ElementFormPanel） */
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
+  /**
+   * 选中的画布连线（向上抛给父组件以渲染 ConnectionFormPanel）。
+   *
+   * 与 selectedNode 是两条独立通道 —— 点一条线时 RF 会取消上一次选中的节点，
+   * 所以两条各自可能为 null，宿主按「节点优先、其次连线」决定右栏显示什么。
+   */
+  onSelectEdge: (e: Edge | null) => void;
   /** 模态回调 */
   onOpenTemplate: () => void;
   onOpenAIGenerate: () => void;
@@ -119,6 +126,16 @@ export interface ModelingPaneProps {
    * 靠 store 读会漏判。谁是视图由谁自己声明，不依赖时序。
    */
   allowPaneDoubleClickCreate?: boolean;
+  /**
+   * 请求把文本编辑器滚到指定行（连线属性窗的「在文本编辑器中查看」）。
+   *
+   * 自增计数而不是 line 本身：连续两次跳到**同一行**时 line 不变，
+   * 依赖它的 effect 不会重跑，光标也就不会重新定位。
+   *
+   * 宿主需要先把 modelingMode 切成 'text' —— 文本模式下 SysMLEditor 才挂载，
+   * 否则这里拿到的是 null（组件还没渲染，ref 尚未绑定）。
+   */
+  revealLineTick?: { line: number; tick: number };
 }
 
 export const ModelingPane: React.FC<ModelingPaneProps> = ({
@@ -126,6 +143,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
   onDiagramReady,
   onRenameFocus,
   allowPaneDoubleClickCreate = false,
+  revealLineTick,
 }) => {
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
@@ -325,6 +343,17 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
     sysmlEditorRef.current?.revealPosition(line, 1);
   }, []);
 
+  // 连线属性窗「在文本编辑器中查看」→ 定位到该语句所在行。
+  // 延到下一拍：宿主切 modelingMode 与本次渲染是同一批 state 更新，
+  // 但 SysMLEditor 挂载后 ref 才绑定，同一 tick 内读还是 null。
+  React.useEffect(() => {
+    if (!revealLineTick) return;
+    const t = window.setTimeout(() => {
+      sysmlEditorRef.current?.revealPosition(revealLineTick.line, 1);
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [revealLineTick]);
+
   return (
     <div className="flex h-full flex-col" data-testid="modeling-pane">
       <ModelingToolbar
@@ -445,6 +474,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
                 onEdgesDelete={(ids) => ids.forEach(adapter.deleteConnection)}
                 onNodePositionChange={adapter.setNodePosition}
                 onSelectionChange={adapter.onSelectNode}
+                onEdgeSelectionChange={adapter.onSelectEdge}
                 highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
                 nodeCount={adapter.pipeline.nodes.length}
                 interactive={interactive}

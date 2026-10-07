@@ -17,7 +17,7 @@
  */
 
 import * as React from 'react';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import type { DiagramCanvasHandle } from '../../canvas/DiagramCanvas';
 import { ViewModelingPane } from '../modeling/ViewModelingPane';
 import { ViewpointSummary } from './ViewpointSummary';
@@ -36,11 +36,15 @@ export interface ViewRendererProps {
   viewId: string;
   selectedNode: Node | null;
   onSelectNode: (n: Node | null) => void;
+  /** 选中的画布连线 → 右栏连线属性窗 */
+  onSelectEdge: (e: Edge | null) => void;
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
   /** 点击 satisfies 视角时跳转（宿主注入） */
   onOpenViewpoint?: (viewpointId: string) => void;
   /** M17：双击画布节点 → 请宿主聚焦右栏「名称」输入框 */
   onRenameFocus?: () => void;
+  /** 连线属性窗「在文本编辑器中查看」→ 定位行 */
+  revealLineTick?: { line: number; tick: number };
 }
 
 const BEHAVIOR_KINDS: ReadonlySet<BehaviorKind> = new Set(['state', 'action', 'snapshot']);
@@ -49,9 +53,11 @@ export const ViewRenderer: React.FC<ViewRendererProps> = ({
   viewId,
   selectedNode,
   onSelectNode,
+  onSelectEdge,
   onDiagramReady,
   onOpenViewpoint,
   onRenameFocus,
+  revealLineTick,
 }) => {
   const { view } = useViewDetail(viewId);
   const renderKind = view?.renderKind ?? 'interconnection';
@@ -93,8 +99,10 @@ export const ViewRenderer: React.FC<ViewRendererProps> = ({
             viewId={viewId}
             selectedNode={selectedNode}
             onSelectNode={onSelectNode}
+            onSelectEdge={onSelectEdge}
             onDiagramReady={onDiagramReady}
             onRenameFocus={onRenameFocus}
+            revealLineTick={revealLineTick}
           />
         </div>
       </>

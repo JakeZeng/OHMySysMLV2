@@ -131,6 +131,100 @@ describe('Text Edit - deleteConnection', () => {
   });
 });
 
+/**
+ * 改造前 deleteConnection 只认 `edge:<connId>` → Connection 一种，
+ * 其余四类连线（transition / flow / trace / allocation）一律静默返回空 edits ——
+ * 用户在属性窗点「删除连线」，面板关了但模型纹丝不动。这里逐类钉住。
+ */
+describe('Text Edit - deleteConnection 覆盖五类连线', () => {
+  const SRC = `package Vehicle {
+  part def Car { port powerOut : Power; }
+  part def Engine { port fuelIn : Fuel; }
+  part def LogicUnit;
+  part def PhysUnit;
+  requirement def MaxPower;
+  state machine Ignition { state Off; state On; transition Off to On; }
+  activity Drive { action Start; action Stop; flow Start to Stop; }
+  connect Car.powerOut to Engine.fuelIn;
+  satisfy MaxPower by Car;
+  allocate LogicUnit to PhysUnit;
+}`;
+
+  /**
+   * 按语义类型挑一条边，模拟「用户在画布上点了哪条线」。
+   *
+   * ⚠️ 必须**复用同一个 model**：解析器的 `nextId` 是模块级全局计数器，
+   * 每 parse 一次 id 就整体平移一截。在同一进程里 parse 两次再把 A 的边 id
+   * 拿去查 B 的 model，必然查不到（这正是 stableKey 存在的理由）。
+   * 所以这里一次解析，同时返回 model 供 deleteConnection 使用。
+   */
+  async function parseAndFind(kind: string): Promise<{ id: string; model: any }> {
+    const r = parse(SRC);
+    if (!r.ok) throw new Error('parse failed: ' + JSON.stringify(r.errors[0]));
+    const { modelToFlow } = await import('../transform/modelToFlow');
+    const { edgeSemanticsOf } = await import('../transform/edgeSemantics');
+    const hit = modelToFlow(r.model).edges.find(
+      (e) => edgeSemanticsOf(e.data)?.kind === kind,
+    );
+    if (!hit) throw new Error(`no edge of kind ${kind}`);
+    return { id: String(hit.id), model: r.model };
+  }
+
+  it('transition：删掉状态机里的迁移，状态机本身保留', async () => {
+    const { id, model } = await parseAndFind('transition');
+    const out = deleteConnection(SRC, model, id);
+    expect(out.text).not.toContain('transition Off to On');
+    expect(out.text).toContain('state machine Ignition');
+    expect(out.text).toContain('state Off');
+  });
+
+  it('flow：删掉活动里的控制流，动作保留', async () => {
+    const { id, model } = await parseAndFind('flow');
+    const out = deleteConnection(SRC, model, id);
+    expect(out.text).not.toContain('flow Start to Stop');
+    expect(out.text).toContain('activity Drive');
+    expect(out.text).toContain('action Start');
+  });
+
+  it('trace：删掉需求追溯语句', async () => {
+    const { id, model } = await parseAndFind('trace');
+    const out = deleteConnection(SRC, model, id);
+    expect(out.text).not.toContain('satisfy MaxPower by Car');
+    expect(out.text).toContain('requirement def MaxPower');
+  });
+
+  it('allocation：删掉 §7.12 分配语句', async () => {
+    const { id, model } = await parseAndFind('allocation');
+    const out = deleteConnection(SRC, model, id);
+    expect(out.text).not.toContain('allocate LogicUnit to PhysUnit');
+    expect(out.text).toContain('part def LogicUnit');
+  });
+
+  it('不误删同名的另一条连线（按 id 精确定位，不是按行首关键字）', async () => {
+    const TWO = `package P {
+  part def A;
+  part def B;
+  part def C;
+  connect A to B;
+  connect B to C;
+}`;
+    const r = parse(TWO);
+    const { modelToFlow } = await import('../transform/modelToFlow');
+    const edges = modelToFlow(r.model).edges;
+    expect(edges).toHaveLength(2);
+    const out = deleteConnection(TWO, r.model, String(edges[0].id));
+    expect(out.text).not.toContain('connect A to B');
+    expect(out.text).toContain('connect B to C');
+  });
+
+  it('未知 id 不改文本（保持静默无害，而不是抛错）', async () => {
+    const r = parse(SOURCE_1);
+    const result = deleteConnection(SOURCE_1, r.model, 'edge:nonexistent');
+    expect(result.text).toBe(SOURCE_1);
+    expect(result.edits).toHaveLength(0);
+  });
+});
+
 describe('Text Edit - renameNode 语义化（M16 P0）', () => {
   it('11. 注释中的同名字词不被误伤', () => {
     const src = `package P {

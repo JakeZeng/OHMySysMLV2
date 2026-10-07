@@ -1166,6 +1166,51 @@ alias FS for FreeStanding;`);
       expect(parse(serialize(p1.model)).ok, `往返失败：${t}`).toBe(true);
     }
   });
+
+  it('73. 括号内外空白都合法：transition trigger / guard / flow guard', () => {
+    // 改造前这三种写法**全都解析不了**：
+    //   · `[ keyTurn ]` —— 中间的 `$(!"]" .)+` 贪婪且不回溯，把结尾空格吃掉，
+    //     后面的 `WS` 没空白可用；
+    //   · `[keyTurn]`  —— 开头的 `WS "["` 要求 `[` 前必须有空白。
+    // 而这两个字段正是连线属性窗里 transition / flow 最想展示的重点内容，
+    // 等于「面板想显示的东西根本写不出来」。
+    for (const form of ['[keyTurn]', ' [keyTurn]', ' [ keyTurn ]', ' [keyTurn ]']) {
+      const r = parse(
+        `package P { state machine S { state A; state B; transition A to B${form}; } }`,
+      );
+      expect(r.ok, `trigger 写法 ${form} 解析失败`).toBe(true);
+      expect((r.model.stateMachines[0].transitions[0] as any).trigger).toBe('keyTurn');
+    }
+    // guard 按规范**跟在 trigger 之后**（`[ trigger ] [ guard = x ]`）——
+    // 单写 `[guard = ok]` 会被 TransitionTrigger 整个吃掉当成 trigger，
+    // 这是语法本身的次序约束，不是 bug。
+    for (const form of [
+      '[keyTurn][guard = ok]',
+      ' [keyTurn][guard = ok]',
+      ' [ keyTurn ] [ guard = ok ]',
+    ]) {
+      const r = parse(
+        `package P { state machine S { state A; state B; transition A to B ${form}; } }`,
+      );
+      expect(r.ok, `guard 写法 ${form} 解析失败`).toBe(true);
+      const t = r.model.stateMachines[0].transitions[0] as any;
+      expect(t.trigger, `trigger 没取到（${form}）`).toBe('keyTurn');
+      expect(t.guard, `guard 没取到（${form}）`).toBe('ok');
+    }
+    for (const form of ['[ok]', ' [ok]', ' [ ok ]']) {
+      const r = parse(`package P { activity D { action X; action Y; flow X to Y${form}; } }`);
+      expect(r.ok, `flow guard 写法 ${form} 解析失败`).toBe(true);
+      expect((r.model.activities[0].flows[0] as any).guard).toBe('ok');
+    }
+    // trigger + guard 同时出现，两者都要取到
+    const both = parse(
+      'package P { state machine S { state A; state B; transition A to B [ keyTurn ] [ guard = x > 1 ]; } }',
+    );
+    expect(both.ok).toBe(true);
+    const t = both.model.stateMachines[0].transitions[0] as any;
+    expect(t.trigger).toBe('keyTurn');
+    expect(t.guard).toBe('x > 1');
+  });
 });
 
 describe('Parser - 错误处理', () => {

@@ -33,9 +33,11 @@ import type {
   EnumDefinition,
   CommentBlock,
   TraceLink,
+  Allocation,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
+import type { EdgeSemantics } from './edgeSemantics';
 import {
   StableKeys,
   joinQName,
@@ -45,6 +47,19 @@ import {
 } from './stableKey';
 
 // ─── 输出类型 ──────────────────────────────────────────────────────────
+
+/**
+ * 边 data 的形状。语义挂在 `semantics` 下（而不是把 kind 平铺到 data 根部）：
+ * 这样 `edgeSemanticsOf` 能靠「有没有 semantics」判断这条边是不是本模块产出的，
+ * 历史数据 / 测试里手搓的边不会因为碰巧带个 `kind` 字段就被误认。
+ */
+export interface EdgeData {
+  location?: { line: number; column: number; offset?: number };
+  stableKey?: string;
+  /** 画布锚点（M17 S5，由 DiagramCanvas 注入，不来自 AST） */
+  anchors?: unknown;
+  semantics?: EdgeSemantics;
+}
 
 export interface FlowGraph {
   nodes: Node[];
@@ -127,17 +142,20 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   const activities: Q<Activity>[] = [];
   const requirements: Q<Requirement>[] = [];
   const constraintBlocks: Q<ConstraintBlock>[] = [];
+  // §7.12 分配语句。改造前没有这个桶 —— 分配语句被 collectMembers 的 switch
+  // 静默丢掉，于是「分配」模式画线后画布上什么都不会出现。
+  const allocations: Q<Allocation>[] = [];
 
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
   }
   // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
-    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
   }
   for (const vp of model.viewpoints ?? []) {
-    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks);
+    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
@@ -234,7 +252,16 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
             stableKey: keys.alloc(
               connKeyBase(joinQName([qname], t.source), joinQName([qname], t.target)),
             ),
-          },
+            // 属性窗按 kind 分派重点内容（transform/edgeSemantics.ts）
+            semantics: {
+              kind: 'transition',
+              sourceState: t.source,
+              targetState: t.target,
+              trigger: t.trigger,
+              guard: t.guard,
+              ownerQName: qname,
+            },
+          } as EdgeData,
         });
       }
     }
@@ -276,7 +303,14 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
             stableKey: keys.alloc(
               connKeyBase(joinQName([qname], f.source), joinQName([qname], f.target)),
             ),
-          },
+            semantics: {
+              kind: 'flow',
+              sourceAction: f.source,
+              targetAction: f.target,
+              guard: f.guard,
+              ownerQName: qname,
+            },
+          } as EdgeData,
         });
       }
     }
@@ -328,7 +362,13 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         data: {
           location: trace.location,
           stableKey: keys.alloc(connKeyBase(trace.source, trace.target)),
-        },
+          semantics: {
+            kind: 'trace',
+            relation: trace.relation,
+            sourceRef: trace.source,
+            targetRef: trace.target,
+          },
+        } as EdgeData,
       });
     }
   }
@@ -336,6 +376,13 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // 4. 边（结构视图的 connect）
   for (const { node: conn } of connections) {
     const edge = makeEdge(conn, nameToPartId, nameToQName, partToPortIds, keys);
+    if (edge) edges.push(edge);
+  }
+
+  // 4b. §7.12 分配边。必须排在 4 之后 —— `nameToPartId` 在步骤 3 才填满，
+  //     提前遍历会一条都解析不出端点。
+  for (const { node: alloc } of allocations) {
+    const edge = makeAllocationEdge(alloc, nameToPartId, nameToQName, keys);
     if (edge) edges.push(edge);
   }
 
@@ -746,7 +793,62 @@ function makeEdge(
           endpoint(conn.target.partName, conn.target.portName),
         ),
       ),
-    },
+      // 属性窗按 kind 分派重点内容（transform/edgeSemantics.ts）。
+      // 端点给**限定名**：短名跨包会撞车（两个包都能有 `Car`），
+      // 只显示短名用户分不清这条线连的是哪一个。
+      semantics: {
+        kind: 'connection',
+        name: conn.name,
+        sourceRef: endpoint(conn.source.partName, conn.source.portName),
+        targetRef: endpoint(conn.target.partName, conn.target.portName),
+        sourcePort: conn.source.portName,
+        targetPort: conn.target.portName,
+      },
+    } as EdgeData,
+  };
+}
+
+/**
+ * §7.12 分配边 —— `allocate <logical> to <physical>;`
+ *
+ * 改造前**完全没有这条渲染路径**：语法能解析、校验能过、`addConnection`
+ * 也能按模式生成语句，但 buildGraph 里没有任何一处收集 `allocation`，
+ * 于是用户在画布上用「分配」模式画一条线，文本写进去了、画布上什么都不出现
+ * （实测 edges 长度为 0）。补在这里，顺带让它成为属性窗的第五种连线类型。
+ *
+ * 端点解析沿用 connect 那套：`nameToPartId` 是 partDef / partUsage 共用的
+ * 名字表（见步骤 3），所以逻辑侧 / 物理侧指向任何一种 part 都能落到节点上。
+ */
+function makeAllocationEdge(
+  alloc: Allocation,
+  nameToPartId: Map<string, string>,
+  nameToQName: Map<string, string>,
+  keys: StableKeys
+): Edge | null {
+  const srcId = nameToPartId.get(alloc.source);
+  const tgtId = nameToPartId.get(alloc.target);
+  if (!srcId || !tgtId) return null;
+  const qn = (n: string) => nameToQName.get(n) || n;
+  return {
+    id: `alloc:${alloc.id}`,
+    source: srcId,
+    target: tgtId,
+    // 形态与追溯边一致（虚线），但语义完全不同 —— 所以靠 data.semantics.kind
+    // 分派，不靠 edge.type（两者都是 straight，分不开）。
+    type: 'straight',
+    label: 'allocate',
+    animated: false,
+    style: { stroke: '#13a35c', strokeWidth: 1.5, strokeDasharray: '5 3' },
+    data: {
+      location: alloc.location,
+      // 分配是有向的（逻辑 → 物理），键必须带方向，否则与反向分配互相抢锚点。
+      stableKey: keys.alloc(connKeyBase(qn(alloc.source), qn(alloc.target))),
+      semantics: {
+        kind: 'allocation',
+        logicalRef: qn(alloc.source),
+        physicalRef: qn(alloc.target),
+      },
+    } as EdgeData,
   };
 }
 
@@ -770,6 +872,7 @@ function collectMembers(
   activities?: Q<Activity>[],
   requirements?: Q<Requirement>[],
   constraintBlocks?: Q<ConstraintBlock>[],
+  allocations?: Q<Allocation>[],
   path: string[] = []
 ): void {
   // M17：path 是本 namespace 的限定名前缀，每下潜一层包就追加一段。
@@ -807,10 +910,13 @@ function collectMembers(
         referenceUsages.push({ node: m, qname });
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, nextPath);
+        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, nextPath);
         break;
       case 'connection':
         connections.push({ node: m, qname });
+        break;
+      case 'allocation':
+        allocations?.push({ node: m, qname });
         break;
       case 'stateMachine':
         stateMachines?.push({ node: m, qname });

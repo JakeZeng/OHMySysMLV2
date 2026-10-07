@@ -5,12 +5,13 @@
  */
 
 import * as React from 'react';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 import { PackagePropertiesForm } from '../forms/PackagePropertiesForm';
 import { ViewPropertiesForm } from '../forms/ViewPropertiesForm';
 import { ProjectPropertiesForm } from '../forms/ProjectPropertiesForm';
 import { EmptyPropertiesPane } from '../forms/EmptyPropertiesPane';
 import { ElementFormPanel } from '../forms/ElementFormPanel';
+import { ConnectionFormPanel } from '../forms/ConnectionFormPanel';
 import { useProjectStore } from '../../stores/projectStore';
 import { usePackages } from '../../hooks/usePackages';
 import { useViews } from '../../hooks/useViews';
@@ -27,6 +28,15 @@ export interface RightPaneProps {
   selectedViewId: string | null;
   selectedNode: Node | null;
   /**
+   * 选中的画布连线。连线属性窗只读（字段不可行内编辑，见 ConnectionFormPanel
+   * 开头），但**删除**与**跳转源码**仍然可用。
+   */
+  selectedEdge?: Edge | null;
+  /** 选中连线后跳转源码行 */
+  onJumpToEdgeSource?: (line: number) => void;
+  /** 删除连线（走既有 deleteConnection 文本算子） */
+  onDeleteEdge?: (edgeId: string) => void;
+  /**
    * M17：画布双击节点 → 聚焦 ElementFormPanel 的「名称」输入框。
    * 自增计数（而不是 boolean）：连续两次双击时 boolean 不变，第二次不会重新全选。
    */
@@ -41,6 +51,9 @@ export const RightPane: React.FC<RightPaneProps> = ({
   selectedPackageId,
   selectedViewId,
   selectedNode,
+  selectedEdge,
+  onJumpToEdgeSource,
+  onDeleteEdge,
   focusNameTick,
   onClearedSelection,
   onOpenSettings,
@@ -88,7 +101,32 @@ export const RightPane: React.FC<RightPaneProps> = ({
     );
   }
 
-  // 2. 包
+  // 2. 画布连线（节点优先：点线时 RF 会取消节点选中，但两条通道是独立的，
+  //    框选可能同时留下节点和连线，此时节点表单信息量更大、先显示它）
+  if (selectedEdge) {
+    return (
+      <div className="flex h-full flex-col overflow-hidden">
+        <div className="border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+          <div className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              画布连线选中
+            </span>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          <ConnectionFormPanel
+            selectedEdge={selectedEdge}
+            onClear={onClearedSelection}
+            onJumpToSource={onJumpToEdgeSource}
+            onDelete={onDeleteEdge}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 3. 包
   if (selectedPackageId) {
     // 详情数据未到位：用 summary 凑一个最小 Package（含 content=空）；fallback
     const pkg: Package | null =
@@ -142,7 +180,7 @@ export const RightPane: React.FC<RightPaneProps> = ({
     );
   }
 
-  // 3. 视图
+  // 4. 视图
   if (selectedViewId) {
     const view: View | null =
       fullView && fullView.content !== undefined
@@ -202,7 +240,7 @@ export const RightPane: React.FC<RightPaneProps> = ({
     );
   }
 
-  // 4. 工程根
+  // 5. 工程根
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="border-b border-gray-100 px-3 py-2 dark:border-gray-800">
