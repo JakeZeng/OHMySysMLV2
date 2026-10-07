@@ -20,23 +20,25 @@
  * 「不能出现」这条比「必须出现」更重要：属性窗如果把所有字段都列一遍，
  * 每种连线都会有半屏永远为空的行，用户分不清「没设置」和「对这个类型不适用」。
  *
- * ## ⚠️ 当前状态：3 条用例都是 `test.fixme`（已知无法自动化，不是产品缺陷）
+ * ## ⚠️ 点边怎么做的（踩了一堆坑，最后是这个写法）
  *
  * 产品路径**已确认存在**（逐层读过）：
  *   `PackageModelingPane.onSelectEdge` → adapter → `ModelingPane` 的
  *   `onEdgeSelectionChange={adapter.onSelectEdge}` → `DiagramCanvas.handleEdgesChange`
- *   → `onEdgeSelectionChange?.(hit)` → `ProjectDetail.selectedCanvasEdge`
- *   → `RightPane` → `ConnectionFormPanel`。
+ *   → `ProjectDetail.selectedCanvasEdge` → `RightPane` → `ConnectionFormPanel`。
  *
- * 卡住的是**自动化点 SVG 边**这一步，React Flow 的边是 `<g class="react-flow__edge">`
- * 里的 `<path>`，踩过的坑（都写在 `clickEdge` 的注释里）：locator.click 连 `force`
- * 都会抛 "Element is outside of the viewport"（边的实际位置明明在视口内，是它自己
- * 的 SVG 视口判定）；`getScreenCTM()` 取到路径上的真实点再 `mouse.click` 也点不中。
+ * 之前点不中边，试过并失败的写法：
+ *   · locator `.click({force:true})` 点 `<path>` / 点加粗的 `.react-flow__edge-interaction`
+ *     —— 都抛 "Element is outside of the viewport"，而探针量出来边的实际位置完全在
+ *     视口内（x 1074..1438 / y 480..679），是 Playwright 对 SVG 的视口判定问题；
+ *   · `getScreenCTM()` + `getPointAtLength()` 算出**路径上**的真实点再 `mouse.click`
+ *     —— 点是准的，但面板不弹（点被上层节点吃掉了）；
+ *   · 点 fit-view / 缩放控件调整视口 —— 反而让 React Flow 重渲染、元素失效。
  *
- * 「五类连线各自显示什么重点内容」这条契约本身由
- * `tests/edgeSemantics.test.ts` 用真实 `parse` → `modelToFlow` 输出钉住
- * （五类全产出 + 各自的 fields/owner），组件层只负责把结果画出来、无分支逻辑。
- * 这里保留用例骨架，等有可靠的边点击方案（或改上 Playwright 的组件测试栈）时启用。
+ * 最后可行：**在页面内对 `<g class="react-flow__edge">` 派发 bubbles 的 MouseEvent**
+ * （见 `clickEdge`）。React 的合成事件挂在 root 上、冒泡阶段触发，能走到 RF 的
+ * `onEdgesChange('select')`，绕开 Playwright 对 SVG 的全部判定 —— 点边只为选中，
+ * 不需要真实的光标轨迹。
  *
  * 运行前提：后端 :8080（带 RATE_LIMIT_DISABLE=1）、前端 :3000、必须 --headed。
  */
@@ -46,6 +48,8 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 const stamp = Date.now().toString(36);
 
 let csrfToken = '';
+/** bootstrap 调用计数 —— 用户名必须每次唯一，否则第 2 个用例注册就撞「用户名已存在」 */
+let seq = 0;
 
 interface Auth {
   token: string;
@@ -55,7 +59,7 @@ interface Auth {
 }
 
 async function bootstrap(request: APIRequestContext, prefix: string): Promise<Auth> {
-  const username = `${prefix}_${stamp}`;
+  const username = `${prefix}_${stamp}_${seq++}`;
   const email = `${username}@example.com`;
   const reg = await request.post('/api/v1/auth/register', {
     data: { username, email, password: 'password123', full_name: prefix },
@@ -150,54 +154,61 @@ async function openWithAllEdges(page: Page, request: APIRequestContext): Promise
 }
 
 /**
- * 点一条边的可点区域。
+ * 点一条边，让它进入选中态。
  *
- * ⚠️ 三个坑叠加，必须按下面这个写法：
- *  1. 要点 `.react-flow__edge-interaction` —— React Flow 为每条边额外渲染一条
- *     **加粗的透明命中路径**，1px 的可视路径常常点不中。
- *  2. 取点必须用 `getPointAtLength(len/2)` + `getScreenCTM()` 换算屏幕坐标 ——
- *     曲线的 boundingBox 中心**不在曲线上**（贝塞尔尤其如此），点那里等于点空气。
- *  3. 用 `page.mouse.click()` 而不是 locator 的 `.click()` —— 即便加了 `force`，
- *     Playwright 仍会对 SVG path 做自己的视口判定，抛
- *     "Element is outside of the viewport"（实测边的位置明明在视口内）。
+ * ⚠️ 走**页面内派发的 MouseEvent**，不用 Playwright 的 `.click()`：
+ *   React Flow 的边是 `<g class="react-flow__edge">` 里的 SVG `<path>`，
+ *   locator.click() 连 `force: true` 都会抛 "Element is outside of the viewport"
+ *   （探针量出来边的实际位置完全在视口内，是 Playwright 对 SVG 的视口判定问题），
+ *   `getPointAtLength` + `getScreenCTM()` 算出的路径上真实点再 mouse.click 也点不中。
+ *
+ *   React 的合成事件挂在 root 上、在冒泡阶段触发，所以对 `<g>` 派发一个
+ *   `bubbles: true` 的 MouseEvent('click') 就能走到 RF 的 onEdgesChange('select')，
+ *   完全绕开 Playwright 的 actionability / 视口判定 —— 点边只是为了选中，
+ *   不需要真实的光标轨迹。
  */
 async function clickEdge(page: Page, index: number): Promise<void> {
   const edge = page.locator('.react-flow__edge').nth(index);
-  const pt = await edge.evaluate((el) => {
-    const p =
-      el.querySelector('path.react-flow__edge-interaction') ?? el.querySelector('path');
-    if (!p) return null;
-    const path = p as SVGPathElement;
-    const len = path.getTotalLength();
-    if (!len) return null;
-    const q = path.getPointAtLength(len / 2);
-    const m = path.getScreenCTM();
-    if (!m) return null;
-    return { x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f };
+  await edge.evaluate((el) => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   });
-  if (!pt) throw new Error(`第 ${index} 条边取不到路径上的点`);
-  await page.mouse.click(pt.x, pt.y);
 }
 
-/** 点一条边，读取属性窗的类型徽章与全部重点字段的 key */
+/** 点一条边，读取属性窗的类型徽章与全部重点字段（key + 值） */
 async function readPanelForEdge(
   page: Page,
   index: number,
-): Promise<{ kind: string; fields: string[]; owner?: string; title: string }> {
+): Promise<{
+  kind: string;
+  fields: string[];
+  values: Record<string, string>;
+  owner?: string;
+  title: string;
+}> {
   await clickEdge(page, index);
 
   const panel = page.locator('[data-testid="connection-form-panel"]');
   await expect(panel).toBeVisible({ timeout: 10_000 });
   const kind = (await page.locator('[data-testid="edge-form-kind"]').innerText()).trim();
   const title = (await page.locator('[data-testid="edge-form-title"]').innerText()).trim();
-  const fields = await page
+  const pairs = await page
     .locator('[data-testid^="edge-field-"]')
     .evaluateAll((els) =>
-      els.map((e) => (e.getAttribute('data-testid') ?? '').replace('edge-field-', '')),
+      els.map((e) => {
+        const dt = e.querySelector('dt');
+        const dd = e.querySelector('dd');
+        return {
+          key: (e.getAttribute('data-testid') ?? '').replace('edge-field-', ''),
+          value: (dd?.textContent ?? '').trim(),
+          label: (dt?.textContent ?? '').trim(),
+        };
+      }),
     );
+  const fields = pairs.map((p) => p.key);
+  const values = Object.fromEntries(pairs.map((p) => [p.key, p.value]));
   const ownerEl = page.locator('[data-testid="edge-form-owner"]');
   const owner = (await ownerEl.count()) ? (await ownerEl.innerText()).trim() : undefined;
-  return { kind, fields, owner, title };
+  return { kind, fields, values, owner, title };
 }
 
 // 视口要够大：DiagramCanvas 的 `fitView` 是在 ELK 重排**之前**算的，
@@ -206,10 +217,13 @@ async function readPanelForEdge(
 test.use({ viewport: { width: 2400, height: 1500 } });
 
 test.describe('连线属性窗：按类型显示重点内容', () => {
-  test.fixme('五种连线各自显示自己的重点字段，不混入别的类型的字段', async ({ page, request }) => {
+  test('五种连线各自显示自己的重点字段，不混入别的类型的字段', async ({ page, request }) => {
     await openWithAllEdges(page, request);
 
-    const seen = new Map<string, { fields: string[]; owner?: string; title: string }>();
+    const seen = new Map<
+      string,
+      { fields: string[]; values: Record<string, string>; owner?: string; title: string }
+    >();
 
     for (let i = 0; i < 5; i++) {
       const r = await readPanelForEdge(page, i);
@@ -218,7 +232,7 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
         seen.has(r.kind),
         `第 ${i} 条边的类型 ${r.kind} 与前面重复 —— 点击没生效或边序不稳定`,
       ).toBe(false);
-      seen.set(r.kind, { fields: r.fields, owner: r.owner, title: r.title });
+      seen.set(r.kind, { fields: r.fields, values: r.values, owner: r.owner, title: r.title });
     }
 
     expect(
@@ -244,6 +258,9 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
     expect(trans.fields, 'transition 的重点内容里没有守卫').toContain('guard');
     expect(trans.fields).not.toContain('ports');
     expect(trans.owner, '迁移没显示所属状态机').toContain('SM');
+    // 值必须是**真实内容**：空字符串的 trigger/guard 等于没显示
+    expect(trans.values.trigger, '触发条件是空的').toBe('keyTurn');
+    expect(trans.values.guard, '守卫是空的').toBe('x > 1');
 
     // ── 控制流：源/目标动作 + guard + 所属活动 ──
     const flow = seen.get('控制流 Flow')!;
@@ -252,6 +269,7 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
     expect(flow.fields, 'flow 的重点内容里没有守卫').toContain('guard');
     expect(flow.fields).not.toContain('ports');
     expect(flow.owner, '控制流没显示所属活动').toContain('Drive');
+    expect(flow.values.guard, '守卫是空的').toBe('ok');
 
     // ── 需求追溯：关系词（含中文说明）+ 两端 ──
     const trace = seen.get('需求追溯 Trace')!;
@@ -259,8 +277,11 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
     expect(trace.fields).toContain('sourceRef');
     expect(trace.fields).toContain('targetRef');
     expect(trace.fields).not.toContain('ports');
-    // 光给 satisfy 用户看不懂，关系词必须带中文说明
-    await page.locator('[data-testid="edge-field-relation"]').first().waitFor({ timeout: 5_000 });
+    // 光给 satisfy 用户看不懂，关系词的值必须带中文说明
+    expect(
+      trace.values.relation,
+      '关系词没带中文说明，光给 satisfy 看不懂',
+    ).toMatch(/satisfy.*满足/);
 
     // ── 分配：逻辑侧 / 物理侧 ──
     const alloc = seen.get('分配 Allocation')!;
@@ -269,7 +290,7 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
     expect(alloc.fields).not.toContain('ports');
   });
 
-  test.fixme('每种连线都有类型徽章 + 源码位置，且没有一条落到「未识别类型」', async ({
+  test('每种连线都有类型徽章 + 源码位置，且没有一条落到「未识别类型」', async ({
     page,
     request,
   }) => {
@@ -290,7 +311,7 @@ test.describe('连线属性窗：按类型显示重点内容', () => {
     }
   });
 
-  test.fixme('点空白 → 取消选中，属性窗回退到包属性', async ({ page, request }) => {
+  test('点空白 → 取消选中，属性窗回退到包属性', async ({ page, request }) => {
     await openWithAllEdges(page, request);
 
     await clickEdge(page, 0);
