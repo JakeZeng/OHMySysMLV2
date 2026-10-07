@@ -258,6 +258,8 @@ NamespaceOrTopLevel
   / Activity
   / RequirementDef
   / ConstraintBlockDef
+  / AllocationStatement
+
   / TraceStatement
   / EnumDef
   / CommentBlock
@@ -554,6 +556,8 @@ PackageMember
     / Activity
     / RequirementDef
     / ConstraintBlockDef
+    / AllocationStatement
+
     / TraceStatement
     / EnumDef
     / DocStatement
@@ -662,6 +666,8 @@ PartBodyMember
   // 需求追溯语句（satisfy / verify / refine）：规范里它们可出现在任何
   // Namespace 内，改造前只挂在 NamespaceOrTopLevel / PackageMember，
   // 于是 `part def B { refine A by C; }` 解析不了。排在 CommentBlock 前。
+  / AllocationStatement
+
   / TraceStatement
   / CommentBlock
 
@@ -1043,6 +1049,27 @@ VerificationCaseDef
     { return makeStructureDef('verificationCaseDef', location().start.offset, name, !!isAbstract, spec, body); }
 
 // ─── Trace Statement（M5 需求追溯）────────────────────────────────────
+
+// ─── Allocation Statement（M17.S9：§7.12 allocate <源> to <目标>;）────
+//
+// 规范形态是 `allocate <logical> to <physical>;`，是**分配关系**，不是
+// TraceStatement 的 `allocate A by B;`（trace 的关系词）。两者共用
+// "allocate" 这个词但句式完全不同 —— 所以必须是独立产生式。
+//
+// ⚠️ 必须排在 TraceStatement **之前**：TraceRel 里有 "allocate"，它会先把
+//    "allocate" 吃掉再要求 "by"，对 `allocate A to B;` 在 "by" 处失败再回溯。
+//    能 work 但白跑一趟，放前面更直白。
+AllocationStatement
+  = "allocate" WS src:QualifiedName WS "to" WS tgt:QualifiedName _ ";"
+    {
+      return {
+        kind: 'allocation',
+        id: nextId('alloc'),
+        source: src,
+        target: tgt,
+        location: locationOf(location().start.offset),
+      };
+    }
 
 TraceStatement
   = relation:TraceRel WS src:Identifier WS "by" WS tgt:QualifiedName _ ";"

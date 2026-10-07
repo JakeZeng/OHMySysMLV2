@@ -81,6 +81,8 @@ export interface ModelingAdapter {
     source: string,
     target: string,
     anchors?: EdgeAnchors,
+    /** M17.S9：省略时按 'connect'（既有行为不变） */
+    mode?: 'connect' | 'allocate',
   ) => { ok: boolean; reason?: string };
   /**
    * M17 S5：当前 scope 已存的边锚点（edge stableKey → 两端锚点）。
@@ -307,12 +309,16 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
     [adapter, showToast, existingNodeNames, allowPaneDoubleClickCreate],
   );
 
+  // M17.S9：连线模式 —— connect（默认）/ allocate（§7.12 逻辑→物理分配）。
+  // allocation 不占调色板位置（它本质是连线操作），改成画线时切模式。
+  const [connectMode, setConnectMode] = React.useState<'connect' | 'allocate'>('connect');
+
   const handleConnectCreate = React.useCallback(
     (sourceId: string, targetId: string, anchors?: EdgeAnchors) => {
-      const r = adapter.addConnection(sourceId, targetId, anchors);
+      const r = adapter.addConnection(sourceId, targetId, anchors, connectMode);
       if (!r.ok) showToast({ title: '连接失败', description: r.reason, variant: 'error' });
     },
-    [adapter, showToast],
+    [adapter, showToast, connectMode],
   );
 
   const handleJumpTo = React.useCallback((line: number) => {
@@ -396,6 +402,39 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
           >
             {enableSimulation && stateMachines.length > 0 && <SimulationPanel />}
             <div className="relative flex-1">
+              {/* M17.S9：连线模式切换（互连 / 分配）。allocation 是连线操作，
+                  不做成调色板条目，画线前切一下模式即可。 */}
+              <div
+                className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded border border-gray-200 bg-white/90 px-1 py-0.5 text-[10px] shadow-sm dark:border-gray-700 dark:bg-gray-900/90"
+                data-testid="connect-mode-switch"
+              >
+                <button
+                  type="button"
+                  onClick={() => setConnectMode('connect')}
+                  aria-pressed={connectMode === 'connect'}
+                  title="互连：生成 connect A to B;"
+                  className={`rounded px-1.5 py-0.5 transition ${
+                    connectMode === 'connect'
+                      ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40'
+                      : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  互连
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConnectMode('allocate')}
+                  aria-pressed={connectMode === 'allocate'}
+                  title="分配：生成 allocate A to B;（§7.12 逻辑→物理）"
+                  className={`rounded px-1.5 py-0.5 transition ${
+                    connectMode === 'allocate'
+                      ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40'
+                      : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  分配
+                </button>
+              </div>
               <DiagramCanvas
                 ref={diagramRef}
                 nodes={adapter.pipeline.nodes}

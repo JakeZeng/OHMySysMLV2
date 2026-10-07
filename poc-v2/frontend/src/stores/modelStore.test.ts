@@ -798,4 +798,24 @@ describe('M17 S8：状态机 / 活动是一等容器节点', () => {
     expect(content).toContain('transition S1 to S2;');
     expect(content).toContain('connect Car to Engine;');
   });
+
+  it('M17.S9：mode=allocate 生成 `allocate A to B;`，默认仍是 connect', () => {
+    useModelStore.getState().setContent(`package Vehicle {
+  part def Car;
+  part def Engine;
+}`);
+    // 默认（不传 mode）→ connect，既有行为不变
+    const c = useModelStore.getState().addConnection(nodeIdOf('Car'), nodeIdOf('Engine'));
+    expect(c.ok).toBe(true);
+    expect(useModelStore.getState().content).toContain('connect Car to Engine;');
+
+    // 分配模式 → allocate（§7.12）
+    const a = useModelStore
+      .getState()
+      .addConnection(nodeIdOf('Car'), nodeIdOf('Engine'), undefined, 'allocate');
+    expect(a.ok).toBe(true);
+    expect(useModelStore.getState().content).toContain('allocate Car to Engine;');
+    // 写进去的必须是合法语法：重新解析无错
+    expect(useModelStore.getState().pipeline.parseErrors).toHaveLength(0);
+  });
 });

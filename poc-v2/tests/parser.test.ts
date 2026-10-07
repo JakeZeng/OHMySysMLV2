@@ -1023,6 +1023,37 @@ alias FS for FreeStanding;`);
     expect(only.position.x).toBeLessThanOrEqual(81);
     expect(only.position.y).toBeLessThanOrEqual(81);
   });
+
+  it('66. M17.S9 §7.12：`allocate <src> to <tgt>;` 与 trace 的 `allocate A by B;` 是两个元素', () => {
+    const r = parse(`package P {
+  part def A;
+  part def B;
+  allocate A to B;
+  allocate A by B;
+  satisfy A by B;
+}`);
+    expect(r.ok).toBe(true);
+    const kinds = r.model.packages[0].members.map((m: any) => m.kind);
+    // 分配语句产出独立的 allocation kind，不是 trace
+    expect(kinds.filter((k: string) => k === 'allocation')).toHaveLength(1);
+    expect(kinds.filter((k: string) => k === 'trace')).toHaveLength(2);
+
+    const alloc = r.model.packages[0].members.find((m: any) => m.kind === 'allocation') as any;
+    expect(alloc.source).toBe('A');
+    expect(alloc.target).toBe('B');
+    // trace 那条的 relation 仍是 'allocate'（关系词），与分配语句不是一回事
+    const tr = r.model.packages[0].members.filter((m: any) => m.kind === 'trace');
+    expect(tr.map((t: any) => t.relation).sort()).toEqual(['allocate', 'satisfy']);
+  });
+
+  it('67. allocate 可出现在包级 / def body / view body，且缺分号要报错', () => {
+    expect(parse('package P { part def B { allocate X to Y; } }').ok).toBe(true);
+    expect(parse('package P { view def V { allocate X to Y; } }').ok).toBe(true);
+    expect(parse('package P { allocate A to B }').ok).toBe(false); // 缺分号
+    expect(parse('package P { allocateA to B; }').ok).toBe(false); // 无空白 → 不是关键字
+    // 限定名端点
+    expect(parse('package P { allocate A::Sub to B; }').ok).toBe(true);
+  });
 });
 
 describe('Parser - 错误处理', () => {

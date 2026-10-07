@@ -155,10 +155,18 @@ interface ModelState {
     name: string,
     dropXY?: { x: number; y: number }
   ) => { ok: boolean; newNodeId?: string; reason?: string };
+  /**
+   * M17.S9 §7.12：`connect`（默认，互连）vs `allocate`（逻辑→物理分配）。
+   *
+   * allocation 不做成调色板条目 —— 它本质是**连线操作**：画一条线、
+   * 选「分配」模式，就得到 `allocate <源> to <目标>;`。
+   */
   addConnection: (
     sourceId: string,
     targetId: string,
     anchors?: EdgeAnchors,
+    /** M17.S9：省略时按 'connect' 处理（既有行为不变） */
+    mode?: 'connect' | 'allocate',
   ) => { ok: boolean; reason?: string };
 
   // M2 AI 语法检查
@@ -738,10 +746,13 @@ export const useModelStore = create<ModelState>((set, get) => ({
    *   - source/target 都是 state → 生成 `transition A to B;`
    *   - 其他 → 生成 `connect A to B;`
    *
+   * M17.S9：`mode='allocate'` 时生成 `allocate A to B;`（§7.12 逻辑→物理分配）。
+   * allocation 不走调色板 —— 画线 + 切模式即可，省掉一个拖拽条目。
+   *
    * M17 S5：`anchors` 是用户按下的那个点算出来的两端锚点，必须在这一步就挂到
    * 新边上 —— 文本一变，解析器给的 `edge.id` 就整体平移，事后再按 id 找不回来。
    */
-  addConnection(sourceId, targetId, anchors) {
+  addConnection(sourceId, targetId, anchors, mode) {
     const { content, pipeline, entityKind, name: scopeName, scopeId } = get();
     const srcShort = shortNameFromNodeId(pipeline.model, sourceId);
     const tgtShort = shortNameFromNodeId(pipeline.model, targetId);
@@ -782,6 +793,14 @@ export const useModelStore = create<ModelState>((set, get) => ({
         return { ok: false, reason: r.reason ?? '无法写入行为容器' };
       }
       newContent = r.content;
+    } else if (mode === 'allocate') {
+      // M17.S9 §7.12：`allocate <逻辑> to <物理>;`，包级语句（不是 def body 成员）。
+      const snippet = `allocate ${srcShort} to ${tgtShort};`;
+      newContent = insertSnippetScoped(content, snippet, {
+        scopeKind: entityKind ?? 'package',
+        scopeName,
+        model: pipeline.model,
+      });
     } else {
       const snippet = `connect ${srcShort} to ${tgtShort};`;
       // M16 P0：统一插入路径（目标 = 当前打开 scope）

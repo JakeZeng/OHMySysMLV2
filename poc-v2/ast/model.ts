@@ -76,6 +76,7 @@ export type NamespaceMember =
   | Activity
   | Requirement
   | TraceLink
+  | Allocation
   | ConstraintBlock
   | EnumDefinition
   | DocMember
@@ -310,6 +311,19 @@ export interface TraceLink extends SysMLNode {
   source: string;
   target: string;
   relation: 'satisfy' | 'verify' | 'refine' | 'allocate';
+}
+
+/**
+ * M17.S9 §7.12 AllocationUsage —— `allocate <逻辑元素> to <物理元素>;`
+ *
+ * 与 {@link TraceLink} 的区别：trace 是 `allocate A by B;`（关系词 + by），
+ * 分配是 `allocate A to B;`（目的词 + to），是**两个不同的元素**，
+ * 尽管共用 "allocate" 这个词。
+ */
+export interface Allocation extends SysMLNode {
+  kind: 'allocation';
+  source: string;             // 逻辑侧
+  target: string;             // 物理侧
 }
 
 // ─── Constraint Block（M5 参数视图）────────────────────────────────────
