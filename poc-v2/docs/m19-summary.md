@@ -214,25 +214,68 @@ migration **008**，因为列表接口按设计不返回 content。
 
 ## 9. 已知缺口（诚实清单）
 
-工具箱里**置灰**的项 —— 官方内容契约里有，但本项目语法尚未实现：
+### 9.1 M19.1 已解除的置灰项（官方原文核对后实现）
 
-| 视图类型 | 置灰项 | 为什么没做 |
+以下条目**已按官方示例原文实现**，工具箱里不再是置灰：
+
+| 契约项 | 记号 | 官方出处 |
 |---|---|---|
-| ActionFlowView | 泳道 / if-loop 控制结构 / send-accept / change-time trigger | 记号未实现，且与既有 connect/trace 语句存在歧义风险 |
-| SequenceView | 事件发生（perform）/ 消息 / 事件后继 | 记号未实现 |
-| GeometryView | 坐标系（frame） | 记号未实现 |
-| GridView | 列视图（columnView）/ 关系矩阵 | 属 rendering usage 的 owned subrendering，不是视图体成员 |
+| Control structures | `if <条件> { … } else if { … } else { … }` | StructuredControlTest.sysml |
+| Control structures | `while <条件> { … } [until <退出>;]` | 同上 |
+| Control structures | `loop { … } until <退出>;` | 同上 |
+| Control structures | `for <变量> : <类型> in (<序列>) { … }` | 同上 |
+| Control structures | `action <名> while <条件> { … } until <退出>;` | 同上 |
+| Send and accept actions | `perform <特征路径>;` | AssignmentTest.sysml |
+| Send and accept actions | `accept <载荷> [via <端口>] then <动作>;` | AssignmentTest.sysml + Actions.sysml |
+| Entry / do / exit actions | `entry assign <目标> := <表达式>;`（以及 `entry action a;`） | AssignmentTest.sysml |
+
+机械保证：`tests/behaviorStructureNotation.test.ts` **20 条**测试，输入是官方示例
+原文逐字复制。这正是 M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板，
+就是因为缺「官方原文能不能解析」的检查。
+
+实现过程中被测试逼出来的官方写法修正（都是此前想当然写错的）：
+
+| 此前写法 | 官方实际 | 说明 |
+|---|---|---|
+| `action <名>;` 必须有名字 | `action { … }` 匿名合法 | 官方结构化控制示例全是匿名动作 |
+| `attribute x : T = 0;` | `attribute x : T := 0;` | `:=` 才是默认值记号（`=` 保留兼容） |
+| `counting::counter::count` | `counting.counter.count` | 特征路径用点号；新增 `FeaturePath` 保留原样 |
+| `entry action a;`（只有这一种） | `entry assign counter.count := 0;` | 标准库实际用的是后者，两种都收 |
+
+### 9.2 仍然置灰的项
+
+| 视图类型 | 置灰项 | 为什么 |
+|---|---|---|
+| ActionFlowView | 泳道 | 图形记号层概念（§8.2.3.17），语言层无对应构造 |
+| ActionFlowView | send 动作 | `payload` / `receiver` 的文本记号未查证到官方形态（accept / perform 已实现） |
+| ActionFlowView | change / time trigger | transition 触发器目前只支持 `[ … ]` 形态 |
+| SequenceView | 事件发生 / 消息 / 事件后继 | `EventOccurrenceUsage` 的文本记号未查证（`perform` 是「执行动作」，不是事件发生） |
+| GeometryView | 坐标系 | `frame` 记号未实现 |
+| GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
+| 全部 | `then` 继承连接 | 见下 |
 | 全部 | `expose` / `satisfy` 产物是占位注释 | 需要元素选择器对话框（P3 已记） |
 
-**刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已经为此返工过一轮
-（移除了 `render as <kind>;`、`stakeholder: 文本;`、`satisfies` 等）。宁可置灰。
+### 9.3 `then` 继承连接
 
-另一处已知限制：`in p : Real;` / `out p : Real;`（带方向参数）语法可解析，但
-**画布不渲染 attribute / parameter 节点**（包层同样如此，既有行为）。
+官方示例里动作/状态之间普遍用 `then` 连接（`then state wait;` / `then private action
+whileLoop`）。未实现的理由不是记号难，而是**它是连接而非成员**，落进现有语法需要
+一套 successor 表达（源 / 目标 / 可选多重性），会牵动 AST 与画布边语义 —— 属于独立
+一轮工作，不适合塞进本轮。`behaviorStructureNotation.test.ts` 里有一条测试**钉住这个
+现状**（断言官方 `then` 写法当前解析失败），实现之后把该测试改成「能解析」即可。
 
-`layoutEngine.test.ts` 的「100 节点布局 < 500ms」在连跑时偶发超阈值（实测 640ms~3.1s），
-单跑 10/10 绿 —— 与本轮无关的既有计时抖动。
+**刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已为此返工过一轮。
+
+### 9.4 其它已知限制
+
+- `in p : Real;` / `out p : Real;`（带方向参数）语法可解析，但**画布不渲染
+  attribute / parameter 节点**（包层同样如此，属既有行为；若要修需同步动包侧布局）。
+- 官方 `in ref seq;` 这类「方向 + 无显式类型 + `ref`」的写法与 `ref` 关键字歧义，
+  暂不支持。
+- calc def 的 `return : T;` 与结尾裸表达式（表达式体）未实现。
+
+`layoutEngine.test.ts` / `perf.test.ts` 的计时阈值在机器负载高时会误报
+（实测 1000 节点 parse 在负载下 2075ms、静载 306ms），单跑稳定通过，属既有抖动。
 
 ---
 

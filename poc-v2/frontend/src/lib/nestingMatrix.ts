@@ -56,6 +56,9 @@ export const CONTAINER_LABEL: Readonly<Record<ContainerKind, string>> = {
 const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   // 实证：package / viewDef / viewpoint 当前接受集相同
   package: [
+    // M19.1：动作用法（含匿名 ction { … }）也是包成员 —— 官方
+    // StructuredControlTest.sysml 的 package { action { … } } 就是这个形态。
+    'activityAction',
     'partDef',
     'portDef',
     'itemDef',
@@ -111,6 +114,8 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'transition',
   ],
   viewpoint: [
+    // M19.1：viewpoint body 复用 PackageMember，package 有的它也有
+    'activityAction',
     'partDef',
     'portDef',
     'itemDef',
@@ -219,6 +224,11 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlControlNode: null,
   sysmlStateAction: null,
   sysmlRenderingUsage: null,
+  // M19.1 行为结构节点（叶子节点，内部不再接别的元素）
+  sysmlAssignment: null,
+  sysmlControlStructure: null,
+  sysmlPerform: null,
+  sysmlAccept: null,
 };
 
 export const CONTAINER_OF_NODE_TYPE: Readonly<Record<string, ContainerKind | null>> =

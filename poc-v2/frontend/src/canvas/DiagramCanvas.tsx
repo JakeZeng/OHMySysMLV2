@@ -632,6 +632,138 @@ const RenderingUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoRenderingUsageNode = React.memo(RenderingUsageNode);
 
+// ─── M19.1 行为结构节点（官方记号见 tests/behaviorStructureNotation.test.ts）──
+//
+// 四类：赋值 / 控制结构 / perform / accept。视觉上刻意各不相同 —— 用户要能
+// 一眼分清「改值的语句」和「控制流骨架」，而不是全是同一种方框。
+
+const AssignmentNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { target?: string; value?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(82,196,26,0.16)' : 'rgba(82,196,26,0.07)',
+        border: `1px solid ${selected ? '#237804' : '#52c41a'}`,
+        borderRadius: '4px',
+        padding: '4px 10px',
+        fontFamily: 'monaco, monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#52c41a', width: 6, height: 6 }} />
+      <span style={{ fontSize: '10px', color: '#237804' }}>«assign»</span>
+      <span style={{ color: '#262626' }}>
+        <b>{d.target}</b> := {d.value}
+      </span>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#52c41a', width: 6, height: 6 }} />
+    </div>
+  );
+};
+const MemoAssignmentNode = React.memo(AssignmentNode);
+
+const STRUCTURE_GLYPH: Record<string, string> = {
+  if: '◆',
+  while: '↻',
+  loop: '♾',
+  for: '⋮',
+};
+
+const ControlStructureNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & {
+    structureType?: string;
+    expr?: string;
+    untilTest?: string;
+  };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(250,140,22,0.14)' : 'rgba(250,140,22,0.05)',
+        border: `2px solid ${selected ? '#ad4e00' : '#fa8c16'}`,
+        borderRadius: '12px',
+        padding: '6px 14px',
+        fontFamily: 'monaco, monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
+      <span style={{ fontSize: '13px', color: '#ad4e00' }}>
+        {STRUCTURE_GLYPH[d.structureType ?? 'if'] ?? '◆'}
+      </span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.structureType}</span>
+      {d.expr && <span style={{ color: '#595959' }}>{d.expr}</span>}
+      {d.untilTest && <span style={{ color: '#8c8c8c' }}>until {d.untilTest}</span>}
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoControlStructureNode = React.memo(ControlStructureNode);
+
+const PerformNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { target?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(19,194,194,0.16)' : 'rgba(19,194,194,0.07)',
+        border: `1px solid ${selected ? '#006d75' : '#08979c'}`,
+        borderRadius: '999px',
+        padding: '4px 12px',
+        fontFamily: 'monaco, monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 6, height: 6 }} />
+      <span style={{ fontSize: '10px', color: '#006d75' }}>«perform»</span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.target}</span>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 6, height: 6 }} />
+    </div>
+  );
+};
+const MemoPerformNode = React.memo(PerformNode);
+
+const AcceptNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { acceptName?: string; thenTarget?: string; via?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(114,46,209,0.16)' : 'rgba(114,46,209,0.07)',
+        border: `1px solid ${selected ? '#531dab' : '#722ed1'}`,
+        borderRadius: '4px',
+        padding: '4px 12px',
+        fontFamily: 'monaco, monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 6, height: 6 }} />
+      <span style={{ fontSize: '10px', color: '#531dab' }}>«accept»</span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.acceptName}</span>
+      {d.via && <span style={{ color: '#8c8c8c' }}>via {d.via}</span>}
+      {d.thenTarget && <span style={{ color: '#595959' }}>then {d.thenTarget}</span>}
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#722ed1', width: 6, height: 6 }} />
+    </div>
+  );
+};
+const MemoAcceptNode = React.memo(AcceptNode);
+
 const ActivityNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData & { actionCount?: number; flowCount?: number };
   return (
@@ -884,6 +1016,11 @@ const nodeTypes = {
   sysmlControlNode: MemoControlNodeNode,
   sysmlStateAction: MemoStateActionNode,
   sysmlRenderingUsage: MemoRenderingUsageNode,
+  // M19.1 行为结构节点
+  sysmlAssignment: MemoAssignmentNode,
+  sysmlControlStructure: MemoControlStructureNode,
+  sysmlPerform: MemoPerformNode,
+  sysmlAccept: MemoAcceptNode,
 };
 
 /**

@@ -47,6 +47,14 @@ export type ViewToolboxKind =
   | 'actionOutParam'
   | 'actionFlow'
   | 'bindingConnector'
+  | 'assignmentAction'
+  | 'performAction'
+  | 'acceptAction'
+  | 'ifStructure'
+  | 'whileLoop'
+  | 'untilLoop'
+  | 'forLoop'
+  | 'namedLoopAction'
   | 'forkNode'
   | 'joinNode'
   | 'decideNode'
@@ -54,7 +62,7 @@ export type ViewToolboxKind =
   // ActionFlowView 里**语法尚未实现**的内容契约项（置灰但如实列出）
   | 'swimLane'
   | 'controlStructure'
-  | 'sendAccept'
+  | 'sendAction'
   | 'changeTimeTrigger'
   // ── §7.7 StateTransitionView 的状态内容契约 ──
   | 'stateUsage'
@@ -366,7 +374,7 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     icon: '⚡',
     specRef: '§7.7.2 ActionUsage',
     contract: 'Actions with nested actions',
-    description: '动作节点（可带 body 嵌套子动作）',
+    description: '动作节点（可带 body 嵌套子动作；名字可匿名，官方 `action { … }`）',
     defaultName: 'NewAction',
     generate: (n) => `action ${n};`,
     supported: true,
@@ -403,6 +411,40 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     defaultName: 'NewFlow',
     defaultName2: 'TargetAction',
     generate: (n, t = 'TargetAction') => `flow ${n} to ${t};`,
+    supported: true,
+  },
+  {
+    kind: 'assignmentAction',
+    label: 'assign（赋值动作）',
+    icon: '⤴',
+    specRef: '§7.7.8 AssignmentActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '赋值动作：`assign <目标> := <表达式>;`（官方 AssignmentTest.sysml 原文）',
+    defaultName: 'count',
+    generate: (n) => `assign ${n} := 0;`,
+    supported: true,
+  },
+  {
+    kind: 'performAction',
+    label: 'perform（执行动作）',
+    icon: '▶',
+    specRef: '§7.7.6 PerformActionUsage',
+    contract: 'Send and accept actions',
+    description: '执行一个动作：`perform <特征路径>;`（官方 AssignmentTest.sysml 原文）',
+    defaultName: 'c.incr',
+    generate: (n) => `perform ${n};`,
+    supported: true,
+  },
+  {
+    kind: 'acceptAction',
+    label: 'accept（接收动作）',
+    icon: '📥',
+    specRef: '§7.7.6 AcceptActionUsage',
+    contract: 'Send and accept actions',
+    description: '接收动作：`accept <载荷> [via <端口>] then <动作>;`',
+    defaultName: 'Incr',
+    defaultName2: 'increment',
+    generate: (n, t = 'increment') => `accept ${n} then ${t};`,
     supported: true,
   },
   {
@@ -467,35 +509,24 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     icon: '🏊',
     specRef: '§9.2.20 ActionFlowView',
     contract: 'Swim lanes',
-    description: '泳道。官方内容契约里有，但 SysML v2 语言层无对应构造（图形记号层概念），待补',
+    description: '泳道。官方内容契约里有，但 SysML v2 语言层无对应构造（图形记号层概念）',
     defaultName: 'Lane',
     generate: (n) => `lane ${n};`,
     supported: false,
     unsupportedReason: '泳道是图形记号层概念（§8.2.3.17），SysML v2 语言层暂无对应记号',
   },
   {
-    kind: 'controlStructure',
-    label: 'if / loop（控制结构）',
-    icon: '🔀',
-    specRef: '§7.7.5 ControlStructureUsage',
-    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
-    description: 'if-then-else / until-while-loop / for-loop 控制结构',
-    defaultName: 'Branch',
-    generate: (n) => `if ${n} {\n}`,
-    supported: false,
-    unsupportedReason: '控制结构记号尚未实现（会与现有 connect/trace 语句产生歧义），待后续语法扩展',
-  },
-  {
-    kind: 'sendAccept',
-    label: 'send / accept（收发动作）',
-    icon: '📨',
-    specRef: '§7.7.6 SendActionUsage / AcceptActionUsage',
+    kind: 'sendAction',
+    label: 'send（发送动作）',
+    icon: '📤',
+    specRef: '§7.7.6 SendActionUsage',
     contract: 'Send and accept actions',
-    description: '发送 / 接收动作',
+    description: '发送动作',
     defaultName: 'Send',
     generate: (n) => `send ${n};`,
     supported: false,
-    unsupportedReason: 'send/accept 动作记号尚未实现，待后续语法扩展',
+    unsupportedReason:
+      '发送动作的记号（payload / receiver）未查证到官方文本形态，先只开放 accept 与 perform',
   },
   {
     kind: 'changeTimeTrigger',
@@ -508,6 +539,75 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     generate: (n) => `trigger ${n};`,
     supported: false,
     unsupportedReason: '触发器记号尚未实现（transition 的触发器目前只支持 `[ … ]` 形态）',
+  },
+];
+
+/**
+ * M19.1：控制节点与控制结构（官方 StructuredControlTest.sysml 原文四种形态 +
+ * Actions.sysml 的 ControlAction 四特化）。
+ *
+ * 合成一组而不是拆两组：官方内容契约里它们是**两条相邻**的条目
+ * （Control nodes: fork, join, decision, merge / Control structures: if-then-else …），
+ * 但都是「控制」语义，放一起用户按语义找得到。
+ */
+const CONTROL_STRUCTURE_ITEMS: ViewToolboxItem[] = [
+  // Control nodes（ControlAction 的四个特化，官方 fork / join / decide / merge）
+  ...ACTION_FLOW_ITEMS.filter((i) => i.contract.startsWith('Control nodes')),
+  // Control structures（if / while / loop / for 四种官方形态 + 具名循环）
+  {
+    kind: 'ifStructure',
+    label: 'if / else（条件分支）',
+    icon: '🔀',
+    specRef: '§7.7.5 IfThenElseActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '条件分支：`if <条件> { … } else { … }`（官方 else if / else 均可）',
+    defaultName: 'condition',
+    generate: (n) => `if ${n} {\n}`,
+    supported: true,
+  },
+  {
+    kind: 'whileLoop',
+    label: 'while（当型循环）',
+    icon: '🔁',
+    specRef: '§7.7.5 WhileLoopActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '当型循环：`while <条件> { … } [until <退出条件>;]`',
+    defaultName: 'condition',
+    generate: (n) => `while ${n} {\n}`,
+    supported: true,
+  },
+  {
+    kind: 'untilLoop',
+    label: 'loop … until（直到型循环）',
+    icon: '♾️',
+    specRef: '§7.7.5 LoopActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '直到型循环：`loop { … } until <退出条件>;`',
+    defaultName: 'done',
+    generate: (n) => `loop {\n} until ${n};`,
+    supported: true,
+  },
+  {
+    kind: 'forLoop',
+    label: 'for（计数循环）',
+    icon: '🔢',
+    specRef: '§7.7.5 ForLoopActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '计数循环：`for <变量> : <类型> in (<序列>) { … }`',
+    defaultName: 'index',
+    generate: (n) => `for ${n} : Integer in (1, 2, 3) {\n}`,
+    supported: true,
+  },
+  {
+    kind: 'namedLoopAction',
+    label: 'action … while（具名循环动作）',
+    icon: '🔂',
+    specRef: '§7.7.5 WhileLoopActionUsage',
+    contract: 'Control structures, e.g. if-then-else, until-while-loop, for-loop',
+    description: '带名字的当型循环：`action <名> while <条件> { … } until <退出>;`',
+    defaultName: 'aLoop',
+    generate: (n) => `action ${n}\nwhile condition {\n}`,
+    supported: true,
   },
 ];
 
@@ -959,7 +1059,7 @@ export function viewToolbox(standard: StandardViewName | null | undefined): View
         // 特化自 InterconnectionView → 继承互连条目
         ...interconnectionGroups('特征与嵌套特征'),
         { key: 'actionFlow', items: ACTION_FLOW_ITEMS.filter((i) => !i.contract.startsWith('Control')) },
-        { key: 'control', items: ACTION_FLOW_ITEMS.filter((i) => i.contract.startsWith('Control')) },
+        { key: 'control', items: CONTROL_STRUCTURE_ITEMS },
         { key: 'rendering', items: RENDERING_ITEMS },
         { key: 'clause', items: CLAUSE_ITEMS },
       ]);

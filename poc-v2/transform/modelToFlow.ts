@@ -169,11 +169,11 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     // 不进 def body —— 那是端口子节点的老路（collectPortNodes），整份遍历会
     // 把 part def 里的 part usage 也提成顶层节点，破坏既有布局。
     // 这里只挑 M19 那几种 kind 下钻，精准且不扰动既有行为。
-    collectViewContentDeep(v, viewContent);
+    collectViewContentBelow(v.members, viewContent);
   }
   for (const vp of model.viewpoints ?? []) {
     collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, [], viewContent);
-    collectViewContentDeep(vp, viewContent);
+    collectViewContentBelow(vp.members, viewContent);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
@@ -399,6 +399,54 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     nameToViewNodeId.set(r.name, id);
     nodes.push(
       makeRenderingUsageNode(id, r.name, r.typeRef, keys.alloc(elementKeyBase('renderingUsage', qname))),
+    );
+  }
+  // M19.1 行为结构：与上面同一原则 —— 用户在工具箱点得到的东西必须在画布上看得见
+  for (const { node: cs, qname } of viewContent.controlStructures) {
+    const id = `vstruct:${cs.id}`;
+    nodes.push(
+      makeControlStructureNode(
+        id,
+        String(cs.structureType ?? 'if'),
+        (cs as { expr?: string }).expr,
+        (cs as { untilTest?: string }).untilTest,
+        (cs as { iterator?: string }).iterator,
+        (cs as { varName?: string }).varName,
+        keys.alloc(elementKeyBase('controlStructure', qname || String((cs as { name?: string }).name ?? ''))),
+      ),
+    );
+  }
+  for (const { node: as, qname } of viewContent.assignments) {
+    const id = `vassign:${as.id}`;
+    nodes.push(
+      makeAssignmentNode(
+        id,
+        String((as as { target?: string }).target ?? ''),
+        String((as as { value?: string }).value ?? ''),
+        keys.alloc(elementKeyBase('assignmentAction', qname)),
+      ),
+    );
+  }
+  for (const { node: pa, qname } of viewContent.performs) {
+    const id = `vperform:${pa.id}`;
+    nodes.push(
+      makePerformNode(
+        id,
+        String((pa as { target?: string }).target ?? ''),
+        keys.alloc(elementKeyBase('performAction', qname)),
+      ),
+    );
+  }
+  for (const { node: ac, qname } of viewContent.accepts) {
+    const id = `vaccept:${ac.id}`;
+    nodes.push(
+      makeAcceptNode(
+        id,
+        String((ac as { name?: string }).name ?? ''),
+        (ac as { thenTarget?: string }).thenTarget,
+        (ac as { via?: string }).via,
+        keys.alloc(elementKeyBase('acceptAction', qname)),
+      ),
     );
   }
 
@@ -1042,6 +1090,11 @@ interface ViewContentBuckets {
   states: Q<StateDefinition>[];
   transitions: Q<Transition>[];
   flows: Q<ControlFlow>[];
+  // M19.1 行为结构（if / while / loop / for、assign、perform、accept）
+  controlStructures: Q<Record<string, unknown>>[];
+  assignments: Q<Record<string, unknown>>[];
+  performs: Q<Record<string, unknown>>[];
+  accepts: Q<Record<string, unknown>>[];
 }
 
 function emptyViewContentBuckets(): ViewContentBuckets {
@@ -1054,6 +1107,10 @@ function emptyViewContentBuckets(): ViewContentBuckets {
     states: [],
     transitions: [],
     flows: [],
+    controlStructures: [],
+    assignments: [],
+    performs: [],
+    accepts: [],
   };
 }
 
@@ -1067,6 +1124,12 @@ const VIEW_CONTENT_DEEP_KINDS = new Set([
   'stateDef',
   'transition',
   'controlFlow',
+  // M19.1 行为结构（官方 StructuredControlTest / AssignmentTest 的记号）
+  'controlStructure',
+  'namedLoopAction',
+  'assignmentAction',
+  'performAction',
+  'acceptAction',
 ]);
 
 /**
@@ -1080,39 +1143,87 @@ const VIEW_CONTENT_DEEP_KINDS = new Set([
  */
 function collectViewContentDeep(ns: { name?: string; members: any[] }, buckets: ViewContentBuckets): void {
   for (const m of ns.members ?? []) {
-    if (!Array.isArray(m.body)) continue;
-    for (const child of m.body) {
-      if (VIEW_CONTENT_DEEP_KINDS.has(child.kind)) {
-        const qname = joinQName([ns.name ?? '', m.name ?? ''].filter(Boolean), child.name);
-        switch (child.kind) {
-          case 'actionUsage':
-            buckets.actions.push({ node: child, qname });
-            break;
-          case 'controlNode':
-            buckets.controlNodes.push({ node: child, qname });
-            break;
-          case 'stateAction':
-            buckets.stateActions.push({ node: child, qname });
-            break;
-          case 'renderingUsage':
-            buckets.renderings.push({ node: child, qname });
-            break;
-          case 'bindingConnector':
-            buckets.bindings.push({ node: child, qname });
-            break;
-          case 'stateDef':
-            buckets.states.push({ node: child, qname });
-            break;
-          case 'transition':
-            buckets.transitions.push({ node: child, qname });
-            break;
-          case 'controlFlow':
-            buckets.flows.push({ node: child, qname });
-            break;
-        }
+    if (VIEW_CONTENT_DEEP_KINDS.has(m.kind)) {
+      const qname = joinQName(ns.name ? [ns.name] : [], m.name);
+      switch (m.kind) {
+        case 'actionUsage':
+          buckets.actions.push({ node: m, qname });
+          break;
+        case 'controlNode':
+          buckets.controlNodes.push({ node: m, qname });
+          break;
+        case 'stateAction':
+          buckets.stateActions.push({ node: m, qname });
+          break;
+        case 'renderingUsage':
+          buckets.renderings.push({ node: m, qname });
+          break;
+        case 'bindingConnector':
+          buckets.bindings.push({ node: m, qname });
+          break;
+        case 'stateDef':
+          buckets.states.push({ node: m, qname });
+          break;
+        case 'transition':
+          buckets.transitions.push({ node: m, qname });
+          break;
+        case 'controlFlow':
+          buckets.flows.push({ node: m, qname });
+          break;
+        case 'controlStructure':
+        case 'namedLoopAction':
+          buckets.controlStructures.push({ node: m, qname });
+          break;
+        case 'assignmentAction':
+          buckets.assignments.push({ node: m, qname });
+          break;
+        case 'performAction':
+          buckets.performs.push({ node: m, qname });
+          break;
+        case 'acceptAction':
+          buckets.accepts.push({ node: m, qname });
+          break;
       }
-      // 内容契约元素可以再嵌一层（`state def S { state sub { entry action … } }`）
-      if (Array.isArray(child.body)) collectViewContentDeep({ name: child.name, members: child.body }, buckets);
+    }
+    // 两种下钻来源都要走：
+    //   body    —— `action def A { action b; }` / `state def S { entry … }`
+    //   members —— `if c { accept X then y; }`（行为结构的孩子字段叫 members）
+    // 只走 body 时，行为结构体内的东西会整段丢失（曾经真的丢了）。
+    const childList = Array.isArray(m.body)
+      ? m.body
+      : Array.isArray(m.members)
+        ? m.members
+        : null;
+    if (childList) collectViewContentDeep({ name: m.name, members: childList }, buckets);
+    // if/else-if 的 else 分支挂在 elseBranch.members 上，只走 members 会漏掉它
+    const elseBranch = (m as { elseBranch?: { members?: any[] } }).elseBranch;
+    if (elseBranch && Array.isArray(elseBranch.members)) {
+      collectViewContentDeep({ name: m.name, members: elseBranch.members }, buckets);
+    }
+  }
+}
+
+/**
+ * M19：从**已收集过直接成员**的命名空间往下钻一层。
+ *
+ * 为什么不直接 `collectViewContentDeep(v, …)`：`collectMembers` 已经收走了
+ * 视图体的直接成员，直接再调一次会把它们**收两遍** —— 画布上出现两个
+ * id 完全相同的节点（id 来自同一个 AST 节点），用户点谁都一样。
+ */
+function collectViewContentBelow(
+  members: any[] | undefined,
+  buckets: ViewContentBuckets,
+): void {
+  for (const m of members ?? []) {
+    const childList = Array.isArray(m.body)
+      ? m.body
+      : Array.isArray(m.members)
+        ? m.members
+        : null;
+    if (childList) collectViewContentDeep({ name: m.name, members: childList }, buckets);
+    const elseBranch = (m as { elseBranch?: { members?: any[] } }).elseBranch;
+    if (elseBranch && Array.isArray(elseBranch.members)) {
+      collectViewContentDeep({ name: m.name, members: elseBranch.members }, buckets);
     }
   }
 }
@@ -1231,6 +1342,20 @@ function collectMembers(
         break;
       case 'controlFlow':
         viewContent?.flows.push({ node: m, qname });
+        break;
+      // M19.1 行为结构（官方 StructuredControlTest / AssignmentTest 的记号）
+      case 'controlStructure':
+      case 'namedLoopAction':
+        viewContent?.controlStructures.push({ node: m, qname });
+        break;
+      case 'assignmentAction':
+        viewContent?.assignments.push({ node: m, qname });
+        break;
+      case 'performAction':
+        viewContent?.performs.push({ node: m, qname });
+        break;
+      case 'acceptAction':
+        viewContent?.accepts.push({ node: m, qname });
         break;
       case 'enumDef':
       case 'comment':
@@ -1373,7 +1498,7 @@ function makeStateActionNode(
   };
 }
 
-/** §7.26.4 RenderingUsage（官方 4 个标准渲染使用就是这种形态） */
+/** §7.7.6 AcceptActionUsage（官方 4 个标准渲染使用就是这种形态） */
 function makeRenderingUsageNode(
   id: string,
   name: string,
@@ -1385,6 +1510,93 @@ function makeRenderingUsageNode(
     type: 'sysmlRenderingUsage',
     position: { x: 0, y: 0 },
     data: { label: name, kind: 'renderingUsage', typeRef, stableKey },
+  };
+}
+
+/**
+ * M19.1 §7.7.8 AssignmentActionUsage：`assign count := count + 1;`
+ *
+ * 官方记号原文（AssignmentTest.sysml），不是自造。
+ */
+function makeAssignmentNode(
+  id: string,
+  target: string,
+  value: string,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlAssignment',
+    position: { x: 0, y: 0 },
+    data: { label: `${target} := ${value}`, kind: 'assignmentAction', target, value, stableKey },
+  };
+}
+
+/**
+ * M19.1 §7.7.5 控制结构：if / while / loop / for（官方 StructuredControlTest.sysml）。
+ *
+ * `expr` / `untilTest` / `iterator` 保留原文 —— 用户多半正是在编辑器里改条件，
+ * 属性窗展示成结构化字段反而容易显示成用户没写过的样子。
+ */
+function makeControlStructureNode(
+  id: string,
+  structureType: string,
+  expr: string | undefined,
+  untilTest: string | undefined,
+  iterator: string | undefined,
+  varName: string | undefined,
+  stableKey: string,
+): Node {
+  const label =
+    structureType === 'for'
+      ? `for ${varName ?? ''} ${iterator ?? ''}`.trim()
+      : `${structureType} ${expr ?? ''}`.trim();
+  return {
+    id,
+    type: 'sysmlControlStructure',
+    position: { x: 0, y: 0 },
+    data: {
+      label,
+      kind: 'controlStructure',
+      structureType,
+      expr,
+      untilTest,
+      iterator,
+      varName,
+      stableKey,
+    },
+  };
+}
+
+/** M19.1 §7.7.6 perform / accept 动作 */
+function makePerformNode(id: string, target: string, stableKey: string): Node {
+  return {
+    id,
+    type: 'sysmlPerform',
+    position: { x: 0, y: 0 },
+    data: { label: `perform ${target}`, kind: 'performAction', target, stableKey },
+  };
+}
+
+function makeAcceptNode(
+  id: string,
+  name: string,
+  thenTarget: string | undefined,
+  via: string | undefined,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlAccept',
+    position: { x: 0, y: 0 },
+    data: {
+      label: thenTarget ? `accept ${name} → ${thenTarget}` : `accept ${name}`,
+      kind: 'acceptAction',
+      acceptName: name,
+      thenTarget,
+      via,
+      stableKey,
+    },
   };
 }
 

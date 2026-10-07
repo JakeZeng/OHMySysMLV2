@@ -57,6 +57,24 @@
     return prefix + '_' + _idCounter;
   }
 
+  // M19.1：三种循环形态（while / loop / for）共用一个构造器。
+  // `for` 的循环变量与序列写进 `iterator` 字段（官方写法 `for n : T in (…)`），
+  // 保留原文而不拆成结构化类型 —— 类型引用在文本编辑器里改比在属性窗改常见，
+  // 拆了反而容易把用户正在改的文本改坏。
+  function loopStructure(type, expr, varName, iterator, members, until, loc) {
+    return {
+      kind: 'controlStructure',
+      id: nextId('ctlStruct'),
+      structureType: type,
+      expr: expr || undefined,
+      varName: varName || undefined,
+      iterator: iterator || undefined,
+      members: members.map(m => m[1]),
+      untilTest: until || undefined,
+      location: locationOf(loc),
+    };
+  }
+
   function dirAttr(loc, name, typeRef, dir, defv) {
     return {
       kind: 'attributeUsage',
@@ -412,6 +430,9 @@ ViewDefBodyClause
   / FlowStatement
   / StateDef
   / TransitionStatement
+  // M19.1：行为结构同样合法于视图体 —— ActionFlowView 的「Control structures」
+  // 契约项就是靠这些在视图里落地（官方 StructuredControlTest.sysml 同款写法）。
+  / ActionBodyMember
   // `in p : Real;` / `out p : Real;` —— §7.7.10 带方向的参数用法
   / ImplicitFeatureWithDir
   / PackageMember
@@ -638,6 +659,10 @@ PackageMember
     / ReferenceUsage
     / PortUsage
     / Attribute
+    // M19.1：动作用法（含匿名 `action { … }`）也是包成员 ——
+    // 官方 StructuredControlTest.sysml 的 `package { action { … } }` 正是这个形态。
+    // 放在 ActionDefinition 之后由 `!"def"` 守卫兜底，两者不会互相吃掉。
+    / ActionUsageInBody
     / StateMachine
     / Activity
     / RequirementDef
@@ -725,7 +750,15 @@ PartDefBody
   = OPEN _ members:(_ PartBodyMember)* CLOSE { return members.map(m => m[1]); }
   / _ ";" { return []; }
 
-PartBodyMember
+// M19.1：行为结构（assign / if / while / loop / for / perform / accept）在
+// **定义体与视图体里都合法**（官方示例里 `assign` / `if` / `while` 与普通
+// `part def` / `action def` 成员是并列的），因此提到 ActionBodyMember 一层，
+// 由 PartBodyMember / ViewDefBodyClause 共同引用 —— 只有一处规则，不会
+// 出现「这里能写那里不能」。
+//
+// ⚠️ 因此下面这份列表**不含**行为结构自身，叫 PartBodyMemberNoStructure；
+// ActionBodyMember = 行为结构 + 本列表。递归终止靠的是这个分层。
+PartBodyMemberNoStructure
   // M17 S5a：嵌套定义（§Q1 —— def 内可拥有内联子定义）
   = PartDef
   / PortDef
@@ -772,6 +805,10 @@ PartBodyMember
 
   / TraceStatement
   / CommentBlock
+
+// 定义体成员 = 行为结构 + 既有成员（见 PartBodyMemberNoStructure 处的分层说明）
+PartBodyMember
+  = ActionBodyMember
 
 // ─── Structure Definitions（M17 S5a：item / attribute / interface）───────
 
@@ -853,6 +890,150 @@ RenderingUsage
       };
     }
 
+// ─── M19.1：行为结构（官方记号，逐一取自官方示例）────────────────────
+//
+// 下面 6 条记号全部**照抄**官方示例原文，不是照着语义推的：
+//   sysml/src/examples/Simple Tests/StructuredControlTest.sysml
+//   sysml/src/examples/Simple Tests/AssignmentTest.sysml
+//   sysml.library/Systems Library/Actions.sysml（ForLoopAction 的 body）
+//
+// 这些是 ActionFlowView 内容契约里「Control structures」「Change and time
+// triggers」「Send and accept actions」等条目的语法落点。
+
+// 表达式文本：到 `;` 或 `{` 为止（两种终止符都是本文件里表达式合法的边界）
+ActionExprText
+  = $(![;{}] .)+
+
+// §7.7.8 AssignmentActionUsage
+// 官方原文：`assign count := count + 1;`（AssignmentTest.sysml）
+// 目标是**特征路径**，官方用点号（`counting.counter.count`）——
+// 所以这里用 FeaturePath 保留用户原样写的分隔符，不能用 QualifiedName
+// （它会把点号归一成 `::`，属性窗显示出来就成了用户没写过的样子）。
+AssignmentAction
+  = "assign" WS target:FeaturePath WS ":=" WS value:ActionExprText _ ";"
+    {
+      return {
+        kind: 'assignmentAction',
+        id: nextId('assign'),
+        target,
+        value: value.trim(),
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.6 PerformActionUsage
+// 官方原文：`perform c.incr;`（AssignmentTest.sysml 的 calc def 内）
+PerformAction
+  = "perform" WS target:FeaturePath _ ";"
+    {
+      return {
+        kind: 'performAction',
+        id: nextId('perform'),
+        target,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.5 IfThenElseActionUsage
+// 官方原文：
+//     if i < 0 { assign i := 0; } else if i == 0 { … } else { … }
+// ElsePart 独立成规则是为了让 `else if` 与 `else {` 两条备选各自独立回溯。
+ElsePart
+  = WS "else" WS OPEN _ members:(_ ActionBodyMember)* CLOSE
+    { return { branch: 'else', members: members.map(m => m[1]) }; }
+  / WS "else" WS nested:IfControlStructure
+    { return { branch: 'else-if', nested }; }
+
+IfControlStructure
+  = "if" WS expr:ActionExprText OPEN _ members:(_ ActionBodyMember)* CLOSE els:ElsePart? _ ";"?
+    {
+      return {
+        kind: 'controlStructure',
+        id: nextId('ctlStruct'),
+        structureType: 'if',
+        expr: expr.trim(),
+        members: members.map(m => m[1]),
+        elseBranch: els || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.5 LoopActionUsage（while / until / for 三种形态，官方原文逐条）
+//   `while i > 0 { … } until b;`
+//   `loop { … } until b;`
+//   `for n : ScalarValues::Integer in (1, 2, 3) { … }`
+LoopControlStructure
+  = "loop" OPEN _ members:(_ ActionBodyMember)* CLOSE until:UntilTest? _ ";"?
+    { return loopStructure('loop', '', '', '', members, until, location().start.offset); }
+  / "while" WS expr:ActionExprText OPEN _ members:(_ ActionBodyMember)* CLOSE until:UntilTest? _ ";"?
+    { return loopStructure('while', expr.trim(), '', '', members, until, location().start.offset); }
+  // ⚠️ 标签名不能叫 `var` —— peggy 把它当保留字（Label can't be a reserved word）
+  / "for" WS loopVar:Identifier WS ":" WS typeRef:QualifiedName WS "in" WS seq:$(![{}] .)+ OPEN _ members:(_ ActionBodyMember)* CLOSE _ ";"?
+    { return loopStructure('for', '', loopVar, typeRef + ' in ' + seq.trim(), members, undefined, location().start.offset); }
+
+UntilTest
+  = WS "until" WS e:ActionExprText { return e.trim(); }
+
+// 官方 `action aLoop while i > 0 { … } until b;`（StructuredControlTest.sysml）
+// ⚠️ 必须排在 ActionUsageInBody **之前** —— 否则 `action aLoop` 会被那条规则
+// 吃掉两个词就成功返回（它的 `;` 是可选的），剩下的 `while …` 当成另一个成员，
+// 于是一个具名循环动作被拆成「动作 + 独立 while」两个东西。
+//
+// ⚠️ 这里只有 `!"def"`，**没有** `!IdentifierChar` —— 守卫加在 `WS` 之后时，
+// 下一个字符就是动作名的首字母，`!IdentifierChar` 必然失败，整条规则永不生效。
+NamedLoopAction
+  = "action" WS !"def" name:Identifier WS "while" WS expr:ActionExprText OPEN _ members:(_ ActionBodyMember)* CLOSE until:UntilTest? _ ";"?
+    {
+      return {
+        kind: 'namedLoopAction',
+        id: nextId('loopAction'),
+        name,
+        structureType: 'while',
+        expr: expr.trim(),
+        members: members.map(m => m[1]),
+        untilTest: until || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.6 AcceptActionUsage
+// 官方原文两种（分别见 AssignmentTest.sysml 与 Actions.sysml 的 TransitionAction）：
+//     accept Incr then increment;                       独立接收动作
+//     accept apayload : Anything via receiver then done; 迁移里的接收
+//
+// ⚠️ 可选组里**不能**写成 `_ WS ":"`：`_` 是贪婪的可选空白，会把 `apayload` 后
+// 的空格吃掉，后面要求必需空白的 `WS` 没得可用 → 整条可选组失败，报错落在 `:` 上，
+// 看起来像「不接受带类型的 accept」。这是本文件里反复出现的同一个坑。
+AcceptPayload
+  = first:QualifiedName second:(WS ":" WS t:QualifiedName { return t; })?
+    { return { name: first, typeRef: second || undefined }; }
+
+AcceptAction
+  = "accept" WS payload:AcceptPayload via:(WS "via" WS _ v:QualifiedName { return v; })? then:(WS "then" WS _ t:Identifier { return t; })? _ ";"
+    {
+      return {
+        kind: 'acceptAction',
+        id: nextId('accept'),
+        name: payload.name,
+        payloadTypeRef: payload.typeRef,
+        via: via || undefined,
+        thenTarget: then || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// 动作体成员 = 既有定义体成员 + 上述 6 类行为结构。
+// 两处共用（PartBodyMember / ViewDefBodyClause），保证 `action def A { … }` 与
+// 视图体里的行为结构是同一套规则，不会出现「这里能写那里不能」。
+ActionBodyMember
+  = AssignmentAction
+  / IfControlStructure
+  / NamedLoopAction
+  / LoopControlStructure
+  / PerformAction
+  / AcceptAction
+  / PartBodyMemberNoStructure
+
 // §7.7.2 ActionUsage：`action a;` / `action a : T;`（可带 body 嵌套子动作）
 //
 // ⚠️ 命名：既有 `ActionDef` 产生式（activity 里的 `action n;`）已经把 kind
@@ -864,8 +1045,12 @@ RenderingUsage
 // ActionUsageInBody 会把 `def` 当成动作名，只吃掉 `action def` 两个词就成功返回
 // （末尾的 `_ ";"?` 是可选的），剩下的 `NewAction {` 于是被当成非法成员 ——
 // 报错信息还落在 NewAction 上，看起来完全不像顺序问题。
+//
+// ⚠️ `name` 可省：官方示例大量使用**匿名**用法（StructuredControlTest.sysml 里的
+// `action { … }`）。SysML v2 的 Usage 名可匿名（由拥有者命名），之前强制要名字
+// 于是整个官方结构化控制示例解析不了。
 ActionUsageInBody
-  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS !("def" !IdentifierChar) name:Identifier typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS !("def" !IdentifierChar) name:(n:Identifier { return n; })? typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'actionUsage',
@@ -910,9 +1095,27 @@ BindingConnectorUsage
 
 // §7.7.3 状态的 entry / do / exit 动作（EntryActionUsage / DoActionUsage /
 // ExitActionUsage）—— StateTransitionView 的内容契约项。
-// 官方是 `entry action a;`（方向词 + 动作用法），不是 `entry a;`。
+//
+// 官方有**两种**写法，两条都收：
+//   a) `entry action a;`                     —— 动作用法直接挂在相位下（规范图里的
+//                                              entry/do/exit 分区形态）
+//   b) `entry assign counter.count := 0;`    —— 相位 + 赋值动作
+//      （官方 AssignmentTest.sysml 原文：`entry assign counter.count := 0;`
+//        与 `do assign counter.count := counter.count + 1;`）
+// 之前只实现了 a)，于是官方示例里的 b) 解析不了 —— b) 才是标准库实际在用的写法。
 StateActionUsage
-  = phase:("entry" / "do" / "exit") WS "action" WS name:Identifier _ ";"
+  = phase:("entry" / "do" / "exit") WS a:AssignmentAction
+    {
+      return {
+        kind: 'stateAction',
+        id: nextId('stateAction'),
+        // 相位动作的名字取赋值目标 —— 用户在属性窗看到的是「entry 动作改的是谁」
+        name: a.target,
+        phase,
+        location: locationOf(location().start.offset),
+      };
+    }
+  / phase:("entry" / "do" / "exit") WS "action" WS !"def" name:Identifier _ ";"
     {
       return {
         kind: 'stateAction',
@@ -1087,8 +1290,13 @@ ImplicitFeatureWithDir
   = dir:Direction WS name:Identifier WS ":" WS typeRef:QualifiedName defv:DefaultValue? _ ";"
     { return dirAttr(location().start.offset, name, typeRef, dir, defv); }
 
+// 默认值：官方写法是 `:=`（`attribute count : ScalarValues::Integer := 0;`），
+// 旧的 `=` 形式保留兼容。
+// ⚠️ `:=` 必须排前面 —— PEG 有序选择，`"="` 会把 `:=` 的冒号留给后面，
+// 于是整条规则挂掉，报错还落在冒号上（与 S7.2 ReferenceUsage 同一个坑）。
 DefaultValue
-  = WS "=" WS vchars:(!(";" / WS) .)+ { return vchars.map(x => x[1]).join('').trim(); }
+  = WS ":=" WS vchars:(!(";" / WS) .)+ { return vchars.map(x => x[1]).join('').trim(); }
+  / WS "=" WS vchars:(!(";" / WS) .)+ { return vchars.map(x => x[1]).join('').trim(); }
 
 // ─── State Machine（M5 行为视图）───────────────────────────────────────
 
@@ -1480,8 +1688,23 @@ Identifier
 IdentifierChar
   = [a-zA-Z0-9_]
 
+// FeaturePath：**保留原样**的特征路径文本。
+//
+// 为什么不用 QualifiedName：官方 `assign counting.counter.count := …` 用点号，
+// 而 QualifiedName 会把分隔符一律归一成 `::`，属性窗回显出来的就成了用户
+// 根本没写过的样子（`counting::counter::count`）。路径要原样存。
+FeaturePath
+  = $(Identifier (_ "::" _ Identifier / _ "." _ Identifier)*)
+
+// QualifiedName：官方两种路径分隔符都支持 ——
+//   `ScalarValues::Integer`（限定名，`::`）
+//   `counting.counter.count`（特征路径，`.`）
+// ⚠️ 有序选择里 `"::"` 必须排在 `"."` 前 —— 反过来的话先试 `.` 分支不匹配再回溯，
+// 虽仍能过，但每次解析都白跑一趟。
+// 本规则**归一化**分隔符为 `::`（expose 路径解析等依赖它）；
+// 需要保留用户原样的地方（assign / perform 的目标）请用 FeaturePath。
 QualifiedName
-  = head:Identifier tail:(_ "::" _ Identifier)* { return [head, ...tail.map(t => t[3])].join('::'); }
+  = head:Identifier tail:(_ "::" _ Identifier / _ "." _ Identifier)* { return [head, ...tail.map(t => t[3])].join('::'); }
 
 // ─── 空白与注释 ───────────────────────────────────────────────────────
 
