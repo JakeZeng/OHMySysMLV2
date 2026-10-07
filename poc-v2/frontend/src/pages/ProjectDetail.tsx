@@ -38,6 +38,8 @@ import { ShareSettingsModal } from '../components/modals/ShareSettingsModal';
 import { ProjectSettingsModal } from '../components/modals/ProjectSettingsModal';
 import { ElementTypeChooserModal } from '../components/modals/ElementTypeChooserModal';
 import { ExposeViewPickerModal } from '../components/modals/ExposeViewPickerModal';
+import { NewViewModal } from '../components/modals/NewViewModal';
+import type { StandardViewDef } from '../lib/sysmlViewCatalog';
 import { PALETTE_ITEMS, type PaletteKind } from '../lib/insertSnippet';
 import { ProjectTree } from '../components/tree/ProjectTree';
 import { ResizableSplit } from '../components/layout/ResizableSplit';
@@ -68,25 +70,14 @@ const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
 `;
 
 /**
- * M15 §7.26：ViewDefinition 骨架（标准写法）。
- *
- * 标准要点：
- *   - 定义用 `view def <名> { … }`，实例用 `view <名> : <定义>`；
- *   - 渲染用 `render <RenderingRef>;` —— 参数是**渲染用法的限定名引用**，
- *     不是枚举（规范原文：SysML 不提供指定"视图如何渲染"的具体构造）；
- *   - 过滤用 `filter @<Metaclass>;`（算子 @ / istype / hastype，可 `not` 取反）；
- *   - 引用元素用 `expose <Pkg>::<Element>;`，整包递归用 `expose <Pkg>::**;`。
- */
-const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
-  // 作用范围：import Views::*;  filter @SysML::PartUsage;
-  // 渲染方式：render <RenderingRef>;   例：<RenderingRef> 占位名 asTreeDiagram;
-  // （expose 只能出现在 view usage 体内——官方约束，§8.2.2.26）
-}
-`;
-
-/**
  * M15 §7.26：ViewUsage 骨架 —— 视图实例继承模板的 render/expose 语义。
  * 新实例给一份可直接编辑的骨架，并注明它实例化自哪个 ViewDefinition。
+ *
+ * ⚠️ M19：原来的 `DEFAULT_VIEW_BODY`（全注释空壳 `view def X { … }`）已删除。
+ * 树右键「新建视图」现在走 `NewViewModal`：先选**标准视图类型**，再按官方写法
+ * `view def X :> StandardViewDefinitions::<Std> { render <标准渲染>; }` 生成骨架。
+ * 空壳骨架的问题不是"不够详细"，而是它生成的视图**没有类型** —— 工具箱、徽章、
+ * 后端解析全都无从判断它是哪种视图，用户拿到的是一张白纸。
  */
 const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view ${name} {
   // 实例化自 ViewDefinition「${definitionName}」（§7.26 ViewUsage）
@@ -681,6 +672,18 @@ export const ProjectDetail: React.FC = () => {
   const [exposeToViewFor, setExposeToViewFor] = React.useState<ElementRef | null>(null);
 
   /**
+   * M19：新建标准视图向导的目标（归属包 + 建议名）。
+   *
+   * null = 向导关闭。放在 state 里而不是直接把 modal 的 onCreate 串在
+   * handleCreateView 上：向导需要先收集「选哪种标准视图类型」，那是 UI 决策，
+   * 不该混进取包名 / 去重命名的逻辑里。
+   */
+  const [newViewTarget, setNewViewTarget] = React.useState<{
+    packageId: string | null;
+    name: string;
+  } | null>(null);
+
+  /**
    * M16 P5/Q12：把公共元素 expose 进目标 ViewUsage。
    * 官方硬约束（§8.2.2.26）：expose 只能出现在 ViewUsage 体内——
    * picker 已过滤 usage，此处再做一次防御。
@@ -796,21 +799,32 @@ export const ProjectDetail: React.FC = () => {
     [projectId, packages, refreshPackages, showToast, setSearchParams],
   );
 
-  const handleCreateView = React.useCallback(
-    async (packageId: string | null) => {
-      // M14：自动命名（与同 package 下的兄弟视图去重）
-      const siblingNames = views
-        .filter((v) => (v.packageId ?? null) === packageId)
-        .map((v) => v.name);
-      const name = generateUniqueName('View', siblingNames);
+  /**
+   * M19：按标准视图类型创建视图（可视化创建路径）。
+   *
+   * 与改造前的差别：骨架不再是全注释空壳，而是**官方写法**的
+   * `view def X :> StandardViewDefinitions::<Std> { render <标准渲染>; }`。
+   * 特化关系就是「本视图属于哪种标准视图类型」的规范表达 —— 工具箱、
+   * 徽章、Go 端解析全都从它推导，不需要额外的自定义字段。
+   */
+  const handleCreateViewOfStandard = React.useCallback(
+    async (
+      packageId: string | null,
+      input: { name: string; standardView: StandardViewDef; content: string },
+    ) => {
       try {
         const view = await viewApi.create(projectId, {
           packageId: packageId ?? undefined,
-          name,
-          content: DEFAULT_VIEW_BODY(name),
+          name: input.name,
+          content: input.content,
+          renderingCategory: input.standardView.name,
         });
         await refreshViews();
-        showToast({ title: `已创建视图「${name}」`, variant: 'success' });
+        showToast({
+          title: `已创建${input.standardView.label}「${input.name}」`,
+          description: `特化自 StandardViewDefinitions::${input.standardView.name}`,
+          variant: 'success',
+        });
         setSearchParams({ view: view.id });
       } catch (e) {
         showToast({
@@ -820,7 +834,29 @@ export const ProjectDetail: React.FC = () => {
         });
       }
     },
-    [projectId, views, refreshViews, showToast, setSearchParams],
+    [projectId, refreshViews, showToast, setSearchParams],
+  );
+
+  const handleCreateView = React.useCallback(
+    async (packageId: string | null) => {
+      // M14：自动命名（与同 package 下的兄弟视图去重）
+      const siblingNames = views
+        .filter((v) => (v.packageId ?? null) === packageId)
+        .map((v) => v.name);
+      const name = generateUniqueName('View', siblingNames);
+      setNewViewTarget({ packageId, name });
+    },
+    [views],
+  );
+
+  const confirmNewView = React.useCallback(
+    (input: { name: string; standardView: StandardViewDef; content: string }) => {
+      const target = newViewTarget;
+      setNewViewTarget(null);
+      if (!target) return;
+      void handleCreateViewOfStandard(target.packageId, input);
+    },
+    [newViewTarget, handleCreateViewOfStandard],
   );
 
   /**
@@ -1654,6 +1690,14 @@ export const ProjectDetail: React.FC = () => {
           }
         }}
       />
+      {/* M19：新建标准视图向导（树右键「新建视图」→ 选视图类型 → 生成官方骨架） */}
+      {newViewTarget && (
+        <NewViewModal
+          defaultName={newViewTarget.name}
+          onCreate={confirmNewView}
+          onClose={() => setNewViewTarget(null)}
+        />
+      )}
       {/* M16 P5/Q12：树右键「Expose 到视图…」目标选择器（仅 ViewUsage） */}
       {exposeToViewFor && (
         <ExposeViewPickerModal

@@ -50,6 +50,22 @@ export interface View {
   /** view body 内 owned 元素（view-private） */
   innerElements?: InnerElement[];
   filterQualifiedNames?: string[];
+  // ── M19 增量（§9.2.19 / §9.2.20 标准视图）────────────────────
+  /**
+   * 本视图属于哪个**标准视图类型**（§9.2.20 的 8 个之一；自定义视图为空）。
+   *
+   * 由 view def 的特化关系决定（`view def V :> StandardViewDefinitions::ActionFlowView`），
+   * 决定 UI 挂哪套工具箱。
+   *
+   * ⚠️ 与 renderKind 正交：`standardView` 答「这是哪种视图」，`renderKind` 答
+   * 「用哪个 renderer 画」。GeneralView 也能 render 成表格。
+   */
+  standardView?: string;
+  /** 官方 4 个标准 rendering 的类别（textual / graphical / tabular）；非标准渲染为空 */
+  renderingKind?: string;
+  /** 特化引用原文 / render 引用原文（属性窗如实展示） */
+  specializesRef?: string;
+  renderingRef?: string;
 }
 
 export interface ViewSummary {
@@ -87,6 +103,8 @@ export interface ViewSummary {
   exposeUnresolvedCount?: number;
   /** 解析自 `filter @X;`（算子随名字一起保留，如 `@SysML::PartUsage` / `not @X`） */
   filterQualifiedNames?: string[];
+  /** M19：本视图属于哪个标准视图类型（§9.2.20 的 8 个之一）；树徽章显示它 */
+  standardView?: string;
 }
 
 /** SysML v2 §7.26：view body 内 owned 的元素（view-private） */

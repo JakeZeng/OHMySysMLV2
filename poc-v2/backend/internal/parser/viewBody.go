@@ -105,6 +105,16 @@ type ParsedViewBody struct {
 	ExposedElementsUnresolved []model.ExposedElement
 	// 渲染方式
 	RenderKind model.RenderKind
+	// M19：rendering usage 落在官方 4 个标准渲染之一时的 Rendering 类
+	// （textual / graphical / tabular）；非标准渲染为空。
+	//
+	// ⚠️ 与 RenderKind 正交：RenderKind 是**本工具的渲染器路由**（按名字猜），
+	// RenderingKind 是**规范里的类别**（官方 4 个 rendering usage 的归类）。
+	RenderingKind RenderingKind
+	// M19：本视图属于哪个标准视图类型（§9.2.20 的 8 个之一）。
+	// 由 view def 的**特化关系**判定：`view def V :> StandardViewDefinitions::X`。
+	// 与 RenderKind 同样正交 —— GeneralView 也可以 render 成表格。
+	StandardView StandardViewName
 	// 过滤规则（qualified name 列表）
 	FilterQualifiedNames []string
 	// view body 内嵌 owned 元素
@@ -132,12 +142,20 @@ func ParseViewBody(content string) ParsedViewBody {
 	case renderDeclRe.MatchString(content):
 		m := renderDeclRe.FindStringSubmatch(content)
 		out.RenderKind = renderKindFromRef(m[1])
+		out.RenderingKind = RenderingKindOf(m[1])
 	default:
 		// 排除 `render rendering …` 已被上面接走的情况，剩下的裸引用才是标准引用式
 		if m := renderRefRe.FindStringSubmatch(content); m != nil && !strings.HasPrefix(m[1], "rendering") {
 			out.RenderKind = renderKindFromRef(m[1])
+			out.RenderingKind = RenderingKindOf(m[1])
 		}
 	}
+
+	// 1b. M19：标准视图类型 —— 由 view def 的特化关系判定
+	//
+	// 特化优先，其次视图名本身（标准库自带的 8 个定义就是靠名字命中的）。
+	// 与前端 sysml.pegjs 的 makeView / TS 目录 detectStandardView 是同一套判定。
+	out.StandardView = detectStandardView(content)
 
 	// 2. filter（含取反与算子）—— 保留算子文本，便于 UI 如实回显
 	filterMatches := filterRe.FindAllStringSubmatch(content, -1)
@@ -212,15 +230,16 @@ func ParseViewBody(content string) ParsedViewBody {
 	return out
 }
 
-// renderKindFromRef 从 rendering usage 的引用名推断渲染方式。
+// renderKindFromRef 从 rendering usage 的引用名推断渲染方式（M16 P4）。
 //
 // 标准**不规定**渲染怎么做 —— "SysML provides no specific constructs for specifying
 // how a view is rendered"，rendering 定义由工具/用户库提供，名字本身无固定含义。
-// 所以这里只能按名字猜：去掉 `as` 前缀与 Diagram/View/Table 后缀再小写，命中已知
-// 种类即用。这是本 POC 的约定，不是标准；认不出来回落到 interconnection。
+// 所以这里只能按名字猜。这是本 POC 的约定，不是标准；认不出来回落到 interconnection。
+//
+// ⚠️ M19：这个「工具渲染器路由」与 `RenderingKindOf`（官方 4 个 rendering 的类别）
+// 是**两回事**，两者正交，别混用。
 //
 // 与前端 parser 的 deriveRenderKind 保持同一套规则（两边都会独立算一次）。
-// renderKindFromRef 从 rendering usage 的引用名推导渲染方式（M16 P4）。
 //
 // 官方 4（asTextualNotation / asTreeDiagram / asInterconnectionDiagram /
 // asElementTable）+ 历史上 4 非标准名字（asStateDiagram / asActionDiagram /

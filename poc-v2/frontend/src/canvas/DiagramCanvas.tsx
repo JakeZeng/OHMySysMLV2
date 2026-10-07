@@ -527,6 +527,111 @@ const StateMachineNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoStateMachineNode = React.memo(StateMachineNode);
 
+// ─── M19：标准视图内容契约节点 ────────────────────────────────────────
+//
+// 三类新图元对应官方图形记号里**不同**的形状：控制节点是菱形、entry/do/exit
+// 是小标签、渲染用法是视图级注记。刻意不复用既有节点类型 —— 用户要能在画布上
+// 一眼区分「这是动作」与「这是 fork」。
+const CONTROL_NODE_GLYPH: Record<string, string> = {
+  fork: '⑂',
+  join: '⑃',
+  decide: '◆',
+  merge: '◇',
+};
+
+const ControlNodeNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { controlType?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(250,140,22,0.16)' : 'rgba(250,140,22,0.07)',
+        border: `2px solid ${selected ? '#ad4e00' : '#fa8c16'}`,
+        borderRadius: '10px',
+        padding: '6px 14px',
+        minWidth: '100px',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        transition: 'background 0.1s',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
+      <span style={{ fontSize: '14px', color: '#ad4e00' }}>
+        {CONTROL_NODE_GLYPH[d.controlType ?? ''] ?? '◆'}
+      </span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.label}</span>
+      <span style={{ fontSize: '10px', color: '#8c8c8c' }}>{d.controlType}</span>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#fa8c16', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoControlNodeNode = React.memo(ControlNodeNode);
+
+const PHASE_LABEL: Record<string, string> = {
+  entry: 'entry',
+  do: 'do',
+  exit: 'exit',
+};
+
+const StateActionNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { phase?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: selected ? 'rgba(19,194,194,0.14)' : 'rgba(19,194,194,0.06)',
+        border: `1px dashed ${selected ? '#006d75' : '#08979c'}`,
+        borderRadius: '4px',
+        padding: '4px 10px',
+        fontFamily: 'monaco, monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 6, height: 6 }} />
+      <span style={{ fontSize: '10px', color: '#006d75' }}>
+        «{PHASE_LABEL[d.phase ?? ''] ?? d.phase} action»
+      </span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.label}</span>
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#08979c', width: 6, height: 6 }} />
+    </div>
+  );
+};
+const MemoStateActionNode = React.memo(StateActionNode);
+
+const RenderingUsageNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { typeRef?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? 'rgba(114,46,209,0.14)' : 'rgba(114,46,209,0.06)',
+        border: `1px solid ${selected ? '#531dab' : '#722ed1'}`,
+        borderRadius: '999px',
+        padding: '4px 12px',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      <AnchorStrips />
+      <span style={{ fontSize: '10px', color: '#531dab' }}>«rendering»</span>
+      <span style={{ fontWeight: 600, color: '#262626' }}>{d.label}</span>
+      {d.typeRef && <span style={{ fontSize: '10px', color: '#8c8c8c' }}>: {d.typeRef}</span>}
+    </div>
+  );
+};
+const MemoRenderingUsageNode = React.memo(RenderingUsageNode);
+
 const ActivityNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData & { actionCount?: number; flowCount?: number };
   return (
@@ -775,6 +880,10 @@ const nodeTypes = {
   sysmlRequirement: MemoRequirementNode,
   sysmlConstraint: MemoConstraintBlockNode,
   sysmlGhost: MemoGhostNode,
+  // M19：标准视图内容契约节点（见上方组件注释）
+  sysmlControlNode: MemoControlNodeNode,
+  sysmlStateAction: MemoStateActionNode,
+  sysmlRenderingUsage: MemoRenderingUsageNode,
 };
 
 /**

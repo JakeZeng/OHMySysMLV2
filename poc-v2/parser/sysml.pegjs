@@ -389,12 +389,31 @@ ViewDefBody
     { return clauses.map(c => c[1]); }
   / _ ";" { return []; }
 
+// ⚠️ M19：视图是 Namespace，body 内**同时**能装两类东西：
+//   1) 视图子句（render / filter / satisfy / expose）
+//   2) 视图内容契约元素（动作、控制节点、状态、绑定……）与普通包成员
+// 改造前第 2 类只接 PackageMember，而动作用法 / 控制节点 / entry-do-exit
+// 这些**只在 PartBodyMember 里**—— 于是视图工具箱列出来的东西，用户在视图里
+// 一个也写不出来。官方 §8.2.2.26 ViewBodyItem = DefinitionBodyItem | ElementFilterMember
+// | ViewRenderingMember | Expose，本来就不该只等于包成员集。
 ViewDefBodyClause
   = RenderStatement
   / FilterStatement
   / SatisfyStatement
   / ImportStatement
   / DocStatement
+  // M19：标准视图的内容契约元素（须排在 PackageMember 前，见规则注释）
+  / RenderingDefinition
+  / RenderingUsage
+  / StateActionUsage
+  / ActionUsageInBody
+  / ControlNodeUsage
+  / BindingConnectorUsage
+  / FlowStatement
+  / StateDef
+  / TransitionStatement
+  // `in p : Real;` / `out p : Real;` —— §7.7.10 带方向的参数用法
+  / ImplicitFeatureWithDir
   / PackageMember
 
 // 官方 expose 形式（§8.2.2.26 BNF）。`**` 分支必须排在 `*` 之前。
@@ -840,8 +859,13 @@ RenderingUsage
 // 'actionDef' 占用了 —— 但它其实是 **usage**（§7.7 ActionUsage）。这里用
 // 'actionUsage' 是为了不改动既有 kind 契约（modelToFlow / palette / 测试
 // 都按 kind 字符串判分），代价是 AST 里两种命名并存，已在 ast/model.ts 注明。
+//
+// ⚠️ `!"def"` 守卫是**必需**的，不是保险：`action def NewAction { }` 里
+// ActionUsageInBody 会把 `def` 当成动作名，只吃掉 `action def` 两个词就成功返回
+// （末尾的 `_ ";"?` 是可选的），剩下的 `NewAction {` 于是被当成非法成员 ——
+// 报错信息还落在 NewAction 上，看起来完全不像顺序问题。
 ActionUsageInBody
-  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS name:Identifier typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS !("def" !IdentifierChar) name:Identifier typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'actionUsage',

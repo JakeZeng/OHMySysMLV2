@@ -35,16 +35,16 @@ func (r *SQLiteRepository) DB() *sql.DB { return r.db }
 // 单次查询一张表，best-effort；任一失败记 0 不阻塞整体响应。
 func (r *SQLiteRepository) Counts(ctx context.Context) map[string]int64 {
 	out := map[string]int64{
-		"users":      0,
-		"projects":   0,
-		"models":     0,
-		"packages":   0,
-		"views":      0,
-		"viewpoints": 0,
-		"teams":      0,
-		"shares":     0,
+		"users":       0,
+		"projects":    0,
+		"models":      0,
+		"packages":    0,
+		"views":       0,
+		"viewpoints":  0,
+		"teams":       0,
+		"shares":      0,
 		"share_links": 0,
-		"audit_logs": 0,
+		"audit_logs":  0,
 	}
 	for _, table := range []string{
 		"users", "projects", "models", "packages", "views", "viewpoints", "teams",
@@ -291,7 +291,6 @@ CREATE TABLE IF NOT EXISTS entity_layouts (
 		// 兼容历史 DB：列已存在时忽略
 	}
 
-
 	// M4.5 增量：审计日志表。
 	if _, err := r.db.Exec(
 		`CREATE TABLE IF NOT EXISTS audit_logs (
@@ -425,6 +424,14 @@ CREATE TABLE IF NOT EXISTS entity_layouts (
 		`ALTER TABLE views ADD COLUMN filter_qualified_names TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE views ADD COLUMN inner_elements TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE views ADD COLUMN exposed_elements_unresolved TEXT NOT NULL DEFAULT '[]'`,
+		// M19：标准视图类型（§9.2.20）与官方 rendering 类别。
+		// 列表接口按设计不返回 content，而树徽章 / 工具箱需要这个字段，
+		// 因此按既有「写入时算好落库」模式（与 render_kind 同一套路）存一列。
+		// 存量数据留空 → UI 按「自定义视图类型」呈现，下次保存时补齐。
+		`ALTER TABLE views ADD COLUMN standard_view TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE views ADD COLUMN rendering_kind TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE views ADD COLUMN specializes_ref TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE views ADD COLUMN rendering_ref TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := r.db.Exec(stmt); err != nil {
 			// 兼容历史 DB：列已存在时忽略
@@ -836,10 +843,10 @@ func scanPackage(row interface {
 	Scan(dest ...any) error
 }) (*model.Package, error) {
 	var (
-		p             model.Package
-		parentPkgID   sql.NullString
-		desc          string
-		metadataJSON  string
+		p            model.Package
+		parentPkgID  sql.NullString
+		desc         string
+		metadataJSON string
 	)
 	if err := row.Scan(&p.ID, &p.ProjectID, &parentPkgID, &p.Name, &desc, &p.Content, &metadataJSON, &p.Version, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -860,9 +867,9 @@ func scanPackageSummary(row interface {
 	Scan(dest ...any) error
 }) (*model.PackageSummary, error) {
 	var (
-		ps           model.PackageSummary
-		parentPkgID  sql.NullString
-		desc         string
+		ps          model.PackageSummary
+		parentPkgID sql.NullString
+		desc        string
 	)
 	if err := row.Scan(&ps.ID, &ps.ProjectID, &parentPkgID, &ps.Name, &desc, &ps.Version, &ps.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1055,7 +1062,9 @@ const viewSelectColumns = `id, project_id, package_id, name, description, conten
 		render_kind, filter_qualified_names,
 		color_tag, rendering_category,
 		exposed_elements, exposed_elements_unresolved, inner_elements,
-		metadata_json, version, created_at, updated_at`
+		metadata_json,
+		standard_view, rendering_kind, specializes_ref, rendering_ref,
+		version, created_at, updated_at`
 
 // viewSummarySelectColumns ViewSummary 用的精简列。
 //
@@ -1065,6 +1074,7 @@ const viewSummarySelectColumns = `id, project_id, package_id, name, description,
 		kind, view_definition_id, viewpoint_id, viewpoint_qualified_name,
 		render_kind, color_tag, rendering_category,
 		filter_qualified_names, exposed_elements, exposed_elements_unresolved, inner_elements,
+		standard_view, rendering_kind, specializes_ref, rendering_ref,
 		version, updated_at`
 
 // scanView 把 row 扫描到 View（含 M15 全字段）。
@@ -1072,21 +1082,21 @@ func scanView(row interface {
 	Scan(dest ...any) error
 }) (*model.View, error) {
 	var (
-		v                       model.View
-		pkgID                   sql.NullString
-		viewDefID               sql.NullString
-		viewpointID             sql.NullString
-		desc                    string
-		colorTag                string
-		renderCat               string
-		exposedJSON             string
-		exposedUnresolvedJSON   string
-		innerJSON               string
-		filterJSON              string
-		metadataJSON            string
-		kind                    string
-		renderKind              string
-		viewpointQName          string
+		v                     model.View
+		pkgID                 sql.NullString
+		viewDefID             sql.NullString
+		viewpointID           sql.NullString
+		desc                  string
+		colorTag              string
+		renderCat             string
+		exposedJSON           string
+		exposedUnresolvedJSON string
+		innerJSON             string
+		filterJSON            string
+		metadataJSON          string
+		kind                  string
+		renderKind            string
+		viewpointQName        string
 	)
 	if err := row.Scan(
 		&v.ID, &v.ProjectID, &pkgID, &v.Name, &desc, &v.Content,
@@ -1094,7 +1104,9 @@ func scanView(row interface {
 		&renderKind, &filterJSON,
 		&colorTag, &renderCat,
 		&exposedJSON, &exposedUnresolvedJSON, &innerJSON,
-		&metadataJSON, &v.Version, &v.CreatedAt, &v.UpdatedAt,
+		&metadataJSON,
+		&v.StandardView, &v.RenderingKind, &v.SpecializesRef, &v.RenderingRef,
+		&v.Version, &v.CreatedAt, &v.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1156,6 +1168,7 @@ func scanViewSummary(row interface {
 		&kind, &viewDefID, &viewpointID, &viewpointQName,
 		&renderKind, &colorTag, &renderCat,
 		&filterJSON, &exposedJSON, &exposedUnJSON, &innerJSON,
+		&vs.StandardView, &vs.RenderingKind, &vs.SpecializesRef, &vs.RenderingRef,
 		&vs.Version, &vs.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1238,15 +1251,18 @@ func (r *SQLiteRepository) CreateView(ctx context.Context, v *model.View) error 
 		render_kind, filter_qualified_names,
 		color_tag, rendering_category,
 		exposed_elements, exposed_elements_unresolved, inner_elements,
-		metadata_json, version, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		metadata_json,
+		standard_view, rendering_kind, specializes_ref, rendering_ref,
+		version, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = r.db.ExecContext(ctx, q,
 		v.ID, v.ProjectID, pkgID, v.Name, v.Description, v.Content,
 		kind, viewDefID, viewpointID, v.ViewpointQualifiedName,
 		renderKind, filterJSON,
 		v.ColorTag, v.RenderingCategory,
 		exposedJSON, exposedUnresolvedJSON, innerJSON,
-		mdJSON, v.Version, v.CreatedAt, v.UpdatedAt)
+		mdJSON, v.StandardView, v.RenderingKind, v.SpecializesRef, v.RenderingRef,
+		v.Version, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 
@@ -1351,7 +1367,9 @@ func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseF
 		render_kind = ?, filter_qualified_names = ?,
 		color_tag = ?, rendering_category = ?,
 		exposed_elements = ?, exposed_elements_unresolved = ?, inner_elements = ?,
-		metadata_json = ?, version = version + 1, updated_at = ?
+		metadata_json = ?,
+		standard_view = ?, rendering_kind = ?, specializes_ref = ?, rendering_ref = ?,
+		version = version + 1, updated_at = ?
               WHERE id = ? AND version = ?`
 	res, err := r.db.ExecContext(ctx, q,
 		v.Name, pkgID, v.Description, v.Content,
@@ -1359,7 +1377,9 @@ func (r *SQLiteRepository) UpdateView(ctx context.Context, v *model.View, parseF
 		renderKind, filterJSON,
 		v.ColorTag, v.RenderingCategory,
 		exposedJSON, exposedUnresolvedJSON, innerJSON,
-		mdJSON, now, v.ID, v.Version)
+		mdJSON,
+		v.StandardView, v.RenderingKind, v.SpecializesRef, v.RenderingRef,
+		now, v.ID, v.Version)
 	if err != nil {
 		return err
 	}
@@ -1392,7 +1412,8 @@ func (r *SQLiteRepository) DeleteView(ctx context.Context, id string) error {
 // viewpointSelectColumns 共享 SELECT 列。
 const viewpointSelectColumns = `id, project_id, package_id, name, description,
 		content, stakeholder, concern, inner_elements,
-		metadata_json, version, created_at, updated_at`
+		metadata_json,
+		version, created_at, updated_at`
 
 // viewpointSummarySelectColumns ViewpointSummary 用的精简列。
 const viewpointSummarySelectColumns = `id, project_id, package_id, name, description,

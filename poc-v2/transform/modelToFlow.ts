@@ -34,6 +34,14 @@ import type {
   CommentBlock,
   TraceLink,
   Allocation,
+  ActionUsage,
+  ControlNodeUsage,
+  StateActionUsage,
+  RenderingUsage,
+  BindingConnectorUsage,
+  StateDefinition,
+  Transition,
+  ControlFlow,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
@@ -145,17 +153,27 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // §7.12 分配语句。改造前没有这个桶 —— 分配语句被 collectMembers 的 switch
   // 静默丢掉，于是「分配」模式画线后画布上什么都不会出现。
   const allocations: Q<Allocation>[] = [];
+  // M19：视图内容契约元素（只出现在视图体里）
+  const viewContent = emptyViewContentBuckets();
 
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, [], viewContent);
   }
   // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
-    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, [], viewContent);
+    // M19：视图体里定义的 part def / action def / state def 的 **body** 里还可以
+    // 再挂内容契约元素（`action def A { action nested; }`、
+    // `state def S { entry action x; }`）。collectMembers 只按命名空间递归，
+    // 不进 def body —— 那是端口子节点的老路（collectPortNodes），整份遍历会
+    // 把 part def 里的 part usage 也提成顶层节点，破坏既有布局。
+    // 这里只挑 M19 那几种 kind 下钻，精准且不扰动既有行为。
+    collectViewContentDeep(v, viewContent);
   }
   for (const vp of model.viewpoints ?? []) {
-    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, [], viewContent);
+    collectViewContentDeep(vp, viewContent);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
@@ -169,6 +187,14 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // M17：稳定键分配器，一次 pipeline 重建一张图的键
   const keys = new StableKeys();
 
+  // M19：视图内容契约节点的 id 表（按元素名索引，供边解析端点用）
+  //
+  // 边（flow / transition / bind）的语句里写的是**元素名**而不是 id，所以要有一张
+  // name → nodeId 表。复用 nameToPartId 不行：那是结构元素专用，且同名元素会互相
+  // 覆盖；这里单独一张，且后写的覆盖先写的（同名时取最后一次出现，与 stableKey 的
+  // #n 消歧配合，不至于指到别的元素上）。
+  const nameToViewNodeId = new Map<string, string>();
+
   // 2. name → nodeId
   const nameToPartId = new Map<string, string>();
   // M17：name → 该 part 自身的限定名。连线端点用它拼键 —— 不能拿 connect 语句
@@ -181,6 +207,10 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     const id = `pd:${pd.id}`;
     nameToPartId.set(pd.name, id);
     nameToQName.set(pd.name, qname);
+    // M19：视图内的 flow / transition / bind 端点可能写的是 part def / action def
+    // 的名字（`flow Start to Accelerate;` 里 Start 是 action def），所以这些节点
+    // 也得进 name → nodeId 表，否则边解析不到端点就被丢掉。
+    nameToViewNodeId.set(pd.name, id);
     nodes.push(makePartDefNode(id, pd, keys.alloc(elementKeyBase('partDef', qname))));
     partToPortIds.set(id, collectPortNodes(nodes, pd.body, id, qname, keys));
   }
@@ -188,6 +218,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     const id = `${pu.kind === 'itemUsage' ? 'iu' : 'pu'}:${pu.id}`;
     nameToPartId.set(pu.name, id);
     nameToQName.set(pu.name, qname);
+    nameToViewNodeId.set(pu.name, id);
     nodes.push(
       pu.kind === 'itemUsage'
         ? makeItemUsageNode(id, pu, keys.alloc(elementKeyBase('itemUsage', qname)))
@@ -202,11 +233,13 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   }
   for (const { node: portDef, qname } of portDefs) {
     const id = `portdef:${portDef.id}`;
+    nameToViewNodeId.set(portDef.name, id);
     nodes.push(makePortDefNode(id, portDef, keys.alloc(elementKeyBase('portDef', qname))));
   }
   // M17 S5a：item / attribute / interface def
   for (const { node: sd, qname } of structureDefs) {
     const id = `sd:${sd.id}`;
+    nameToViewNodeId.set(sd.name, id);
     nodes.push(makeStructureDefNode(id, sd, keys.alloc(elementKeyBase(sd.kind, qname))));
     partToPortIds.set(id, collectPortNodes(nodes, sd.body, id, qname, keys));
   }
@@ -316,7 +349,146 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     }
   }
 
-  // 3d. 节点构造（M5 需求）
+  // 3d. 节点构造（M19：标准视图的内容契约元素）
+  //
+  // 视图体里写的东西必须真的出现在画布上 —— 这是「parse → modelToFlow → React Flow」
+  // 不变式在视图侧的兑现。改造前视图体里的动作 / 控制节点 / 状态 / entry-do-exit
+  // 只存在于文本里，画布一片空白，工具箱看起来也只是"能写不能看"。
+  for (const { node: a, qname } of viewContent.actions) {
+    const id = `vaction:${a.id}`;
+    nameToViewNodeId.set(a.name, id);
+    nodes.push(
+      makeActionNode(
+        id,
+        a.name,
+        !!a.isInitial,
+        !!a.isFinal,
+        keys.alloc(elementKeyBase('action', qname)),
+        undefined,
+      ),
+    );
+  }
+  for (const { node: c, qname } of viewContent.controlNodes) {
+    const id = `vctl:${c.id}`;
+    nameToViewNodeId.set(c.name, id);
+    nodes.push(makeControlNodeNode(id, c.name, c.controlType, keys.alloc(elementKeyBase('controlNode', qname))));
+  }
+  for (const { node: s, qname } of viewContent.states) {
+    const id = `vstate:${s.id}`;
+    nameToViewNodeId.set(s.name, id);
+    nodes.push(
+      makeStateNode(
+        id,
+        s.name,
+        !!s.isInitial,
+        !!s.isFinal,
+        keys.alloc(elementKeyBase('state', qname)),
+        undefined,
+      ),
+    );
+  }
+  for (const { node: sa, qname } of viewContent.stateActions) {
+    const id = `vstateact:${sa.id}`;
+    nameToViewNodeId.set(sa.name, id);
+    nodes.push(
+      makeStateActionNode(id, sa.name, sa.phase, keys.alloc(elementKeyBase('stateAction', qname))),
+    );
+  }
+  for (const { node: r, qname } of viewContent.renderings) {
+    const id = `vrender:${r.id}`;
+    nameToViewNodeId.set(r.name, id);
+    nodes.push(
+      makeRenderingUsageNode(id, r.name, r.typeRef, keys.alloc(elementKeyBase('renderingUsage', qname))),
+    );
+  }
+
+  // 3d-2. 视图内的边（flow / transition / bind）
+  //
+  // 三种边的端点都写在语句里（按名字），解析不到端点的**静默丢弃**而不是造一条
+  // 悬空边 —— 与既有 transition / flow 的处理一致。
+  for (const { node: f, qname } of viewContent.flows) {
+    const srcId = nameToViewNodeId.get(f.source);
+    const tgtId = nameToViewNodeId.get(f.target);
+    if (!srcId || !tgtId) continue;
+    edges.push({
+      id: `vedge:${f.id}`,
+      source: srcId,
+      target: tgtId,
+      type: 'straight',
+      label: f.guard ? `[${f.guard}]` : undefined,
+      animated: true,
+      style: { stroke: '#13c2c2', strokeWidth: 2, strokeDasharray: '6 3' },
+      data: {
+        location: (f as { location?: unknown }).location,
+        stableKey: keys.alloc(
+          connKeyBase(joinQName([qname], f.source), joinQName([qname], f.target)),
+        ),
+        semantics: {
+          kind: 'flow',
+          sourceAction: f.source,
+          targetAction: f.target,
+          guard: f.guard,
+          ownerQName: qname,
+        },
+      } as EdgeData,
+    });
+  }
+  for (const { node: t, qname } of viewContent.transitions) {
+    const srcId = nameToViewNodeId.get(t.source);
+    const tgtId = nameToViewNodeId.get(t.target);
+    if (!srcId || !tgtId) continue;
+    edges.push({
+      id: `vedge:${t.id}`,
+      source: srcId,
+      target: tgtId,
+      type: 'smoothstep',
+      label: [t.trigger, t.guard ? `[${t.guard}]` : ''].filter(Boolean).join(' '),
+      animated: false,
+      style: { stroke: '#722ed1', strokeWidth: 2 },
+      data: {
+        location: (t as { location?: unknown }).location,
+        stableKey: keys.alloc(
+          connKeyBase(joinQName([qname], t.source), joinQName([qname], t.target)),
+        ),
+        semantics: {
+          kind: 'transition',
+          sourceState: t.source,
+          targetState: t.target,
+          trigger: t.trigger,
+          guard: t.guard,
+          ownerQName: qname,
+        },
+      } as EdgeData,
+    });
+  }
+  for (const { node: b, qname } of viewContent.bindings) {
+    const srcId = nameToViewNodeId.get(b.source);
+    const tgtId = nameToViewNodeId.get(b.target);
+    if (!srcId || !tgtId) continue;
+    edges.push({
+      id: `vedge:${b.id}`,
+      source: srcId,
+      target: tgtId,
+      type: 'straight',
+      label: 'bind',
+      animated: false,
+      style: { stroke: '#52c41a', strokeWidth: 2, strokeDasharray: '2 4' },
+      data: {
+        location: (b as { location?: unknown }).location,
+        stableKey: keys.alloc(
+          connKeyBase(joinQName([qname], b.source), joinQName([qname], b.target)),
+        ),
+        semantics: {
+          kind: 'binding',
+          sourceParam: b.source,
+          targetParam: b.target,
+          ownerQName: qname,
+        },
+      } as EdgeData,
+    });
+  }
+
+  // 3e. 节点构造（M5 需求）
   // name -> requirement node id 映射（用于 trace 边）
   const reqNameToId = new Map<string, string>();
   for (const { node: req, qname } of requirements) {
@@ -855,6 +1027,97 @@ function makeAllocationEdge(
 // ─── 收集 ──────────────────────────────────────────────────────────────
 
 /**
+ * M19：标准视图内容契约元素的收集桶。
+ *
+ * 这些元素（动作 / 控制节点 / 状态动作 / 渲染用法 / 绑定，以及视图体里裸写的
+ * 状态、迁移、流）只出现在**视图体**里，且没有 state machine / activity 那种
+ * 自带子成员的容器结构可挂 —— 所以必须单独成桶，再在 3d 段统一建节点与边。
+ */
+interface ViewContentBuckets {
+  actions: Q<ActionUsage>[];
+  controlNodes: Q<ControlNodeUsage>[];
+  stateActions: Q<StateActionUsage>[];
+  renderings: Q<RenderingUsage>[];
+  bindings: Q<BindingConnectorUsage>[];
+  states: Q<StateDefinition>[];
+  transitions: Q<Transition>[];
+  flows: Q<ControlFlow>[];
+}
+
+function emptyViewContentBuckets(): ViewContentBuckets {
+  return {
+    actions: [],
+    controlNodes: [],
+    stateActions: [],
+    renderings: [],
+    bindings: [],
+    states: [],
+    transitions: [],
+    flows: [],
+  };
+}
+
+/** M19：会被下钻进 def body 收集的 kind（其余成员一律留在原处） */
+const VIEW_CONTENT_DEEP_KINDS = new Set([
+  'actionUsage',
+  'controlNode',
+  'stateAction',
+  'renderingUsage',
+  'bindingConnector',
+  'stateDef',
+  'transition',
+  'controlFlow',
+]);
+
+/**
+ * M19：下钻进 def body 挑出视图内容契约元素。
+ *
+ * 与 `collectMembers` 的分工：后者已经收走了**命名空间直接成员**里的这几种 kind，
+ * 所以这里只从各 def 的 `body` 往下捡 —— 否则同一个 `action a;` 会被收两遍，
+ * 画布上出现两个一模一样、id 还相同的节点（id 来自同一个 AST 节点）。
+ *
+ * 递归深度不限（`action def A { action def B { action b; } }` 也要到底）。
+ */
+function collectViewContentDeep(ns: { name?: string; members: any[] }, buckets: ViewContentBuckets): void {
+  for (const m of ns.members ?? []) {
+    if (!Array.isArray(m.body)) continue;
+    for (const child of m.body) {
+      if (VIEW_CONTENT_DEEP_KINDS.has(child.kind)) {
+        const qname = joinQName([ns.name ?? '', m.name ?? ''].filter(Boolean), child.name);
+        switch (child.kind) {
+          case 'actionUsage':
+            buckets.actions.push({ node: child, qname });
+            break;
+          case 'controlNode':
+            buckets.controlNodes.push({ node: child, qname });
+            break;
+          case 'stateAction':
+            buckets.stateActions.push({ node: child, qname });
+            break;
+          case 'renderingUsage':
+            buckets.renderings.push({ node: child, qname });
+            break;
+          case 'bindingConnector':
+            buckets.bindings.push({ node: child, qname });
+            break;
+          case 'stateDef':
+            buckets.states.push({ node: child, qname });
+            break;
+          case 'transition':
+            buckets.transitions.push({ node: child, qname });
+            break;
+          case 'controlFlow':
+            buckets.flows.push({ node: child, qname });
+            break;
+        }
+      }
+      // 内容契约元素可以再嵌一层（`state def S { state sub { entry action … } }`）
+      if (Array.isArray(child.body)) collectViewContentDeep({ name: child.name, members: child.body }, buckets);
+    }
+  }
+}
+
+/**
  * 递归收集 namespace 内的可渲染成员。
  *
  * 参数只用到 `.members` —— package 与 view（M15 §7.26，view 也是 Namespace）
@@ -873,7 +1136,8 @@ function collectMembers(
   requirements?: Q<Requirement>[],
   constraintBlocks?: Q<ConstraintBlock>[],
   allocations?: Q<Allocation>[],
-  path: string[] = []
+  path: string[] = [],
+  viewContent?: ViewContentBuckets,
 ): void {
   // M17：path 是本 namespace 的限定名前缀，每下潜一层包就追加一段。
   // 隐式根包 name 为空串，joinQName 会把它过滤掉，键里不会留下多余的 `::`。
@@ -898,6 +1162,8 @@ function collectMembers(
       case 'useCaseDef':
       case 'analysisCaseDef':
       case 'verificationCaseDef':
+      // M19：rendering def 是 §7.26.4 RenderingDefinition，与其它结构定义同构
+      case 'renderingDef':
         structureDefs.push({ node: m, qname });
         break;
       case 'partUsage':
@@ -910,7 +1176,12 @@ function collectMembers(
         referenceUsages.push({ node: m, qname });
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, nextPath);
+      // M19：view / viewpoint 是 Namespace，body 内的 owned 成员同样是命名空间成员
+      // （§7.26.3）。改造前只认 package —— 于是视图里写的 part def / 状态 / 动作
+      // 全都不进画布，标准视图类型的「内容契约」在画布上是空的。
+      case 'view':
+      case 'viewpoint':
+        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, nextPath, viewContent);
         break;
       case 'connection':
         connections.push({ node: m, qname });
@@ -929,6 +1200,37 @@ function collectMembers(
         break;
       case 'constraintBlock':
         constraintBlocks?.push({ node: m, qname });
+        break;
+      // ── M19：标准视图的内容契约元素 ────────────────────────────
+      // 这些只出现在视图体里（官方 §9.2.20 各视图的 validContent 条目）。
+      // 没有它们，ActionFlowView 的动作 / 控制节点、StateTransitionView 的
+      // 状态 / entry-do-exit 全都只是文本，画布上一片空白。
+      case 'actionUsage':
+        viewContent?.actions.push({ node: m, qname });
+        break;
+      case 'controlNode':
+        viewContent?.controlNodes.push({ node: m, qname });
+        break;
+      case 'stateAction':
+        viewContent?.stateActions.push({ node: m, qname });
+        break;
+      case 'renderingUsage':
+        viewContent?.renderings.push({ node: m, qname });
+        break;
+      case 'bindingConnector':
+        viewContent?.bindings.push({ node: m, qname });
+        break;
+      // 不在 state machine / activity 容器里的裸行为语句：视图体直接写
+      // `state Idle;` / `transition A to B;` / `flow A to B;` 是合法的
+      // （StateTransitionView / ActionFlowView 的常规写法）。
+      case 'stateDef':
+        viewContent?.states.push({ node: m, qname });
+        break;
+      case 'transition':
+        viewContent?.transitions.push({ node: m, qname });
+        break;
+      case 'controlFlow':
+        viewContent?.flows.push({ node: m, qname });
         break;
       case 'enumDef':
       case 'comment':
@@ -992,7 +1294,8 @@ function makeStateNode(
   isInitial: boolean,
   isFinal: boolean,
   stableKey: string,
-  parentId: string
+  /** M19：视图体里的动作 / 状态没有容器，parentId 省略即为顶层节点 */
+  parentId?: string,
 ): Node {
   return {
     id,
@@ -1015,7 +1318,8 @@ function makeActionNode(
   isInitial: boolean,
   isFinal: boolean,
   stableKey: string,
-  parentId: string
+  /** M19：视图体里的动作 / 状态没有容器，parentId 省略即为顶层节点 */
+  parentId?: string,
 ): Node {
   return {
     id,
@@ -1029,6 +1333,58 @@ function makeActionNode(
       isFinal,
       stableKey,
     },
+  };
+}
+
+// ─── M19：标准视图内容契约节点 ────────────────────────────────────────
+//
+// 三类新节点（控制节点 / 状态动作 / 渲染用法）都刻意不复用既有节点类型：
+// 它们在官方图形记号里是**不同的图元**（控制节点是菱形、entry/do/exit 是状态
+// 角上的小标签、渲染是视图级的注记），复用会让用户在画布上分不清「这是动作」
+// 还是「这是控制节点」。
+
+/** §7.7.5 ControlNodeUsage：`fork` / `join` / `decide` / `merge` */
+function makeControlNodeNode(
+  id: string,
+  name: string,
+  controlType: string,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlControlNode',
+    position: { x: 0, y: 0 },
+    data: { label: name, kind: 'controlNode', controlType, stableKey },
+  };
+}
+
+/** §7.7.3 状态的 entry / do / exit 动作 */
+function makeStateActionNode(
+  id: string,
+  name: string,
+  phase: string,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlStateAction',
+    position: { x: 0, y: 0 },
+    data: { label: name, kind: 'stateAction', phase, stableKey },
+  };
+}
+
+/** §7.26.4 RenderingUsage（官方 4 个标准渲染使用就是这种形态） */
+function makeRenderingUsageNode(
+  id: string,
+  name: string,
+  typeRef: string | undefined,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlRenderingUsage',
+    position: { x: 0, y: 0 },
+    data: { label: name, kind: 'renderingUsage', typeRef, stableKey },
   };
 }
 
@@ -1089,3 +1445,5 @@ function* collectTraceLinksFromPackage(pkg: Package): Generator<TraceLink> {
     }
   }
 }
+
+

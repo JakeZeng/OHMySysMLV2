@@ -107,6 +107,14 @@ export interface ModelingAdapter {
   onExportSysML: () => void;
   /** 标识：决定"仿真自动加载"等行为相关特性；默认 false */
   enableSimulation?: boolean;
+  /**
+   * M19：左侧工具箱。省略 = 包调色板；视图会话传 `ViewPalettePanel`。
+   *
+   * 放在 adapter 而不是 props：工具箱与「当前会话是什么实体、什么视图类型」
+   * 是同一件事的两面，宿主算一次、adapter 带着走，比再传一个独立 prop 更不会
+   * 出现「传了 paletteSlot 却忘了传 view」这种半配置。
+   */
+  paletteSlot?: React.ReactNode;
 }
 
 export interface ModelingPaneProps {
@@ -127,6 +135,17 @@ export interface ModelingPaneProps {
    * 靠 store 读会漏判。谁是视图由谁自己声明，不依赖时序。
    */
   allowPaneDoubleClickCreate?: boolean;
+  /**
+   * M19：替换左侧工具箱。
+   *
+   * 包会话不传（用包调色板 `diagram/PalettePanel`），视图会话传
+   * `diagram/ViewPalettePanel` —— 两套工具箱回答的是不同问题：
+   * 前者是「包里能放什么」，后者是「这种标准视图里能放什么」（§9.2.20 内容契约）。
+   * 用 prop 注入而不是在组件里读 entityKind 判断，是 M17 S9 同款理由：
+   * 视图会话由 loadView 异步建立，读 store 会漏判，而「谁决定用哪套工具箱」
+   * 应该由宿主显式声明。
+   */
+  paletteSlot?: React.ReactNode;
   /**
    * 请求把文本编辑器滚到指定行（连线属性窗的「在文本编辑器中查看」）。
    *
@@ -431,8 +450,10 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Palette 工具箱：仅可视化模式显示（文本模式由编辑器 + 右侧属性面板承担） */}
-        {modelingMode !== 'text' && <PalettePanel />}
+        {/* Palette 工具箱：仅可视化模式显示（文本模式由编辑器 + 右侧属性面板承担）。
+            M19：宿主可传 paletteSlot 换成视图工具箱（视图 ≠ 包）。 */}
+        {modelingMode !== 'text' &&
+          (adapter.paletteSlot ?? <PalettePanel />)}
 
         {/* 主体 */}
         {modelingMode === 'text' ? (

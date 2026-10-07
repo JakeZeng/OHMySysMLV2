@@ -100,6 +100,15 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'analysisCaseDef',
     'verificationCaseDef',
     'enumDef',
+    // M19：视图体是 Namespace（§7.26.3），标准视图的内容契约元素直接可放。
+    // 这 6 条是 ActionFlowView / StateTransitionView 的常规写法 ——
+    // 由 nestingMatrix.test.ts 的差分断言钉住，不是手工声明的意图。
+    'activityAction',
+    'activityFlow',
+    'state',
+    'initialState',
+    'finalState',
+    'transition',
   ],
   viewpoint: [
     'partDef',
@@ -150,6 +159,10 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     // M17.S9：RequirementDef 也进了 PartBodyMember（需求可内联嵌套）
     'requirementDef',
     'enumDef',
+    // M19：动作用法（`action n;`）也是 PartDefinition 的合法成员 ——
+    // `part def P { action a; }` 在 SysML v2 里成立（ActionUsage 是 Usage）。
+    // 此前差分测试红在这里：语法接受、矩阵说不接受。
+    'activityAction',
   ],
   portDef: ['portUsage', 'attributeUsage'],
   // 状态机成员是 state / initial state / final state / transition（usage 形态）；
@@ -201,6 +214,11 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlRequirement: null,
   sysmlConstraint: 'constraintBlock',
   sysmlGhost: null,
+  // M19：标准视图内容契约节点。三者都不是容器（内部不接别的元素），
+  // 与 DiagramCanvas.nodeTypes 的键集合保持同步。
+  sysmlControlNode: null,
+  sysmlStateAction: null,
+  sysmlRenderingUsage: null,
 };
 
 export const CONTAINER_OF_NODE_TYPE: Readonly<Record<string, ContainerKind | null>> =

@@ -8,10 +8,10 @@ import (
 
 // User 表示一个注册用户。
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"` // 不导出
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"-"` // 不导出
 	// M4.5 增量：首个注册用户自动获得 admin 权限；用于审计归档等管理操作。
 	// /auth/me 端点暴露给前端用于 UI 权限控制；登录/注册响应也带上。
 	IsAdmin   bool      `json:"isAdmin"`
@@ -75,9 +75,9 @@ type Package struct {
 	ParentPackageID string            `json:"parentPackageId,omitempty"` // 顶级包 = ""
 	Name            string            `json:"name"`
 	Description     string            `json:"description,omitempty"`
-	Content         string            `json:"content"`             // SysML v2 文本
-	Metadata        map[string]string `json:"metadata,omitempty"`  // K-V 标注；非 SysML 语义
-	Version         int               `json:"version"`             // 乐观锁
+	Content         string            `json:"content"`            // SysML v2 文本
+	Metadata        map[string]string `json:"metadata,omitempty"` // K-V 标注；非 SysML 语义
+	Version         int               `json:"version"`            // 乐观锁
 	CreatedAt       time.Time         `json:"createdAt"`
 	UpdatedAt       time.Time         `json:"updatedAt"`
 }
@@ -160,6 +160,20 @@ type View struct {
 	// M15：view body 内 owned 元素（view-private）
 	InnerElements []InnerElement `json:"innerElements,omitempty"`
 
+	// M19：标准视图类型相关字段（由 content 推导，**不落库**）
+	//
+	// 为什么单独一组：它们是 content 的纯函数（`view def V :> Std { render R; }`），
+	// 落库就会有一份可能与 content 不一致的副本 —— 而 content 是唯一真源。
+	// 每次读视图时重算，保证「文本里改了特化，接口立刻反映」。
+	//
+	// StandardView 与 RenderKind 正交，见 ViewSummary 上同名字段注释。
+	StandardView  string `json:"standardView,omitempty"`
+	RenderingKind string `json:"renderingKind,omitempty"`
+	// 特化引用原文 / render 引用原文（如 `StandardViewDefinitions::ActionFlowView`、
+	// `asElementTable`），供属性窗如实展示。
+	SpecializesRef string `json:"specializesRef,omitempty"`
+	RenderingRef   string `json:"renderingRef,omitempty"`
+
 	// 兼容 M12 字段
 	ColorTag          string            `json:"colorTag,omitempty"`
 	RenderingCategory string            `json:"renderingCategory,omitempty"` // deprecated
@@ -194,11 +208,29 @@ type ViewSummary struct {
 	Version           int        `json:"version"`
 	UpdatedAt         time.Time  `json:"updatedAt"`
 
-	// M15 树渲染增量
-	InnerElements            []InnerElement `json:"innerElements,omitempty"`
-	ExposeCount              int            `json:"exposeCount"`
-	ExposeUnresolvedCount    int            `json:"exposeUnresolvedCount"`
-	FilterQualifiedNames     []string       `json:"filterQualifiedNames,omitempty"`
+	// M19 树渲染增量
+	InnerElements         []InnerElement `json:"innerElements,omitempty"`
+	ExposeCount           int            `json:"exposeCount"`
+	ExposeUnresolvedCount int            `json:"exposeUnresolvedCount"`
+	FilterQualifiedNames  []string       `json:"filterQualifiedNames,omitempty"`
+
+	// M19：本视图属于哪个**标准视图类型**（§9.2.20 的 8 个之一；自定义视图为空串）。
+	//
+	// 与 RenderKind 正交：StandardView 说「这是哪种视图」（决定工具箱与徽章），
+	// RenderKind 说「用哪个 renderer 画」。GeneralView 也能 render 成表格。
+	// 解析自 view def 的特化关系（`:> StandardViewDefinitions::ActionFlowView`）。
+	StandardView string `json:"standardView,omitempty"`
+
+	// M19：rendering usage 落在官方 4 个标准渲染之一时的 Rendering 类
+	// （textual / graphical / tabular）；非标准渲染为空串。
+	RenderingKind string `json:"renderingKind,omitempty"`
+
+	// M19：本视图被特化的引用原文（如 `StandardViewDefinitions::ActionFlowView`），
+	// 供属性窗如实展示，不让用户猜「它到底继承了什么」。
+	SpecializesRef string `json:"specializesRef,omitempty"`
+
+	// M19：`render` 引用的 rendering usage 原文（如 `asElementTable`）。
+	RenderingRef string `json:"renderingRef,omitempty"`
 }
 
 // MarshalExposedElements 把 exposedElements 列表序列化为 JSON 字符串。

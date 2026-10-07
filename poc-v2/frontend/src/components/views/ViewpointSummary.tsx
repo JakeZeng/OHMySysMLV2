@@ -21,9 +21,11 @@ import {
   AlertTriangle,
   CheckCircle2,
   Plus,
+  Layers,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { RENDER_KIND_LABEL, type RenderKind, type View } from '../../types/view';
+import { resolveStandardView } from '../../lib/sysmlViewCatalog';
 import {
   type FilterOperator,
   type RenderKind as ClauseRenderKind,
@@ -70,6 +72,8 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
   if (!view) return null;
 
   const renderKind: RenderKind = view.renderKind ?? 'interconnection';
+  // M19：视图类型优先取后端算好的 standardView，再退回内容里的特化 / 视图名
+  const stdView = resolveStandardView(view.standardView ?? view.specializesRef ?? view.name);
   const resolved = view.exposedElements ?? [];
   const unresolved = view.exposedElementsUnresolved ?? [];
   const filters = view.filterQualifiedNames ?? [];
@@ -106,12 +110,48 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
       data-testid="viewpoint-summary"
       className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-[11px] text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300"
     >
+      {/*
+        M19：**视图类型**排在 render 之前 —— 它是更上层的那一层：
+        「这是哪种视图」（决定工具箱）比「用哪个 renderer 画」更基础，
+        两个概念正交，混在一起显示会让人以为 GeneralView 就该画成互连图。
+      */}
+      <span className="flex items-center gap-1">
+        <Layers className="h-3 w-3 text-violet-500" />
+        <span className="text-gray-400">type</span>
+        {stdView ? (
+          <span
+            data-testid="view-standard-view"
+            className="rounded bg-violet-100 px-1.5 font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-200"
+            title={
+              view.specializesRef
+                ? `特化自 ${view.specializesRef}（§9.2.20 StandardViewDefinitions）`
+                : `§9.2.20 StandardViewDefinitions::${stdView.name}`
+            }
+          >
+            {stdView.label} {stdView.shortName}
+          </span>
+        ) : (
+          <span
+            data-testid="view-standard-view"
+            className="rounded bg-amber-100 px-1.5 font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            title="未特化任一标准视图（§9.2.20 的 8 个）—— 工具箱退化为通用集合"
+          >
+            自定义
+          </span>
+        )}
+      </span>
+
       <span className="flex items-center gap-1">
         <Eye className="h-3 w-3 text-brand-500" />
         <span className="text-gray-400">render</span>
         <span
           data-testid="view-render-kind"
           className="rounded bg-blue-100 px-1.5 font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
+          title={
+            view.renderingRef
+              ? `${view.renderingRef}${view.renderingKind ? `（${view.renderingKind}）` : ''}`
+              : undefined
+          }
         >
           {RENDER_KIND_LABEL[renderKind]}
         </span>

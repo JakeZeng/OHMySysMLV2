@@ -176,15 +176,15 @@ func (h *Handler) Health(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"status":       "ok",
-		"db":           dbStatus,
-		"time":         time.Now().UTC().Format(time.RFC3339),
-		"counts":       counts,
-		"uptime":       uptimeStr,
+		"status":        "ok",
+		"db":            dbStatus,
+		"time":          time.Now().UTC().Format(time.RFC3339),
+		"counts":        counts,
+		"uptime":        uptimeStr,
 		"uptimeSeconds": int(uptime.Seconds()),
-		"availability": availability,
-		"version":      "1.0.0",
-		"environment":  getEnv("GIN_MODE", "debug"),
+		"availability":  availability,
+		"version":       "1.0.0",
+		"environment":   getEnv("GIN_MODE", "debug"),
 	}})
 }
 
@@ -209,9 +209,9 @@ type loginReq struct {
 }
 
 type tokenResp struct {
-	Token    string      `json:"token"`
-	Expires  time.Time   `json:"expires"`
-	User     *model.User `json:"user"`
+	Token   string      `json:"token"`
+	Expires time.Time   `json:"expires"`
+	User    *model.User `json:"user"`
 }
 
 // newToken 生成 JWT token（24 小时有效期）。
@@ -750,8 +750,40 @@ func loadAccessiblePackage(c *gin.Context, repo *repository.SQLiteRepository, id
 }
 
 // loadAccessibleView 通过 viewID 加载 view，再加载其 project 并验证权限。
+// applyStandardViewFields 从 content 推导标准视图类型相关的派生字段。
+//
+// 这些字段是 content 的纯函数，**故意不落库** —— 落一份副本就会出现
+// 「文本改了特化、接口还报旧类型」的分裂，而 content 才是唯一真源。
+//
+// 幂等且无副作用，可在每次读视图时无条件调用（解析失败只是留空，不报错）。
+func applyStandardViewFields(v *model.View) {
+	if v == nil {
+		return
+	}
+	parsed := parser.ParseViewBody(v.Content)
+	v.StandardView = string(parsed.StandardView)
+	v.RenderingKind = string(parsed.RenderingKind)
+	v.SpecializesRef = parser.ViewSpecializesRef(v.Content)
+	v.RenderingRef = parser.RenderRefOf(v.Content)
+}
+
+// applyStandardViewFieldsToSummary 是 applyStandardViewFields 的摘要版。
+//
+// 摘要没有 content（列表按设计不返回），所以不能重算 —— 这正是 migration 008
+// 把 standard_view / rendering_kind 落库的原因。这里只在字段为空时兜底补
+// 什么都不做：老库没跑迁移时前端按「自定义视图类型」呈现，不假装是标准视图。
+func applyStandardViewFieldsToSummary(v *model.ViewSummary) {
+	if v == nil {
+		return
+	}
+	_ = v // 字段由 repository 扫描时填充（migration 008）；此处刻意不猜。
+}
+
 func loadAccessibleView(c *gin.Context, repo *repository.SQLiteRepository, id string, required Permission) (*model.View, *model.Project, Permission, error) {
 	v, err := repo.GetView(c.Request.Context(), id)
+	// M19：标准视图类型 / rendering 类在这里补齐 —— 这是所有「读一个视图」的
+	// 必经之路（GetView / UpdateView / DeleteView 都走它），放这一处就不会漏。
+	applyStandardViewFields(v)
 	if errors.Is(err, repository.ErrNotFound) {
 		notFound(c, "视图不存在")
 		return nil, nil, 0, nil
@@ -1057,6 +1089,12 @@ func (h *Handler) ListViewsByProject(c *gin.Context) {
 		serverError(c, "列出视图失败", err)
 		return
 	}
+	// M19：逐个补齐标准视图类型 / rendering 类。
+	// 列表按设计不返回 content，这两个字段在 repository 写入路径已算好落库
+	// （migration 008）；这里只是兜底 —— 老库没跑迁移时也不会 500，只是不显示徽章。
+	for _, v := range views {
+		applyStandardViewFieldsToSummary(v)
+	}
 	c.JSON(http.StatusOK, gin.H{"data": views})
 }
 
@@ -1134,6 +1172,9 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	v.InnerElements = parsed.InnerElements
 	v.ViewpointQualifiedName = parsed.SatisfiesQualifiedName
 	v.ViewpointID = h.resolveSatisfiedViewpointID(c, projectID, v.ViewpointQualifiedName)
+	// M19：标准视图类型 / rendering 类 / 原始引用（派生字段，不落库）。
+	// 必须在拼上 StandardLibrary 之后算 —— v.Content 此时才是真正要存的文本。
+	applyStandardViewFields(v)
 	if err := h.repo.CreateView(c, v); err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": gin.H{
@@ -1250,6 +1291,8 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	}
 	h.PublishContentUpdated("view:"+v.ID, userID, uname, v.Version)
 
+	// M19：content 已更新，重新推导标准视图类型（derived 字段不入库，只能现算）
+	applyStandardViewFields(v)
 	c.JSON(http.StatusOK, gin.H{"data": v})
 }
 
@@ -1437,8 +1480,8 @@ func (h *Handler) DeleteViewpoint(c *gin.Context) {
 // M17：坐标只能表达「在哪」，不能表达「贴哪条边的哪个位置」—— 父元素一旦
 // 拉伸，端口就会被钉死在某个绝对坐标上、从边框上掉下来。锚点是尺寸无关的。
 type LayoutAnchor struct {
-	Side  string  `json:"side"`            // left | right | top | bottom
-	Ratio float64 `json:"ratio"`           // 沿该边的归一化位置，[0, 1]
+	Side  string  `json:"side"`  // left | right | top | bottom
+	Ratio float64 `json:"ratio"` // 沿该边的归一化位置，[0, 1]
 }
 
 // LayoutPosition 单节点坐标。
@@ -1520,7 +1563,7 @@ func normalizeLayoutEdgeAnchors(e LayoutEdgeAnchors) (LayoutEdgeAnchors, bool) {
 
 // layoutPayload 布局请求体：nodeId → 坐标，以及（可选）边 → 两端锚点。
 type layoutPayload struct {
-	Nodes map[string]LayoutPosition `json:"nodes"`
+	Nodes map[string]LayoutPosition    `json:"nodes"`
 	Edges map[string]LayoutEdgeAnchors `json:"edges,omitempty"`
 }
 
@@ -1532,7 +1575,7 @@ type layoutPayload struct {
 // 带 omitempty 时空 map 会被整个省略，前端拿到的是 undefined 而不是 {}，
 // `Object.entries(undefined)` 直接抛错，整张画布白屏。
 type storedLayout struct {
-	Nodes map[string]LayoutPosition   `json:"nodes"`
+	Nodes map[string]LayoutPosition    `json:"nodes"`
 	Edges map[string]LayoutEdgeAnchors `json:"edges"`
 }
 
