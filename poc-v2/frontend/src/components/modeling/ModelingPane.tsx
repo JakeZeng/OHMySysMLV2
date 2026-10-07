@@ -105,9 +105,26 @@ export interface ModelingPaneProps {
   onDiagramReady?: (handle: DiagramCanvasHandle | null) => void;
   /** M17：双击画布节点 → 宿主把右栏「名称」输入框聚焦过来 */
   onRenameFocus?: () => void;
+  /**
+   * M17.S9：是否允许在画布空白处双击新建元素。
+   *
+   * 默认 false。包画布显式传 true；视图画布不传 —— 视图里双击新建的元素会
+   * 被写进**视图 body**，而视图只渲染暴露元素，结果是用户双击了却什么都没发生
+   * （静默失效）。语义没定之前明确禁用，比留一个假装能用的入口好。
+   *
+   * 刻意做成 prop 而不是读 `modelStore.entityKind`：视图会话是 loadView
+   * 异步建立的，store 里 entityKind 变成 'view' 之前双击已经可能发生，
+   * 靠 store 读会漏判。谁是视图由谁自己声明，不依赖时序。
+   */
+  allowPaneDoubleClickCreate?: boolean;
 }
 
-export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramReady, onRenameFocus }) => {
+export const ModelingPane: React.FC<ModelingPaneProps> = ({
+  adapter,
+  onDiagramReady,
+  onRenameFocus,
+  allowPaneDoubleClickCreate = false,
+}) => {
   const sysmlEditorRef = React.useRef<SysMLEditorHandle>(null);
   const diagramRef = React.useRef<DiagramCanvasHandle>(null);
   const modelingMode = useUIStore((s) => s.modelingMode);
@@ -267,13 +284,27 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({ adapter, onDiagramRe
 
   const handlePaneDoubleClick = React.useCallback(
     (dropXY: { x: number; y: number }) => {
+      // M17.S9（用户决策）：**视图画布上不做双击新建**。
+      //
+      // 改造前这里无条件建 part def，而 `createNodeFromPalette` 在视图会话里
+      // 会把片段插进**视图 body** —— 但视图画布只渲染视图暴露的节点，包树也
+      // 不显示视图 body 里写的 part def，于是节点数 3→3、什么都没发生，
+      // 用户看到的是「双击了但没反应」。
+      if (!allowPaneDoubleClickCreate) {
+        showToast({
+          title: '当前画布不支持直接新建',
+          description: '请到所属包中创建元素，再用「暴露到视图」把它加进来',
+          variant: 'default',
+        });
+        return;
+      }
       const item = PALETTE_ITEMS.find((p) => p.kind === 'partDef');
       if (!item) return;
       const name = generateUniqueName(item.defaultName, existingNodeNames);
       const r = adapter.createNodeFromPalette(item.generate(name), name, dropXY);
       if (!r.ok) showToast({ title: '创建失败', description: r.reason, variant: 'error' });
     },
-    [adapter, showToast, existingNodeNames],
+    [adapter, showToast, existingNodeNames, allowPaneDoubleClickCreate],
   );
 
   const handleConnectCreate = React.useCallback(

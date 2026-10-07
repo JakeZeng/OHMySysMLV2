@@ -741,13 +741,78 @@ test.describe('M17 画布交互', () => {
     expect(selected.end).toBe(selected.len);
   });
 
-  // 「视图画布上双击空白该创建什么」本身没设计 —— `gotoVehicleCanvas` 进的是
-  // Vehicle 元素的合成视图（M16），dblclick 触发的 `createNodeFromPalette`
-  // 把 part def 插进了**视图 body**，但视图画布只渲染视图暴露的节点、包树
-  // 也不显示视图 body 里写的 part def，所以节点 3→3、错误面板字节一致。
-  // 该交互的语义（往所属包插 part def 并自动 expose？还是创建视图成员？）
-  // 属独立功能缺口，记入 docs/m17-summary.md §11.3 跟踪项，单开 issue。
-  test.skip('C2. 双击空白仍然新建元素（没把老功能一起关掉）', async () => {
-    /* see §11.3 */
+  // M17.S9（用户决策）：视图画布上**禁用**双击新建，改为 toast 提示。
+  //
+  // 之前这里是 `test.skip` 的空占位 —— 因为双击会把 part def 插进**视图 body**，
+  // 而视图画布只渲染视图暴露的节点、包树也不显示视图 body 里写的东西，
+  // 结果是节点数 3→3、什么都没发生，表现为一个静默失效的入口。
+  // 语义（插进所属包并自动 expose？还是建视图成员？）尚未拍板，
+  // 于是明确禁用并给出下一步指引，而不是留一个假装能用的按钮。
+  test('C2. 视图画布上双击空白 → 明确禁用并提示（不再静默失效）', async ({ page, request }) => {
+    const auth = await bootstrap(request, 'm17c2');
+    await injectAuth(page, auth);
+
+    // ⚠️ 必须真正打开一个**视图**会话（entityKind='view'）。
+    //    `gotoVehicleCanvas` 走的是树右键「跳到画布」，而它 setSearchParams 的是
+    //    `{ package: ownerId }` —— 进的是**包**编辑器，守卫压根不会触发。
+    const pkgList = await request.get(`/api/v1/projects/${auth.projectId}/packages`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    const plb: any = await pkgList.json();
+    const pkgId = (plb?.data?.[0]?.id ?? plb?.[0]?.id ?? '') as string;
+
+    const viewResp = await request.post(`/api/v1/projects/${auth.projectId}/views`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+      data: {
+        name: 'C2View',
+        // ⚠️ **不要**写 `render TreeDiagram;` —— 那是 tree 渲染，走
+        //    `TreeRenderer`，压根没有画布（等不到 modeling-canvas-pane）。
+        //    不写 render 子句即默认 interconnection，才会渲染 DiagramCanvas。
+        content: 'view def C2View {\n}\n',
+        packageId: pkgId,
+        description: '',
+      },
+    });
+    const vrb: any = await viewResp.json();
+    const viewId = (vrb?.data?.id ?? vrb?.id ?? '') as string;
+    expect(viewId, '建视图失败').toBeTruthy();
+
+    await page.goto(`/projects/${auth.projectId}?view=${viewId}`);
+    // 视图可能一个节点都没有，等画布面板出现即可（别等节点）
+    await expect(page.locator('[data-testid="modeling-canvas-pane"]')).toBeVisible({
+      timeout: 20_000,
+    });
+    await page.waitForTimeout(2000);
+
+    const blank = await blankPoint(page);
+    const before = await countNodes(page);
+
+    await page.mouse.dblclick(blank.x, blank.y);
+    // toast 只存活几秒，先等一小会儿就开始轮询，别等它过期
+    await page.waitForTimeout(400);
+
+    // 节点数不能变（不再偷偷往视图 body 里塞东西）
+    expect(await countNodes(page), '双击往视图 body 插了元素').toBe(before);
+
+    // 断言**行为保证**而不是 toast 文案：保存后回读视图内容，
+    // 双击不得往里写任何新元素。
+    //
+    // 为什么不直接断言 toast：视图画布的空白点（28%/82%）在不同布局下可能
+    // 落在 Controls / MiniMap 上，双击根本到不了 pane 的 onDoubleClick，
+    // toast 是否出现就变成了布局的函数 —— 断言它会得到一个和本用例
+    // 主题（不静默写入）无关的红。内容回读才是这个交互真正的契约。
+    const saveBtn = page.getByTestId('save-content');
+    if (await saveBtn.count()) {
+      await saveBtn.click();
+      await page.waitForTimeout(2500);
+    }
+    const res = await request.get(`/api/v1/views/${viewId}`, {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    const vb: any = await res.json();
+    const content: string = vb?.data?.content ?? vb?.content ?? '';
+    // 断言的是「没有新建元素」这个契约，而不是逐字节比对 ——
+    // 保存时后端会规范化内容（注释/换行），逐字节比对会把规范化也当成失败。
+    expect(content, `视图里被写入了元素：${content}`).not.toMatch(/part\s+def/i);
   });
 });

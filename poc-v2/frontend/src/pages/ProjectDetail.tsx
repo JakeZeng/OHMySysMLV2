@@ -200,6 +200,13 @@ export const ProjectDetail: React.FC = () => {
     // 展开到目标节点，让行真正可见：
     //   工程根（否则什么都看不到）+ 目标所在的包（视图/视角挂在包里）
     const toExpand: string[] = [encodeNodeId('project', projectId)];
+    // ⚠️ `?package=` 打开的包**自身**也必须展开。
+    //    改造前这里只展开了 view/viewpoint 的 owner 包，`?package=` 分支只
+    //    「选中」不「展开」→ 包节点没有 toggle → `usePackageElements` 只为
+    //    **已展开**的包加载元素 → 包里的元素行永远加载不出来。
+    //    症状：直接打开一个包（或在它树上右键新建元素）后，工程树看不到该包的
+    //    任何元素，刷新页面才对 —— 画布和编辑器却是实时更新的。
+    if (queryPackage) toExpand.push(encodeNodeId('package', queryPackage));
     if (queryView || queryViewpoint) {
       const { views: vs, viewpoints: vps } = listsRef.current;
       const ownerPackageId = queryView

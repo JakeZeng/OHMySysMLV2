@@ -103,7 +103,13 @@ export const PackageModelingPane: React.FC<PackageModelingPaneProps> = ({
 
   return (
     <>
-      <ModelingPane adapter={adapter} onDiagramReady={onDiagramReady} onRenameFocus={onRenameFocus} />
+      <ModelingPane
+        adapter={adapter}
+        onDiagramReady={onDiagramReady}
+        onRenameFocus={onRenameFocus}
+        // 包画布允许双击空白新建（元素落进包 body，画布立刻出节点）
+        allowPaneDoubleClickCreate
+      />
       <TemplateChooserModal
         open={templateOpen}
         onClose={() => setTemplateOpen(false)}
