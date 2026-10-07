@@ -492,6 +492,31 @@ DocStatement
 DocBlockComment
   = $("/*" (!"*/" .)* "*/")
 
+// ─── 其余需求体成员（M17.S9 补齐规范 §7.2.3）────────────────────────
+//
+// 与已有的 subject / stakeholder / frame concern / assumed constraint /
+// satisfied requirement 并列。统一形态：`<keyword> [name] : Type;`，
+// name 可省（匿名）。
+//
+// ⚠️ 双词关键字（subject requirement）的守卫是 `!IdentifierChar`，且**紧跟
+//    关键字、不吃 WS** —— 多吃一次 WS 会把必需的空白吃掉（第一版在
+//    assumed constraint 上踩过，样例挂了一半）。
+//
+// ⚠️ 关键字必须**逐个枚举**，不能写成 `$([a-zA-Z]+) : Type;` —— 那会把
+//    `part x : Y;` 之类任何 `名字 : 类型` 都吞成需求成员。
+
+RequirementTypedMember
+  = "actor" !IdentifierChar WS name:Identifier? _ ":" _ t:QualifiedName _ ";"
+    { return { kind: 'actor', name: name || undefined, typeRef: t, location: locationOf(location().start.offset) }; }
+  / "assumption" !IdentifierChar WS name:Identifier? _ ":" _ t:QualifiedName _ ";"
+    { return { kind: 'assumption', name: name || undefined, typeRef: t, location: locationOf(location().start.offset) }; }
+  / "concern" !IdentifierChar WS name:Identifier? _ ":" _ t:QualifiedName _ ";"
+    { return { kind: 'concern', name: name || undefined, typeRef: t, location: locationOf(location().start.offset) }; }
+  / "constraint" !IdentifierChar WS name:Identifier? _ ":" _ t:QualifiedName _ ";"
+    { return { kind: 'constraint', name: name || undefined, typeRef: t, location: locationOf(location().start.offset) }; }
+  / "subject" WS "requirement" !IdentifierChar WS name:Identifier? _ ":" _ t:QualifiedName _ ";"
+    { return { kind: 'subjectRequirement', name: name || undefined, typeRef: t, location: locationOf(location().start.offset) }; }
+
 // ─── 名字（§7.26：允许单引号，可含空格）────────────────────────────────
 
 Name
@@ -1053,8 +1078,12 @@ RequirementRest
 RequirementBody
   = OPEN _ members:(_ RequirementBodyMember)* CLOSE { return members.map((m) => m[1]); }
 
+// ⚠️ `RequirementTypedMember` 必须排在 `SubjectStatement` **之前** ——
+//    `subject requirement sr : Owner;` 里，`SubjectStatement` 会先把
+//    "subject" 吃掉再要求 `requirement` 当名字，然后在 `;` 处失败。
 RequirementBodyMember
-  = SubjectStatement
+  = RequirementTypedMember
+  / SubjectStatement
   / StakeholderUsage
   / FrameConcern
   / AssumedConstraint

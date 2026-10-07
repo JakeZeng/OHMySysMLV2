@@ -305,7 +305,13 @@ export type RequirementBodyMember =
   | { kind: 'stakeholderUsage'; name: string; typeRef: string; location: SourceLocation }
   | { kind: 'frameConcern'; name: string; typeRef: string; location: SourceLocation }
   | { kind: 'assumedConstraint'; name: string; typeRef: string; location: SourceLocation }
-  | { kind: 'satisfiedRequirement'; name: string; typeRef: string; location: SourceLocation }
+  | { kind: 'satisfiedRequirement'; name?: string; typeRef: string; location: SourceLocation }
+  // M17.S9 补齐：actor / assumption / concern / constraint / subject requirement
+  | { kind: 'actor'; name?: string; typeRef: string; location: SourceLocation }
+  | { kind: 'assumption'; name?: string; typeRef: string; location: SourceLocation }
+  | { kind: 'concern'; name?: string; typeRef: string; location: SourceLocation }
+  | { kind: 'constraint'; name?: string; typeRef: string; location: SourceLocation }
+  | { kind: 'subjectRequirement'; name?: string; typeRef: string; location: SourceLocation }
   | DocMember;
 
 export interface Requirement extends SysMLNode {

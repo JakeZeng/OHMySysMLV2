@@ -30,6 +30,7 @@ import type {
   CommentBlock,
   SysMLView,
   SysMLViewpoint,
+  RequirementBodyMember,
 } from '../ast/model';
 
 // ─── 公共入口 ──────────────────────────────────────────────────────────
@@ -349,11 +350,67 @@ function serializeActivity(act: Activity, indent: number, out: string[]): void {
 
 // ─── M5: Requirement ────────────────────────────────────────────────
 
+/**
+ * M17.S9 §7.2.3：需求定义有三种形态，写回必须区分，否则会**丢成员**。
+ *
+ *   body 形态（规范）：`requirement def R (id) { …成员… }`    —— 不带分号
+ *   文本简写（M5 旧）：`requirement def R (id) {描述};`      —— 带分号
+ *   空定义：          `requirement def R (id);`
+ *
+ * 改造前只认文本简写，body 里的成员会被降级成一段文本糊回去 —— 信息就没了。
+ */
 function serializeRequirement(req: Requirement, indent: number, out: string[]): void {
   const pad = '  '.repeat(indent);
   const reqId = req.reqId ? `(${req.reqId})` : '';
+  const head = `${pad}requirement def ${req.name}${reqId ? ' ' + reqId : ''}`;
+
+  if (req.body && req.body.length > 0) {
+    out.push(`${head} {`);
+    for (const m of req.body) out.push(`${pad}  ${serializeRequirementMember(m)}`);
+    out.push(`${pad}}`);
+    return;
+  }
   const text = req.text ? `{${req.text}}` : '';
-  out.push(`${pad}requirement def ${req.name} ${reqId} ${text};`);
+  out.push(`${head}${text ? ' ' + text : ''};`);
+}
+
+/** `<keyword> [name] : Type;` —— name 可省（匿名） */
+function typedMember(kw: string, name: string | undefined, typeRef: string): string {
+  return name ? `${kw} ${name} : ${typeRef};` : `${kw} : ${typeRef};`;
+}
+
+/** 单个需求体成员 → 文本（缩进由调用方加） */
+function serializeRequirementMember(m: RequirementBodyMember): string {
+  switch (m.kind) {
+    case 'subject':
+      return m.name ? `subject ${m.name} : ${m.typeRef};` : `subject : ${m.typeRef};`;
+    case 'stakeholderUsage':
+      return `stakeholder ${m.name} : ${m.typeRef};`;
+    case 'frameConcern':
+      return typedMember('frame concern', m.name, m.typeRef);
+    case 'assumedConstraint':
+      return typedMember('assumed constraint', m.name, m.typeRef);
+    case 'satisfiedRequirement':
+      return typedMember('satisfied requirement', m.name, m.typeRef);
+    // M17.S9 补齐的成员：`<keyword> [name] : Type;`
+    case 'actor':
+      return typedMember('actor', m.name, m.typeRef);
+    case 'assumption':
+      return typedMember('assumption', m.name, m.typeRef);
+    case 'concern':
+      return typedMember('concern', m.name, m.typeRef);
+    case 'constraint':
+      return typedMember('constraint', m.name, m.typeRef);
+    case 'subjectRequirement':
+      return typedMember('subject requirement', m.name, m.typeRef);
+    case 'doc':
+      return `doc /* ${m.text} */;`;
+    default: {
+      // 穷尽性检查：新增成员种类时这里会编译报错，而不是静默丢成员
+      const never: never = m;
+      return `/* 未支持的成员 ${JSON.stringify(never)} */`;
+    }
+  }
 }
 
 // ─── M5: Constraint Block ───────────────────────────────────────────

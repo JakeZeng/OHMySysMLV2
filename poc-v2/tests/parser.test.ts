@@ -1107,6 +1107,65 @@ alias FS for FreeStanding;`);
     expect(parse('package P { requirement def R { satisfied requirementX : S; } }').ok).toBe(false);
     expect(parse('package P { requirement def R { assumed constraint c : S; } }').ok).toBe(true);
   });
+
+  it('71. M17.S9：其余需求体成员（actor/assumption/concern/constraint/subject requirement）', () => {
+    for (const [member, kind] of [
+      ['actor driver : Person;', 'actor'],
+      ['assumption env : Weather;', 'assumption'],
+      ['concern c : Legal;', 'concern'],
+      ['constraint ac : MaxSpeed;', 'constraint'],
+      ['subject requirement sr : Owner;', 'subjectRequirement'],
+    ] as const) {
+      const r = parse(`package P { requirement def R {\n    ${member}\n  } }`);
+      expect(r.ok, `${member} 解析失败：${r.ok ? '' : r.errors[0]?.message}`).toBe(true);
+      expect((r.model.requirements[0] as any).body.map((m: any) => m.kind)).toEqual([kind]);
+    }
+    // 匿名形态（无名字）
+    const anon = parse('package P { requirement def R {\n    actor : Person;\n  } }');
+    expect(anon.ok).toBe(true);
+    expect((anon.model.requirements[0] as any).body[0].name).toBeUndefined();
+    // `subject requirement` 必须排在 `subject` 之前试，否则 SubjectStatement
+    // 会先把 "subject" 吃掉再要求 `requirement` 当名字
+    expect(parse('package P { requirement def R { subject requirement s : O; } }').ok).toBe(true);
+  });
+
+  it('72. M17.S9：需求 body 往返无损（parse → serialize → parse）', () => {
+    const src = `package P {
+  requirement def SpeedLimit (REQ-1) {
+    subject : Vehicle;
+    subject requirement sr : Owner;
+    actor driver : Person;
+    assumption env : Weather;
+    concern c : Legal;
+    constraint ac : MaxSpeed;
+    frame concern fc : Safety;
+    assumed constraint ac2 : Limit;
+    satisfied requirement sr2 : Range;
+    doc /* 限速需求 */;
+  }
+}`;
+    const a = parse(src);
+    expect(a.ok).toBe(true);
+    const kinds = (a.model.requirements[0] as any).body.map((m: any) => m.kind);
+
+    // 写回后再解析，成员种类必须**逐个不差** —— 改造前 body 会被降级成文本、成员全丢
+    const b = parse(serialize(a.model));
+    expect(b.ok, `写回后再解析失败：${b.ok ? '' : b.errors[0]?.message}`).toBe(true);
+    expect((b.model.requirements[0] as any).body.map((m: any) => m.kind)).toEqual(kinds);
+    expect(kinds).toHaveLength(10);
+    expect((b.model.requirements[0] as any).reqId).toBe('REQ-1');
+
+    // 三种形态各自往返稳定
+    for (const t of [
+      'package P { requirement def R { 一段描述 }; }',
+      'package P { requirement def R; }',
+      'package P { requirement def R (X-1); }',
+    ]) {
+      const p1 = parse(t);
+      expect(p1.ok, t).toBe(true);
+      expect(parse(serialize(p1.model)).ok, `往返失败：${t}`).toBe(true);
+    }
+  });
 });
 
 describe('Parser - 错误处理', () => {
