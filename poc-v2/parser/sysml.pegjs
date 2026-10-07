@@ -663,6 +663,8 @@ PartBodyMember
   / ImplicitFeatureWithDir
   / DocStatement
   / EnumDef
+  // M17.S9：需求定义也可以内联嵌套在 def body 里
+  / RequirementDef
   // 需求追溯语句（satisfy / verify / refine）：规范里它们可出现在任何
   // Namespace 内，改造前只挂在 NamespaceOrTopLevel / PackageMember，
   // 于是 `part def B { refine A by C; }` 解析不了。排在 CommentBlock 前。
@@ -1004,17 +1006,79 @@ FlowStatement
 FlowGuard
   = WS "[" WS g:$(!"]" .)+ WS "]" { return g.trim(); }
 
-// ─── Requirement（M5 需求视图）─────────────────────────────────────────
-
+// ─── Requirement（M17.S9：§7.2.3 补 body 形态 + RequirementBodyMember）──
+//
+// 规范的需求定义是 **body** 形态：
+//     requirement def R (id) {
+//       subject : Vehicle;
+//       stakeholder driver : Person;
+//       assumed constraint c : SpeedLimit;
+//       satisfied requirement r : SafetyReq;
+//       doc /* … */;
+//     }
+//
+// ⚠️ `{...}` 消歧：M5 时代 `requirement def R { 描述 }` 里的 `{...}` 是
+//    **文本简写**（ReqText）。现在 body 也是 `{...}`，两者字面冲突。
+//    解法：**先试 body、失败再回退 text** —— body 要求 `+`（至少一个成员），
+//    于是 `{ subject : X; }` 进 body，`{ 一段描述 }` 因没有成员而落到 text，
+//    `{}` 空体两种都接得住。
+//
+// ⚠️ 双词关键字后面要加 `!IdentifierChar`（`assumed constraintX` /
+//    `satisfied requirementX` 不该被误吃）。
 RequirementDef
-  = "requirement" WS "def" WS name:Identifier reqId:ReqId? text:ReqText? _ ";"
+  = "requirement" WS "def" WS name:Identifier reqId:ReqId? rest:RequirementRest
     {
       return {
         kind: 'requirement',
         id: nextId('req'),
         name,
         reqId: reqId || undefined,
-        text: text || undefined,
+        text: rest.text,
+        body: rest.body.length > 0 ? rest.body : undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// ⚠️ `{...}` 消歧：M5 时代 `requirement def R { 描述 };` 里的 `{...}` 是**文本
+//    简写**，而且**带尾随分号**（`serializer.ts` 写回的就是这个形态）。
+//    现在规范 body 形态是 `requirement def R { ... }`、**不带**分号。
+//    于是尾随分号就是天然的判别位，不必去数成员：
+//      `{ 描述 };`  → 文本简写   `{ subject : X; }` → body
+//      `{}` / `{ ... }` → body（空体也算 body）  `{ 描述 }` → 文本简写
+RequirementRest
+  = t:ReqText _ ";" { return { body: [], text: t }; }
+  / body:RequirementBody { return { body, text: undefined }; }
+  / _ ";" { return { body: [], text: undefined }; }
+
+RequirementBody
+  = OPEN _ members:(_ RequirementBodyMember)* CLOSE { return members.map((m) => m[1]); }
+
+RequirementBodyMember
+  = SubjectStatement
+  / StakeholderUsage
+  / FrameConcern
+  / AssumedConstraint
+  / SatisfiedRequirement
+  / DocStatement
+
+AssumedConstraint
+  = "assumed" WS "constraint" !IdentifierChar WS name:Identifier WS ":" WS typeRef:QualifiedName _ ";"
+    {
+      return {
+        kind: 'assumedConstraint',
+        name,
+        typeRef,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+SatisfiedRequirement
+  = "satisfied" WS "requirement" !IdentifierChar WS name:Identifier WS ":" WS typeRef:QualifiedName _ ";"
+    {
+      return {
+        kind: 'satisfiedRequirement',
+        name,
+        typeRef,
         location: locationOf(location().start.offset),
       };
     }

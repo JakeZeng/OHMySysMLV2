@@ -299,11 +299,29 @@ export interface ControlFlow extends SysMLNode {
 
 // ─── Requirement（M5 需求视图）─────────────────────────────────────────
 
+/** M17.S9 §7.2.3：需求体成员（RequirementBodyMember） */
+export type RequirementBodyMember =
+  | { kind: 'subject'; name?: string; typeRef: string; location: SourceLocation }
+  | { kind: 'stakeholderUsage'; name: string; typeRef: string; location: SourceLocation }
+  | { kind: 'frameConcern'; name: string; typeRef: string; location: SourceLocation }
+  | { kind: 'assumedConstraint'; name: string; typeRef: string; location: SourceLocation }
+  | { kind: 'satisfiedRequirement'; name: string; typeRef: string; location: SourceLocation }
+  | DocMember;
+
 export interface Requirement extends SysMLNode {
   kind: 'requirement';
   name: string;
   reqId?: string;
+  /**
+   * 文本简写形态 `requirement def R { 描述 }` 里的描述。
+   *
+   * M17.S9 引入 body 形态后，`{...}` 有两种含义：能解析成
+   * RequirementBodyMember 的进 {@link body}，否则整段当文本进这里
+   * （PEG 侧是先试 body、失败再回退）。
+   */
   text?: string;
+  /** M17.S9 §7.2.3：规范的需求 body */
+  body?: RequirementBodyMember[];
 }
 
 export interface TraceLink extends SysMLNode {

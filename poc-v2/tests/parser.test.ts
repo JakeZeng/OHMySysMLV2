@@ -1054,6 +1054,59 @@ alias FS for FreeStanding;`);
     // 限定名端点
     expect(parse('package P { allocate A::Sub to B; }').ok).toBe(true);
   });
+
+  it('68. M17.S9 §7.2.3：需求 body 形态 + RequirementBodyMember', () => {
+    const r = parse(`package P {
+  requirement def SpeedLimit (REQ-1) {
+    subject : Vehicle;
+    stakeholder driver : Person;
+    frame concern c : Safety;
+    assumed constraint ac : MaxSpeed;
+    satisfied requirement sr : RangeReq;
+  }
+}`);
+    expect(r.ok).toBe(true);
+    // ⚠️ 需求被**提升**到顶层 `model.requirements`（既有行为，成员带 `_hoisted`），
+    //    不留在 `packages[].members` 里 —— 和 stateMachine / activity 同理。
+    expect(r.model.packages[0].members).toHaveLength(0);
+    const req = r.model.requirements[0] as any;
+    expect(req.reqId).toBe('REQ-1');
+    expect((req.body ?? []).map((m: any) => m.kind)).toEqual([
+      'subject',
+      'stakeholderUsage',
+      'frameConcern',
+      'assumedConstraint',
+      'satisfiedRequirement',
+    ]);
+    // text 字段此时应为空（进了 body 就不是文本简写）
+    expect(req.text).toBeUndefined();
+  });
+
+  it('69. M17.S9：body / 文本简写 / 空体 三种形态互不干扰', () => {
+    // 文本简写带尾随分号（serializer.ts 写回的就是这个形态）
+    const t = parse('package P { requirement def R { 一段描述 }; }');
+    expect(t.ok).toBe(true);
+    expect(t.model.requirements[0].text).toBe('一段描述');
+    expect(t.model.requirements[0].body).toBeUndefined();
+
+    // 空体 → body（零成员），不是文本
+    const e = parse('package P { requirement def R {} }');
+    expect(e.ok).toBe(true);
+    expect(e.model.requirements[0].text).toBeUndefined();
+
+    // 无 body 无分号（既有形态）
+    expect(parse('package P { requirement def R; }').ok).toBe(true);
+    expect(parse('package P { requirement def R (REQ-1); }').ok).toBe(true);
+
+    // 需求定义可内联嵌套
+    expect(parse('package P { part def B { requirement def R { subject : V; } } }').ok).toBe(true);
+  });
+
+  it('70. M17.S9：双词关键字边界守卫（assumed constraintX / satisfied requirementX）', () => {
+    expect(parse('package P { requirement def R { assumed constraintX : S; } }').ok).toBe(false);
+    expect(parse('package P { requirement def R { satisfied requirementX : S; } }').ok).toBe(false);
+    expect(parse('package P { requirement def R { assumed constraint c : S; } }').ok).toBe(true);
+  });
 });
 
 describe('Parser - 错误处理', () => {

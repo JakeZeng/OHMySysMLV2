@@ -63,7 +63,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
     }
   });
 
-  it('26 项在某处可用（22 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
+  it('27 项在某处可用（23 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
     const expectedSupported: readonly PaletteKind[] = [
       'partDef',
       'portDef',
@@ -82,6 +82,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
       'attributeUsage',
       'requirementDef',
       'constraintDef',
+      'requirementDef',
       'useCaseDef',
       'analysisCaseDef',
       'verificationCaseDef',

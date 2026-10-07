@@ -147,6 +147,8 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'referenceUsage',
     'portUsage',
     'attributeUsage',
+    // M17.S9：RequirementDef 也进了 PartBodyMember（需求可内联嵌套）
+    'requirementDef',
     'enumDef',
   ],
   portDef: ['portUsage', 'attributeUsage'],
