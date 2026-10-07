@@ -63,7 +63,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
     }
   });
 
-  it('25 项在某处可用（21 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
+  it('26 项在某处可用（22 项可直接用 + 状态机家族 4 项），其余标记为语法未支持', () => {
     const expectedSupported: readonly PaletteKind[] = [
       'partDef',
       'portDef',
@@ -90,6 +90,7 @@ describe('nestingMatrix — 矩阵不变量', () => {
       'initialState',
       'finalState',
       'transition',
+      'activityAction',
     ];
     for (const item of PALETTE_ITEMS) {
       expect(isSupportedAnywhere(item.kind)).toBe(expectedSupported.includes(item.kind));

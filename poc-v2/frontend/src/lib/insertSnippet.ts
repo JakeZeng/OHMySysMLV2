@@ -36,6 +36,11 @@ export type PaletteKind =
   | 'initialState'
   | 'finalState'
   | 'state'
+  // ── 行为（活动成员，M17.S9）───────────────────
+  // 活动里的动作是 **usage 形态** `action n;`（ActivityMember），
+  // 与 `actionDef` 的 `action def n {}`（TypeDefinition）是两回事 ——
+  // 之前调色板只有 actionDef，活动容器因此是空壳，拖不进任何东西。
+  | 'activityAction'
   // ── 需求 / 分析（5 个 def） ──
   | 'requirementDef'
   | 'constraintDef'
@@ -246,6 +251,22 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'calc def C { ... }  ——参数可推导的纯函数',
     defaultName: 'NewCalc',
     generate: (n) => `calc def ${n} {\n}`,
+  },
+
+  // ───────────────────────── 行为（活动成员，M17.S9）──────────────────
+  // `action n;` 是**活动成员**（§7.7 ActionUsage），和上面的
+  // `action def n {}`（ActionDefinition）是两个不同的元素。
+  // 没有这一项时活动容器是空壳 —— 矩阵 activity 行空着，拖什么都进不去。
+  {
+    kind: 'activityAction',
+    label: 'action（活动动作）',
+    icon: '⚡',
+    category: '行为',
+    form: 'usage',
+    specRef: '§7.7.2 ActionUsage',
+    description: 'action n;  ——活动里的一个动作（只能放进 activity）',
+    defaultName: 'NewAction',
+    generate: (n) => `  action ${n};`,
   },
 
   // ───────────────────────── 行为（状态机节点）──────────────────────────

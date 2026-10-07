@@ -153,9 +153,10 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   // 状态机成员是 state / initial state / final state / transition（usage 形态）；
   // `state def` 是 TypeDefinition，不属于状态机成员 → 不接受。
   stateMachine: ['state', 'initialState', 'finalState', 'transition'],
-  // 活动成员是 `action n;` / `flow ...`，palette 的 actionDef 生成的是
-  // `action def n {}`（非活动成员）→ 当前无 palette 元素可放入活动。
-  activity: [],
+  // 活动成员是 `action n;`（usage 形态）与 `flow ...`。
+  // M17.S9 起调色板有了「活动动作」条目，活动不再是空壳。
+  // `actionDef` 生成的是 `action def n {}`（TypeDefinition），**不是**活动成员。
+  activity: ['activityAction'],
   constraintBlock: ['attributeUsage'],
 };
 
