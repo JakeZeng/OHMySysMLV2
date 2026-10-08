@@ -318,6 +318,53 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 
 ---
 
+## 12. expose：视图获得内容的唯一机制（已修，三个既有缺陷）
+
+### 问题
+
+`expose` 是视图工件三步（导入 → 过滤 → 渲染）里的**导入**，也是视图拿到模型内容的
+**唯一**途径。在本轮之前，工具箱里的 expose 条目只能插一段**占位注释**
+（`// expose <Pkg>::<Element>; ← 请选择要暴露的元素`）—— 语法合法、语义等于什么都没做。
+用户建好视图、工具箱说「expose 可用」、点下去得到一个空视图。
+
+### 修法
+
+新增 `ExposeElementPickerModal`：点 expose → 列出工程里可暴露的元素（包列表走
+`usePackages`，元素走工程树元素缓存）→ 选一个 → 按**官方四种粒度**写入真实子句。
+
+数据刻意**不靠 props 层层传递**（要穿 ProjectDetail → MiddlePane → ViewRenderer →
+ViewModelingPane → ModelingPane → ViewPalettePanel 六层），由组件按需自取。
+
+### 顺带抓出的三个既有缺陷（都是 e2e ⑧ 逼出来的）
+
+1. **`insertClauseIntoView` 匹配不了 `view X : Def {`**
+   正则只认 `view def Name {` / `view Name {`，于是插入**退化到全文末尾** —— 子句落到
+   闭合括号之外 → 解析失败。而 `view X : Def` 正是 expose **唯一合法**的容器。
+   也就是说：expose 功能从来就没能通过这条路写成功过。
+
+2. **视图定义上的 expose 是「点得动、必然失败」的死条目**
+   官方硬约束：expose 只能出现在 ViewUsage 体内（validateExposeOwningNamespace）。
+   之前工具箱不区分视图形态，用户选完元素才看到「expose 写入失败」。
+   现在按当前视图的 `declKind` 提前置灰并写明原因（e2e ⑧b 钉住）。
+
+3. **后端解析不了 `expose Pkg::Element::**`**
+   Go 的 `resolvePath` 把剥掉通配后的最后一段一律当**命名空间链**，于是
+   `VehicleModel::Vehicle::**` 被当成「找一个叫 Vehicle 的**子包**」→ 永远 unresolved。
+   而 `VehicleModel::Subsystem::*` 又确实该按命名空间解释 —— 两种形态长得像、语义不同。
+   现在两种都试（先整条当命名空间，失败再把最后一段当元素）。
+   回归：`viewBody_wildcard_test.go` 把官方四种粒度逐条钉住。
+
+第 3 条影响的不止 UI：任何走 API 写入 `expose Pkg::Element::**` 的用户（脚本文本、
+AI 生成、导入）都会拿到 unresolved。
+
+### 验证
+
+- `tests/exposePicker.test.ts` 13 条（候选拍平 + 四种粒度生成 + 「四种形态都能被
+  parser 接受」+ 「expose 只能写在 ViewUsage」）
+- `viewBody_wildcard_test.go`（Go，官方四种粒度 × 9 个用例）
+- e2e m19-view-standard **15 passed**（新增 ⑧ expose 端到端 + ⑧b 定义侧死条目置灰；
+  ⑧ 的最终判据是**后端 resolve 成功**（unresolved == 0），而不是「文本里有这行」）
+- root 545 / frontend 779 / Go 全绿 / typecheck clean；smoke + m15-viewpoint 10 passed
 ## 11. 需求③ 与 M12 渲染路由的交叉点（已修）
 
 ### 问题

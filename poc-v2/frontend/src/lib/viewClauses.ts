@@ -20,17 +20,27 @@
 import { findPackageClose } from './textOps';
 
 /**
- * 找到 `view <Name> { ... }` 的 body 结束位置（闭合 `}` 索引）。
+ * 找到视图 body 的闭合 `}` 索引；找不到返回 -1。
  *
- * 找不到返回 -1。
+ * ⚠️ 必须同时认得**三种**视图声明形态（§8.2.2.26）：
+ *     view def Name { … }          ViewDefinition
+ *     view Name { … }              ViewUsage 省略定义引用（合法）
+ *     view Name : Def { … }        ViewUsage 标准形态 ← **expose 唯一合法的容器**
+ *
+ * 改造前只匹配前两种里最简单的一种，`view Name : Def {` 匹配不上 →
+ * 插入退化成「拼到全文末尾」，子句落到闭合括号之外 → 解析失败。
+ * 而这恰好让 **expose 功能从来就没能通过这条路写成功过**（e2e ⑧ 抓出来的）。
+ *
+ * 限定名允许 `::` 与 `.` 两种分隔符（与 parser 的 QualifiedName 一致）。
  */
 function findViewBodyClose(text: string): number {
-  // 找顶层第一个 `view ... {`
-  const re = /\bview\s+(?:def\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\{/;
+  const re =
+    /\bview\s+(?:def\s+)?'[^']+'|'[^']+'|(?:\bview\s+(?:def\s+)?[A-Za-z_][A-Za-z0-9_]*)(?:\s*(?::>|:)\s*(?:[A-Za-z_][A-Za-z0-9_]*)(?:\s*(?:::|\.)\s*[A-Za-z_][A-Za-z0-9_]*)*)?\s*(?:\{|;)/;
   const m = re.exec(text);
   if (!m) return -1;
-  const start = m.index + m[0].length - 1; // 指向 `{`
-  return findPackageClose(text, start);
+  const openIdx = text.indexOf('{', m.index);
+  if (openIdx < 0) return -1;
+  return findPackageClose(text, openIdx);
 }
 
 /**

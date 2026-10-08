@@ -47,6 +47,15 @@ const SEQUENCE_VIEW = `view def StartUp :> StandardViewDefinitions::SequenceView
 }
 `;
 
+/**
+ * 视图**使用**（ViewUsage）—— expose 只能写在它体内（官方硬约束
+ * validateExposeOwningNamespace）。这条单独建，因为视图定义里放 expose 是非法的。
+ */
+const ACTION_FLOW_USAGE = `view DriveFlowUsage : DriveFlow {
+  render asInterconnectionDiagram;
+}
+`;
+
 /** 官方为 GridView 推荐的渲染是表格（§9.2.20），本项目归为 tree 只读呈现 */
 const GRID_VIEW = `view def PartsGrid :> StandardViewDefinitions::GridView {
   render asElementTable;
@@ -73,6 +82,8 @@ interface Seed {
   actionFlowView: string;
   stateView: string;
   sequenceView: string;
+  /** ViewUsage：expose 只能写在视图使用里（官方硬约束） */
+  actionFlowUsage: string;
   /** GridView / BrowserView：官方推荐渲染走只读呈现，需要「进入建模」才拿到工具箱 */
   gridView: string;
   browserView: string;
@@ -123,6 +134,7 @@ test.beforeAll(async ({ request }) => {
     actionFlowView: '',
     stateView: '',
     sequenceView: '',
+    actionFlowUsage: '',
     gridView: '',
     browserView: '',
     customView: '',
@@ -160,6 +172,7 @@ test.beforeEach(async ({ request }) => {
   seedData.actionFlowView = await mk('DriveFlow', ACTION_FLOW_VIEW);
   seedData.stateView = await mk('DoorStates', STATE_VIEW);
   seedData.sequenceView = await mk('StartUp', SEQUENCE_VIEW);
+  seedData.actionFlowUsage = await mk('DriveFlowUsage', ACTION_FLOW_USAGE);
   seedData.gridView = await mk('PartsGrid', GRID_VIEW);
   seedData.browserView = await mk('ModelBrowser', BROWSER_VIEW);
   seedData.customView = await mk(
@@ -426,6 +439,57 @@ test('⑥b BrowserView 同理：树图渲染下也能进建模拿到浏览器工
     timeout: 15_000,
   });
   await expect(page.getByTestId('view-toolbox-item-partDef')).toBeVisible();
+});
+
+test('⑧b 视图定义上 expose 是死条目：提前置灰并说明原因', async ({ page }) => {
+  // 官方硬约束：expose 只能出现在 ViewUsage 体内。在 view def 上提供可点的 expose
+  // 就是「点得动、必然失败」—— 本例钉住它被提前置灰。
+  await openView(page, seedData.actionFlowView);
+  await ensureVisualMode(page);
+  const item = page.getByTestId('view-toolbox-item-clauseExpose');
+  await expect(item).toHaveAttribute('aria-disabled', 'true');
+  expect(await item.getAttribute('title')).toContain('视图使用');
+});
+
+test('⑧ expose 选择器：点开 → 选元素 → 写入真实子句 → 后端 resolve 成功', async ({ page }) => {
+  await openView(page, seedData.actionFlowUsage);
+  await ensureVisualMode(page);
+
+  await page.getByTestId('view-toolbox-item-clauseExpose').click();
+  await expect(page.getByTestId('expose-element-modal')).toBeVisible({ timeout: 10_000 });
+
+  // 候选来自工程树的元素缓存：包里的 Vehicle 必须在
+  const option = page.getByTestId('expose-element-option-VehicleModel::Vehicle');
+  await expect(option).toBeVisible({ timeout: 10_000 });
+
+  // 切到递归粒度（官方四种之一），确认写进文本的是 `::**` 而不是只有元素本身
+  await page.getByTestId('expose-element-form').selectOption('memberRecursive');
+  await option.click();
+  await expect(page.getByTestId('expose-element-modal')).toHaveCount(0, { timeout: 10_000 });
+
+  await page.getByTestId('save-content').click();
+  // 后端回读：expose 真正写进了视图体
+  await expect
+    .poll(
+      async () => {
+        const v = await api(page.request, 'get', `/api/v1/views/${seedData.actionFlowUsage}`);
+        return String(v?.data?.content ?? '');
+      },
+      { timeout: 10_000 },
+    )
+    .toContain('expose VehicleModel::Vehicle::**;');
+
+  // ⚠️ 真正的判据：**后端能 resolve 它**。expose 是引用，写对了但解析不到
+  // 等于没写（树上的 expose 徽章会显示 unresolved）。
+  await expect
+    .poll(
+      async () => {
+        const v = await api(page.request, 'get', `/api/v1/views/${seedData.actionFlowUsage}`);
+        return (v?.data?.exposedElementsUnresolved ?? []).length;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(0);
 });
 
 test('⑦ 互连视图不受影响：本来就是建模面板，不多出姿态开关', async ({ page }) => {

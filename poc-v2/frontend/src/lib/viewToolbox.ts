@@ -870,9 +870,13 @@ const CLAUSE_ITEMS: ViewToolboxItem[] = [
     icon: '👁',
     specRef: '§7.26.2 Expose',
     contract: 'Expose',
-    description: '把跨包元素暴露进本视图（引用，不是拷贝）',
+    description:
+      '把元素暴露进本视图（引用，不是拷贝）。点击打开**元素选择器**——暴露谁是语义决定，不能靠自动命名',
     defaultName: 'ExposeTarget',
-    generate: (n) => `// expose ${n}::SomeElement;  ← 请选择要暴露的元素`,
+    // ⚠️ 这个 generate 只作为「无选择器环境」的兜底与差分测试的样本；
+    // UI 上一律走 ExposeElementPickerModal（见 ViewPalettePanel.insert）。
+    // 保持可解析（是注释）是刻意的：万一走到兜底，插进去的注释也不会破坏视图语法。
+    generate: (n) => `// expose ${n}::SomeElement;  ← 请在元素选择器中选择暴露目标`,
     supported: true,
   },
   {
@@ -903,7 +907,7 @@ const CLAUSE_ITEMS: ViewToolboxItem[] = [
     icon: '🎯',
     specRef: '§7.26.3 satisfy',
     contract: 'Viewpoint satisfaction',
-    description: '显式断言本视图满足某个 Viewpoint',
+    description: '显式断言本视图满足某个 Viewpoint（目标由用户选，同 expose）',
     defaultName: 'Viewpoint',
     generate: (n) => `// satisfy ${n};  ← 请选择 Viewpoint`,
     supported: true,

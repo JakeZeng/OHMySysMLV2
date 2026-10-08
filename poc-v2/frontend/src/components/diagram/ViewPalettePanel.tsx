@@ -35,6 +35,12 @@ import {
   type ViewToolboxKind,
 } from '../../lib/viewToolbox';
 import { STANDARD_VIEW_BY_NAME } from '../../lib/sysmlViewCatalog';
+import { insertClauseIntoView } from '../../lib/viewClauses';
+import {
+  ExposeElementPickerModal,
+  type ExposeCandidate,
+  type ExposeForm,
+} from '../modals/ExposeElementPickerModal';
 import { parse } from '@parser/parser';
 
 export interface ViewPalettePanelProps {
@@ -42,11 +48,22 @@ export interface ViewPalettePanelProps {
   view?: { name?: string | null; standardView?: string | null; specializes?: string | null } | null;
 }
 
+/** 四种粒度的人话说法（写进 toast，用户不必记住 `::*::**`） */
+const FORM_HINT: Record<ExposeForm, string> = {
+  member: '仅该元素',
+  memberRecursive: '含后代',
+  namespace: '直接成员',
+  namespaceRecursive: '递归成员',
+};
+
 export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewProp }) => {
   const nodes = useModelStore((s) => s.pipeline.nodes);
   const entityKind = useModelStore((s) => s.entityKind);
+  const content = useModelStore((s) => s.content);
+  const setContent = useModelStore((s) => s.setContent);
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
   const { showToast } = useToast();
+  const [exposePickerOpen, setExposePickerOpen] = React.useState(false);
 
   /**
    * 标准视图类型的判定顺序：
@@ -62,6 +79,16 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
     () => toolboxForView(source ?? {}),
     [source?.standardView, source?.specializes, source?.name],
   );
+
+  /**
+   * M19.3：当前视图是不是 ViewDefinition（`view def X { … }`）。
+   *
+   * 官方硬约束：**expose 只能出现在 ViewUsage 体内**（validateExposeOwningNamespace，
+   * §8.2.2.26）。于是在定义体视图里，「expose」是**点不动的死条目** ——
+   * 用户选完元素才会看到「expose 写入失败」，典型的「能点但必然失败」入口。
+   * 这里提前把它置灰并说明原因，让死路在点击之前就可见。
+   */
+  const isDefinition = (source as { declKind?: string } | null)?.declKind === 'definition';
 
   const stdDef = standard ? STANDARD_VIEW_BY_NAME[standard] : null;
 
@@ -81,6 +108,13 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
         description: item.unsupportedReason,
         variant: 'error',
       });
+      return;
+    }
+    // expose 是**子句**而不是元素：目标必须由用户选（暴露谁是语义决定，不是命名决定），
+    // 所以走选择器而不是 generate()。此前这里插的是一段占位注释 ——
+    // 语法上合法、语义上等于什么都没做。
+    if (item.kind === 'clauseExpose') {
+      setExposePickerOpen(true);
       return;
     }
     const name = generateUniqueName(item.defaultName, existingNames);
@@ -110,7 +144,8 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
     .filter((i) => !i.supported).length;
 
   return (
-    <aside
+    <>
+      <aside
       className="flex w-56 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900"
       data-testid="view-palette-panel"
     >
@@ -165,34 +200,45 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
               {g.label}
             </div>
             <div className="mt-1 flex flex-col gap-0.5">
-              {g.items.map((item) => (
+              {g.items.map((item) => {
+                // 「语法支持」与「此处可放」是两回事：expose 在 ViewDefinition
+                // 里语法就不合法，这里按当前视图形态临时置灰（原因见 isDefinition）。
+                const blockedReason =
+                  !item.supported
+                    ? item.unsupportedReason
+                    : item.kind === 'clauseExpose' && isDefinition
+                      ? 'expose 只能出现在视图使用（view X : Def）体内 —— 当前是视图定义（view def X），官方硬约束'
+                      : undefined;
+                const usable = !blockedReason;
+                return (
                 <button
                   key={item.kind}
                   type="button"
-                  aria-disabled={!item.supported || undefined}
+                  aria-disabled={!usable || undefined}
                   onClick={() => insert(item)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 text-left text-[11px] transition',
-                    item.supported
+                    usable
                       ? 'text-gray-700 hover:bg-white hover:shadow-sm dark:text-gray-200 dark:hover:bg-gray-800'
                       : 'cursor-not-allowed text-gray-300 opacity-50 dark:text-gray-600',
                   ].join(' ')}
                   title={
-                    item.supported
+                    usable
                       ? `${item.description}\n契约：${item.contract}\n${item.specRef}`
-                      : `${item.description}\n未支持：${item.unsupportedReason}\n契约：${item.contract}`
+                      : `${item.description}\n未支持：${blockedReason}\n契约：${item.contract}`
                   }
                   data-testid={`view-toolbox-item-${item.kind}`}
                 >
                   <span className="text-sm leading-none">{item.icon}</span>
                   <span className="flex-1">{item.label}</span>
-                  {item.supported ? (
+                  {usable ? (
                     <Plus className="h-3 w-3 opacity-0 transition group-hover:opacity-60" />
                   ) : (
                     <AlertTriangle className="h-3 w-3 shrink-0" />
                   )}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
@@ -206,7 +252,36 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
       <div className="border-t border-gray-200 px-2 py-1.5 text-[10px] text-gray-400 dark:border-gray-700">
         💡 点击插入到**视图体**（不是包）
       </div>
-    </aside>
+      </aside>
+
+      {exposePickerOpen && (
+        <ExposeElementPickerModal
+          onClose={() => setExposePickerOpen(false)}
+          onPick={(clause, picked, form) => {
+            setExposePickerOpen(false);
+            // 与元素条目同一条写路径 + 同款 parse 守卫：坏片段拒绝落盘，
+            // 画布保持上一次成功结果（createNodeFromPalette 内部也是这套）
+            const next = insertClauseIntoView(content, clause, 'NewView');
+            const probe = parse(next);
+            if (!probe.ok) {
+              showToast({
+                title: 'expose 写入失败',
+                description: probe.errors?.[0]?.message ?? '插入的子句无法解析',
+                variant: 'error',
+              });
+              return;
+            }
+            setContent(next);
+            showToast({
+              title: '已暴露到视图',
+              description: `${clause}（${FORM_HINT[form]}）`,
+              variant: 'success',
+            });
+            void picked;
+          }}
+        />
+      )}
+    </>
   );
 };
 

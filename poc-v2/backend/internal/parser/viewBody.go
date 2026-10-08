@@ -394,12 +394,40 @@ func resolvePath(qualifiedName string, childrenOf map[string][]PackageRef) (stri
 	if len(segments) < 2 && !wildcard {
 		return "", "qualified name must be at least Pkg::Element", false
 	}
+	if len(segments) == 0 {
+		return "", "qualified name must name at least a namespace", false
+	}
 
-	// 非通配时最后一段是元素名，其余是命名空间链；通配时整条都是命名空间链
+	// ⚠️ M19：带通配时，剥掉通配后的最后一段**有两种解释**（e2e ⑧ 实测踩出来的）：
+	//
+	//   Pkg::Sub::*        → 命名空间在 Sub（整条都是命名空间链）
+	//   Pkg::Element::**   → 目标是包里的 Element，通配作用在它的内容上
+	//
+	// 改造前只按前者处理，于是 `expose VehicleModel::Vehicle::**;`（官方最常见的
+	// 递归暴露写法）被当成「找一个叫 Vehicle 的**子包**」→ 永远 unresolved，
+	// 而用户看到的只是 expose 徽章变红，说不出原因。
+	//
+	// 现在两种都试：先按「整条都是命名空间」，失败再按「最后一段是元素」。
 	nsSegs := segments
 	if !wildcard {
 		nsSegs = segments[:len(segments)-1]
 	}
+	kind, reason, ok := resolveAsNamespace(nsSegs, childrenOf, wildcard, segments)
+	if ok {
+		return kind, reason, true
+	}
+	if !wildcard || len(segments) < 2 {
+		return kind, reason, false
+	}
+	// 第二种解释：最后一段是元素名，命名空间是它前面那一段
+	return resolveAsNamespace(segments[:len(segments)-1], childrenOf, false, segments)
+}
+
+// resolveAsNamespace 按「nsSegs 是命名空间链」的解释解析。
+//
+// wildcard=true 时剥掉通配后的最后一段属于命名空间链；否则它才是元素名
+// （由 lastElemName 给出）。
+func resolveAsNamespace(nsSegs []string, childrenOf map[string][]PackageRef, wildcard bool, all []string) (string, string, bool) {
 	if len(nsSegs) == 0 {
 		return "", "qualified name must name at least a namespace", false
 	}
@@ -422,7 +450,7 @@ func resolvePath(qualifiedName string, childrenOf map[string][]PackageRef) (stri
 		return "Namespace", "", true
 	}
 
-	defName := segments[len(segments)-1]
+	defName := all[len(all)-1]
 	// body 未知的调用方（仅传摘要）：退化为只校验包链
 	if !current.HasContent {
 		return "", "", true
@@ -552,8 +580,8 @@ func inferKind(content, qualifiedName string) string {
 // 注意：这不是一个完整的 SysML 词法器，但 view body 子集不含 string
 // literal 转义、嵌套注释等复杂结构，足够当下 POC 使用。
 var (
-	blockCommentRe  = regexp.MustCompile(`/\*[\s\S]*?\*/`)
-	lineCommentRe   = regexp.MustCompile(`(?m)^([ \t]*)//[^\n]*`)
+	blockCommentRe = regexp.MustCompile(`/\*[\s\S]*?\*/`)
+	lineCommentRe  = regexp.MustCompile(`(?m)^([ \t]*)//[^\n]*`)
 )
 
 func stripViewBodyComments(s string) string {
