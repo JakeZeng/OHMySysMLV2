@@ -716,45 +716,45 @@ const STATE_ITEMS: ViewToolboxItem[] = [
   },
 ];
 
-/** SequenceView 专属 */
+/** SequenceView 专属（官方 Interaction Sequencing Examples 原文形态） */
 const SEQUENCE_ITEMS: ViewToolboxItem[] = [
   {
     kind: 'eventOccurrence',
-    label: '事件发生（event occurrence）',
+    label: 'event（事件发生）',
     icon: '●',
-    specRef: '§8.2.3.9 Occurrence',
+    specRef: '§7.7.8 EventOccurrenceUsage',
     contract: 'Event occurrences on the lifelines',
-    description: '生命线上的事件发生',
-    defaultName: 'Occurrence',
-    generate: (n) => `perform ${n};`,
-    supported: false,
-    unsupportedReason: 'EventOccurrenceUsage 记号尚未实现（perform），待后续语法扩展',
+    description: '生命线上的事件发生：`event <特征路径>[1] :>> <事件定义>;`',
+    defaultName: 'producerBehavior.publish',
+    generate: (n) => `event ${n}[1];`,
+    supported: true,
   },
   {
     kind: 'messageUsage',
     label: 'message（消息）',
     icon: '➜',
-    specRef: '§8.2.3.9 Occurrence',
+    specRef: '§7.7.4 FlowConnectionUsage',
     contract: 'Messages sent from one part to another with and without a type of flow',
-    description: '一条生命线发出的消息（带/不带流类型）',
+    description:
+      '一条生命线发出的消息：`flow <名> from <源> to <目> { event …; then event …; }`（官方结尾不带分号）',
     defaultName: 'NewMessage',
     defaultName2: 'TargetPart',
-    generate: (n, t = 'TargetPart') => `message ${n} from self to ${t};`,
-    supported: false,
-    unsupportedReason: 'MessageUsage 记号尚未实现，待后续语法扩展',
+    generate: (n, t = 'TargetPart') => `flow ${n} from ${n}_from to ${t}_to {\n    event ${n}_event[1];\n}`,
+    supported: true,
   },
   {
     kind: 'eventSuccession',
-    label: '事件后继（succession）',
+    label: 'then event（事件后继）',
     icon: '⇣',
-    specRef: '§8.2.3.9 Occurrence',
+    specRef: '§9.2.20 SequenceView',
     contract: 'Succession between event occurrences',
-    description: '同一生命线上事件发生之间的先后',
-    defaultName: 'NewSuccession',
-    defaultName2: 'NextOccurrence',
-    generate: (n, t = 'NextOccurrence') => `succession ${n} to ${t};`,
+    description:
+      '同一消息里两个事件发生的先后：`then event X[1];`（写在消息体内，靠消息带出来）',
+    defaultName: 'NextOccurrence',
+    generate: (n) => `// then event ${n}[1];  ← 请写在消息 flow 的 { … } 体内`,
     supported: false,
-    unsupportedReason: 'succession 记号尚未实现（first…then… 形态），待后续语法扩展',
+    unsupportedReason:
+      '事件后继必须跟在某条消息的事件之后（源由前一个事件回填），单独插入无处可依；请用「message」条目一次写入',
   },
   {
     kind: 'nestedViewUsage',

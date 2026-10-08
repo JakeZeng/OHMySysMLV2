@@ -325,6 +325,9 @@ NamespaceOrTopLevel
   / UseCaseDef
   / AnalysisCaseDef
   / VerificationCaseDef
+  // M19.2：时序视图内容契约（event 事件发生 / message 消息）
+  / MessageFlow
+  / EventOccurrence
   / PartUsage
   / ItemUsage
   / ReferenceUsage
@@ -436,6 +439,8 @@ ViewDefBodyClause
   / ActionUsageInBody
   / ControlNodeUsage
   / BindingConnectorUsage
+  / MessageFlow
+  / EventOccurrence
   / FlowStatement
   / StateDef
   / TransitionStatement
@@ -663,6 +668,9 @@ PackageMember
     / UseCaseDef
     / AnalysisCaseDef
     / VerificationCaseDef
+    // M19.2：low … from … to … { event … } 与 event …（时序视图内容契约）
+    / MessageFlow
+    / EventOccurrence
     / PartUsage
     / ItemUsage
     / ReferenceUsage
@@ -784,6 +792,9 @@ PartBodyMemberNoStructure
   / UseCaseDef
   / AnalysisCaseDef
   / VerificationCaseDef
+  // M19.2：时序视图内容契约（event 事件发生 / message 消息）
+  / MessageFlow
+  / EventOccurrence
   / PartUsage
   / ItemUsage
   / ReferenceUsage
@@ -1043,7 +1054,103 @@ ActionBodyMember
   / AcceptAction
   / PartBodyMemberNoStructure
 
-// §7.7.2 ActionUsage：`action a;` / `action a : T;`（可带 body 嵌套子动作）
+// ─── M19.2：时序视图的内容契约元素（官方 Interaction Sequencing Examples 原文）──
+//
+// 依据 sysml/src/examples/Interaction Sequencing Examples/ServerSequenceRealization-3.sysml：
+//     part :>> producer :> producer_3 {
+//         event producerBehavior.publish[1] :>> publish_source_event;   ← 事件发生
+//     }
+//     flow :>> publish_message from producer.producerBehavior.publish.request
+//              to server.serverBehavior.publishing.request {
+//         event producer.publish_request[1];
+//         then event server.publish_request[1];                        ← 事件后继
+//     }
+//
+// 这两条正是 §9.2.20 SequenceView 内容契约里
+//   · Event occurrences on the lifelines
+//   · Messages sent from one part to another
+//   · Succession between event occurrences
+// 三项的语法落点。
+
+// 事件发生的后继行：`then event X[1];`
+EventSuccessionLine
+  = "then" WS e:EventOccurrence
+    { return { kind: 'eventSuccession', source: undefined, target: e }; }
+
+// 消息（FlowConnectionUsage 带事件后继体）：
+//   `flow <名> from <源> to <目> { event …; then event …; }`
+//
+// ⚠️ 体内的 `then event X;` 表达「同一消息里两个事件发生的先后」，因此 source
+// 由**前一个事件**回填 —— 这是在体规则内部用局部变量做的（与 makeView 处理
+// view 子句同款），不引入全局状态。
+// ⚠️ 两个细节都取自官方原文，别想当然：
+//   1. `flow :>> publish_message from …` —— 名字前可以有 `:>>`（重定义）
+//   2. 结尾**没有分号**：官方原文是 `… to … { event …; }` 后直接换行
+//      （写成必须带 `;` 的话整份官方示例解析不了 —— 与 `entry action`、
+//      默认值 `:=` 同类坑，都是「以为的记号」和「真实记号」的差）
+//   = "flow" WS (":>>" WS)? name:Identifier WS "from" WS source:FeaturePath WS "to" WS target:FeaturePath OPEN _ lines:(_ EventFlowLine)* CLOSE _ ";"?
+MessageFlow
+  = "flow" WS redef:(":" ">>" WS { return true; })? name:Identifier WS "from" WS source:FeaturePath WS "to" WS target:FeaturePath OPEN _ lines:(_ EventFlowLine)* CLOSE _ ";"?
+    {
+      const events = [];
+      let lastEvent = null;
+      for (const pair of lines) {
+        const line = pair[1];
+        // ⚠️ EventOccurrence 的 kind 是 'eventOccurrence'，不是 'event' ——
+        // 写成 'event' 会让**每个**裸事件都掉进 else 分支，被标成 eventSuccession，
+        // 消息链的首个事件因此带上一个不存在的 source。
+        if (line.kind === 'eventOccurrence') {
+          events.push({ kind: 'event', target: line.target, redefines: line.redefines });
+          lastEvent = line.target;
+        } else {
+          // `then event X;` —— 事件后继：源是本消息里前一个事件发生的路径
+          const inner = line.target;
+          events.push({
+            kind: 'eventSuccession',
+            source: lastEvent || undefined,
+            target: inner.target,
+            redefines: inner.redefines,
+          });
+          // ⚠️ 这里也要推进游标 —— 否则 `a; then b; then c;` 的 c 会把 a 当源，
+          // 链条变成 a→b、a→c，而不是 a→b→c。官方三段示例正是这个形状。
+          lastEvent = inner.target;
+        }
+      }
+      return {
+        kind: 'messageFlow',
+        id: nextId('msg'),
+        name,
+        redefines: redef ? true : undefined,
+        source,
+        target,
+        events,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+EventFlowLine
+  = EventOccurrence
+  / EventSuccessionLine
+
+// §7.7.8 EventOccurrenceUsage：`event <特征路径>[多重性] :>> <事件定义>;`
+//
+// `:>>` 是**重定义**（事件发生把某个事件定义重定义到自己身上），官方原文用的就是它；
+// 不带 `:>>` 的裸 `event X[1];` 也合法（事件发生本身）。
+EventOccurrence
+  = "event" WS target:FeaturePath multiplicity:(m:Multiplicity { return m; })? redefines:(WS ":>>" WS e:FeaturePath { return e; })? _ ";"
+    {
+      return {
+        kind: 'eventOccurrence',
+        id: nextId('event'),
+        target,
+        multiplicity: multiplicity || undefined,
+        redefines: redefines || undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// §7.7.4 FlowConnectionUsage（§7.7.6 SendActionUsage / AcceptActionUsage）——
+  // §7.7.2 ActionUsage：`action a;` / `action a : T;`（可带 body 嵌套子动作）
 //
 // ⚠️ 命名：既有 `ActionDef` 产生式（activity 里的 `action n;`）已经把 kind
 // 'actionDef' 占用了 —— 但它其实是 **usage**（§7.7 ActionUsage）。这里用

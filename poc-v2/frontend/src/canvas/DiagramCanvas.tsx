@@ -764,6 +764,41 @@ const AcceptNode: React.FC<NodeProps> = ({ data, selected }) => {
 };
 const MemoAcceptNode = React.memo(AcceptNode);
 
+/**
+ * M19.2 时序：事件发生画成生命线上的一颗圆点（官方 §9.2.20「Event occurrences on
+ * the lifelines」）。不用方框 —— 时序图里事件发生本来就不是带名字的节点。
+ */
+const EventOccurrenceNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { redefines?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+        padding: '2px 4px',
+      }}
+      title={d.redefines ? `重定义 ${d.redefines}` : undefined}
+    >
+      <div
+        style={{
+          width: 12,
+          height: 12,
+          borderRadius: '50%',
+          background: selected ? '#13c2c2' : '#fff',
+          border: `2px solid ${selected ? '#006d75' : '#13c2c2'}`,
+        }}
+      />
+      <span style={{ fontSize: '10px', color: '#595959', fontFamily: 'monaco, monospace' }}>
+        {d.label}
+      </span>
+    </div>
+  );
+};
+const MemoEventOccurrenceNode = React.memo(EventOccurrenceNode);
+
 const ActivityNode: React.FC<NodeProps> = ({ data, selected }) => {
   const d = data as BaseNodeData & { actionCount?: number; flowCount?: number };
   return (
@@ -1021,6 +1056,8 @@ const nodeTypes = {
   sysmlControlStructure: MemoControlStructureNode,
   sysmlPerform: MemoPerformNode,
   sysmlAccept: MemoAcceptNode,
+  // M19.2 时序元素（生命线上的事件发生）
+  sysmlEventOccurrence: MemoEventOccurrenceNode,
 };
 
 /**

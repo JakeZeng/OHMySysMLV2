@@ -273,13 +273,34 @@ test('③b 状态迁移视图：状态 / 迁移 / entry-do-exit 在，动作那�
   await expect(page.getByTestId('view-standard-badge')).toContainText('<stv>');
 });
 
-test('③c 时序视图：生命线契约项在，动作流视图里没有', async ({ page }) => {
+test('③c 时序视图：生命线契约项在，动作流视图里没有；事件与消息已可写', async ({ page }) => {
   await openView(page, seedData.sequenceView);
   await ensureVisualMode(page);
 
   await expect(page.getByTestId('view-standard-badge')).toContainText('<sv>');
   await expect(page.getByTestId('view-toolbox-item-eventOccurrence')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('view-toolbox-item-messageUsage')).toBeVisible();
+
+  // 「事件后继」仍置灰：它的源由前一个事件回填，单独插入无处可依（理由写在 tooltip）
+  const succ = page.getByTestId('view-toolbox-item-eventSuccession');
+  await expect(succ).toBeVisible();
+  await expect(succ).toHaveAttribute('aria-disabled', 'true');
+
+  // 点消息条目 → 官方形态的 flow + event 真的写进视图（点→存→后端回读）
+  await page.getByTestId('view-toolbox-item-messageUsage').click();
+  await expect(page.getByTestId('toast').filter({ hasText: '已添加' }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId('save-content').click();
+  await expect
+    .poll(
+      async () => {
+        const v = await api(page.request, 'get', `/api/v1/views/${seedData.sequenceView}`);
+        return String(v?.data?.content ?? '');
+      },
+      { timeout: 10_000 },
+    )
+    .toMatch(/flow NewMessage_1 from [\s\S]*\{[\s\S]*event[\s\S]*\}/);
 });
 
 test('③d 语法未实现的契约项：置灰但如实列出，且给出原因', async ({ page }) => {

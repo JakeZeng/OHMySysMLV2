@@ -214,7 +214,7 @@ migration **008**，因为列表接口按设计不返回 content。
 
 ## 9. 已知缺口（诚实清单）
 
-### 9.1 M19.1 已解除的置灰项（官方原文核对后实现）
+### 9.1 M19.1 / M19.2 已解除的置灰项（官方原文核对后实现）
 
 以下条目**已按官方示例原文实现**，工具箱里不再是置灰：
 
@@ -228,35 +228,52 @@ migration **008**，因为列表接口按设计不返回 content。
 | Send and accept actions | `perform <特征路径>;` | AssignmentTest.sysml |
 | Send and accept actions | `accept <载荷> [via <端口>] then <动作>;` | AssignmentTest.sysml + Actions.sysml |
 | Entry / do / exit actions | `entry assign <目标> := <表达式>;`（以及 `entry action a;`） | AssignmentTest.sysml |
+| Event occurrences on the lifelines | `event <特征路径>[1] :>> <事件定义>;` | ServerSequenceRealization-3.sysml |
+| Messages sent from one part to another | `flow <名> from <源> to <目> { event …; }`（**结尾无分号**） | 同上 |
+| Succession between event occurrences | 消息体内的 `then event <路径>[1];`（源由前一个事件回填） | 同上 |
 
-机械保证：`tests/behaviorStructureNotation.test.ts` **20 条**测试，输入是官方示例
-原文逐字复制。这正是 M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板，
-就是因为缺「官方原文能不能解析」的检查。
+M19.2 的时序实现又纠正了三处「以为的记号」：
 
-实现过程中被测试逼出来的官方写法修正（都是此前想当然写错的）：
+| 以为 | 官方实际 |
+|---|---|
+| `flow m from …` 即可 | 官方写 `flow :>> m from …`（名字前带重定义标记） |
+| 带 body 的语句结尾要有 `;` | 官方 `… to … { … }` 后**没有分号** |
+| `:>>` 的 `:` 与 `>>` 之间可要空白 | 紧邻，`:>>` 是一整个记号 |
 
-| 此前写法 | 官方实际 | 说明 |
+机械保证：`tests/behaviorStructureNotation.test.ts`（20 条）与
+`tests/sequenceNotation.test.ts`（7 条），输入都是官方示例原文逐字复制。这正是
+M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板，就是因为缺「官方原文能不能
+解析」的机械检查。
+
+### 9.2 实现过程中被测试逼出来的官方写法修正
+
+都是此前**想当然写错**的 —— 与其凭印象设计记号，不如拿官方原文当测试输入：
+
+| 此前写法 | 官方实际 | 出处 |
 |---|---|---|
-| `action <名>;` 必须有名字 | `action { … }` 匿名合法 | 官方结构化控制示例全是匿名动作 |
-| `attribute x : T = 0;` | `attribute x : T := 0;` | `:=` 才是默认值记号（`=` 保留兼容） |
-| `counting::counter::count` | `counting.counter.count` | 特征路径用点号；新增 `FeaturePath` 保留原样 |
-| `entry action a;`（只有这一种） | `entry assign counter.count := 0;` | 标准库实际用的是后者，两种都收 |
+| `action <名>;` 必须有名字 | `action { … }` 匿名合法 | StructuredControlTest |
+| `attribute x : T = 0;` | `attribute x : T := 0;` | AssignmentTest |
+| 特征路径 `a::b::c` | `a.b.c`（点号） | AssignmentTest |
+| `entry action a;`（只有这一种） | `entry assign counter.count := 0;` | AssignmentTest |
+| `flow m from …` 即可 | `flow :>> m from …`（名字前带重定义） | ServerSequenceRealization-3 |
+| 带 body 的语句结尾要 `;` | `… { … }` 后**没有分号** | 同上 |
+| `:>>` 中 `:` 与 `>>` 之间可要空白 | 紧邻，`:>>` 是整个记号 | 同上 |
 
-### 9.2 仍然置灰的项
+### 9.3 仍然置灰的项
 
 | 视图类型 | 置灰项 | 为什么 |
 |---|---|---|
 | ActionFlowView | 泳道 | 图形记号层概念（§8.2.3.17），语言层无对应构造 |
 | ActionFlowView | send 动作 | `payload` / `receiver` 的文本记号未查证到官方形态（accept / perform 已实现） |
 | ActionFlowView | change / time trigger | transition 触发器目前只支持 `[ … ]` 形态 |
-| SequenceView | 事件发生 / 消息 / 事件后继 | `EventOccurrenceUsage` 的文本记号未查证（`perform` 是「执行动作」，不是事件发生） |
+| SequenceView | 事件后继（独立插入） | 消息体内的 \	hen event\ 已实现；单独插入时源无处可依（由前一个事件回填），故置灰 |
 | GeometryView | 坐标系 | `frame` 记号未实现 |
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
 | 全部 | `then` 继承连接 | 见下 |
 | 全部 | `expose` / `satisfy` 产物是占位注释 | 需要元素选择器对话框（P3 已记） |
 
-### 9.3 `then` 继承连接
+### 9.4 `then` 继承连接（成员之间）
 
 官方示例里动作/状态之间普遍用 `then` 连接（`then state wait;` / `then private action
 whileLoop`）。未实现的理由不是记号难，而是**它是连接而非成员**，落进现有语法需要
@@ -266,7 +283,7 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 
 **刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已为此返工过一轮。
 
-### 9.4 e2e 抓出的一个既有 bug：顶层不接受 `rendering def`
+### 9.5 e2e 抓出的一个既有 bug：顶层不接受 `rendering def`
 
 **这是本项目最值钱的一个 bug**，因为它从 M16 P4 起就一直存在、影响**所有**视图。
 
@@ -287,7 +304,7 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 回归由 `tests/stdlibPrefix.test.ts` 钉住 —— 它**直接读 Go 的 `standardLibrary.go`
 反引号字符串**当输入（不抄一份到 TS，否则两边漂移了测试还绿）。
 
-### 9.5 其它已知限制
+### 9.6 其它已知限制
 
 - ~~`renderKind !== 'interconnection'` 的视图拿不到工具箱~~ —— **本轮已修**，见 §11。
 - `in p : Real;` / `out p : Real;`（带方向参数）语法可解析，但**画布不渲染

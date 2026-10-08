@@ -449,6 +449,37 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
       ),
     );
   }
+  // M19.2 时序：事件发生上画布，消息成边（与工具箱里刚解除置灰的两项对应）
+  for (const { node: ev, qname } of viewContent.events) {
+    const id = `vevent:${ev.id}`;
+    nameToViewNodeId.set(String((ev as { target?: string }).target ?? ''), id);
+    nodes.push(
+      makeEventOccurrenceNode(
+        id,
+        String((ev as { target?: string }).target ?? ''),
+        (ev as { redefines?: string }).redefines,
+        keys.alloc(elementKeyBase('eventOccurrence', qname)),
+      ),
+    );
+  }
+  for (const { node: msg, qname } of viewContent.messages) {
+    // 端点按**路径**解析：官方消息的 from/to 写的是特征路径（a.b.c），
+    // 而画布节点的 id 是 ast id。解析不到就不画边 —— 与既有 flow / transition
+    // 的处理一致，绝不造悬空边。
+    const src = resolveByPath(msg.source, nameToViewNodeId);
+    const tgt = resolveByPath(msg.target, nameToViewNodeId);
+    if (!src || !tgt) continue;
+    edges.push(
+      makeMessageEdge(
+        `vmsg:${msg.id}`,
+        src,
+        tgt,
+        String(msg.name ?? ''),
+        Array.isArray(msg.events) ? msg.events.length : 0,
+        keys.alloc(elementKeyBase('messageFlow', qname)),
+      ),
+    );
+  }
 
   // 3d-2. 视图内的边（flow / transition / bind）
   //
@@ -1095,6 +1126,9 @@ interface ViewContentBuckets {
   assignments: Q<Record<string, unknown>>[];
   performs: Q<Record<string, unknown>>[];
   accepts: Q<Record<string, unknown>>[];
+  // M19.2 时序元素（事件发生 / 消息）
+  events: Q<Record<string, unknown>>[];
+  messages: Q<Record<string, unknown>>[];
 }
 
 function emptyViewContentBuckets(): ViewContentBuckets {
@@ -1111,6 +1145,8 @@ function emptyViewContentBuckets(): ViewContentBuckets {
     assignments: [],
     performs: [],
     accepts: [],
+    events: [],
+    messages: [],
   };
 }
 
@@ -1130,6 +1166,8 @@ const VIEW_CONTENT_DEEP_KINDS = new Set([
   'assignmentAction',
   'performAction',
   'acceptAction',
+  'eventOccurrence',
+  'messageFlow',
 ]);
 
 /**
@@ -1182,6 +1220,12 @@ function collectViewContentDeep(ns: { name?: string; members: any[] }, buckets: 
           break;
         case 'acceptAction':
           buckets.accepts.push({ node: m, qname });
+          break;
+        case 'eventOccurrence':
+          buckets.events.push({ node: m, qname });
+          break;
+        case 'messageFlow':
+          buckets.messages.push({ node: m, qname });
           break;
       }
     }
@@ -1356,6 +1400,13 @@ function collectMembers(
         break;
       case 'acceptAction':
         viewContent?.accepts.push({ node: m, qname });
+        break;
+      // M19.2 时序元素（事件发生 / 消息）
+      case 'eventOccurrence':
+        viewContent?.events.push({ node: m, qname });
+        break;
+      case 'messageFlow':
+        viewContent?.messages.push({ node: m, qname });
         break;
       case 'enumDef':
       case 'comment':
@@ -1597,6 +1648,89 @@ function makeAcceptNode(
       via,
       stableKey,
     },
+  };
+}
+
+/**
+ * M19.2 时序元素（官方 Interaction Sequencing Examples 原文形态）。
+ *
+ * · 事件发生 → 生命线上的一个圆点（`event a.b[1];`）
+ * · 消息     → 两个节点之间的实线箭头（`flow m from A to B { event … }`）
+ *
+ * 事件的「多段链」（then event …）画成同一消息的**多段**折线：每一段是一个
+ * 独立小圆点 + 一段线，这样 succession 在图上看得见，而不是被压成一条直线。
+ */
+/**
+ * M19.2：按特征路径解析消息端点。
+ *
+ * 官方消息写的是 `from producer.producerBehavior.publish.request to server.…` ——
+ * 末端指的是深层特征（request），而画布上登记的是**生命线宿主**（producer / server）。
+ * 所以这里逐级回退：整条路径 → 每次砍掉末段 → 最后一段。
+ *
+ * 这个回退不只是「兜底」，它正是时序图的语义：一条消息画在**两条生命线之间**，
+ * 指向 lifeline 上的参与者，而不是 lifeline 内某个特征的边框。
+ *
+ * 解析不到返回 null（调用方不画边）—— 与既有 flow / transition 一致，
+ * 绝不造悬空边。
+ */
+function resolveByPath(path: unknown, byName: Map<string, string>): string | null {
+  if (typeof path !== 'string' || !path) return null;
+  const segs = path.split('.');
+  const candidates: string[] = [path];
+  for (let i = segs.length - 1; i > 0; i--) candidates.push(segs.slice(0, i).join('.'));
+  candidates.push(segs[segs.length - 1] ?? '');
+  for (const c of candidates) {
+    const hit = byName.get(c);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function makeEventOccurrenceNode(
+  id: string,
+  target: string,
+  redefines: string | undefined,
+  stableKey: string,
+): Node {
+  return {
+    id,
+    type: 'sysmlEventOccurrence',
+    position: { x: 0, y: 0 },
+    data: {
+      label: target,
+      kind: 'eventOccurrence',
+      target,
+      redefines,
+      stableKey,
+    },
+  };
+}
+
+/** 消息：一条边（节点由调用方在 edges 里建） */
+function makeMessageEdge(
+  id: string,
+  source: string,
+  target: string,
+  name: string,
+  segments: number,
+  stableKey: string,
+): Edge {
+  return {
+    id,
+    source,
+    target,
+    type: 'straight',
+    label: segments > 1 ? `${name} ×${segments}` : name,
+    animated: false,
+    style: { stroke: '#13c2c2', strokeWidth: 2 },
+    data: {
+      stableKey,
+      semantics: {
+        kind: 'message',
+        messageName: name,
+        segmentCount: segments,
+      },
+    } as EdgeData,
   };
 }
 

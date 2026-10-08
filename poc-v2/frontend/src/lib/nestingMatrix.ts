@@ -229,6 +229,8 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlControlStructure: null,
   sysmlPerform: null,
   sysmlAccept: null,
+  // M19.2 时序元素（叶子节点）
+  sysmlEventOccurrence: null,
 };
 
 export const CONTAINER_OF_NODE_TYPE: Readonly<Record<string, ContainerKind | null>> =
