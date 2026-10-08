@@ -266,8 +266,36 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 
 **刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已为此返工过一轮。
 
-### 9.4 其它已知限制
+### 9.4 e2e 抓出的一个既有 bug：顶层不接受 `rendering def`
 
+**这是本项目最值钱的一个 bug**，因为它从 M16 P4 起就一直存在、影响**所有**视图。
+
+- 后端保存视图时做 `v.Content = parser.StandardLibrary + "\n" + req.Content`，
+  把项目标准库（8 条 `rendering def …`）注入到内容**最顶部**，且不在任何 package 里 ——
+  是**顶层语句**。
+- M16 P4 加 `rendering` 记号时只给 `PackageMember` 加了备选，**顶层规则
+  `NamespaceOrTopLevel` 漏了**。
+- 后果：所有经后端创建的视图，前端 parser 一律解析失败 → pipeline 拿不到 AST →
+  **画布空白、工具箱退化成「自定义视图类型」**。症状看着像 M19 的工具箱问题，
+  根因在 M16 P4。
+
+单元测试抓不到，是因为它们测的 content 都是手写小片段，**从不经过「注入 stdlib」
+这条真实路径**。`e2e/m19-view-standard.spec.ts` 第一条就红了 —— 这正是「三条需求
+只靠单测证明过还不够」的例证。
+
+修复：`NamespaceOrTopLevel` 补 `RenderingDefinition` / `RenderingUsage`。
+回归由 `tests/stdlibPrefix.test.ts` 钉住 —— 它**直接读 Go 的 `standardLibrary.go`
+反引号字符串**当输入（不抄一份到 TS，否则两边漂移了测试还绿）。
+
+### 9.5 其它已知限制
+
+- `renderKind !== 'interconnection'` 的视图走 M12 的**只读** renderer
+  （`ViewRenderer` → `TreeRenderer` / `RequirementRenderer` / `BehaviorRenderer`），
+  **不挂建模面板**，因此也看不到视图工具箱。这是既有设计（M15 P2），
+  与视图类型无关，但它意味着标准库里 `GridView`（推荐 `asElementTable`）与
+  `BrowserView`（推荐 `asTreeDiagram`）拿不到工具箱 —— **需求③与 M12 渲染路由
+  的交叉点，下一轮要处理**（给只读 renderer 一个「进入建模」的入口，或让工具箱
+  在只读视图上也能用）。
 - `in p : Real;` / `out p : Real;`（带方向参数）语法可解析，但**画布不渲染
   attribute / parameter 节点**（包层同样如此，属既有行为；若要修需同步动包侧布局）。
 - 官方 `in ref seq;` 这类「方向 + 无显式类型 + `ref`」的写法与 `ref` 关键字歧义，
@@ -334,10 +362,13 @@ state aState  {
 
 ### 10.2 其余待办
 
-1. 按 §10.1 的查证结果补齐置灰项：优先 `assign` / `then` / `perform` / `while`，
-   写完必须让 `viewToolbox.test.ts` 的差分变绿（该测试会自动指出还有哪些写不出来）。
-2. **e2e**：`e2e/m19-view-standard.spec.ts` —— 向导建 8 种视图 → 工具箱按类型分化 →
-   插入内容契约元素上画布 → 徽章显示标准类型。
+1. **需求③ × M12 渲染路由的交叉点**（见 §9.5 头一条，**目前最大的缺口**）：
+   `GridView` / `BrowserView` 按标准库推荐渲染（表格 / 树图），而这两种渲染走
+   只读 renderer → 拿不到工具箱。给只读 renderer 一个「进入建模」入口，或让工具箱
+   在只读视图上也能用。
+2. 按 §10.1 的查证结果补齐剩余置灰项：优先 `then` 继承连接（需要一套 successor
+   表达 + 边语义，独立一轮工作），再做 send 动作 / trigger / 时序图事件与消息。
+   写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
 3. **视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档，
    应展示特化引用 / rendering 类别 / 官方内容契约清单。
 4. **参数上画布**：`in p : Real;` / `out p : Real;` 语法可解析但不渲染节点

@@ -303,6 +303,15 @@ NamespaceOrTopLevel
   / EnumDef
   / CommentBlock
   / ConnectStatement
+  // M19（修既有 bug）：后端给视图内容注入的 stdlib 前缀
+  // （`backend/internal/parser/standardLibrary.go` 的 `rendering def …` 序列）
+  // 是**顶层**语句，不在任何 package 里。顶层规则此前不含 rendering，
+  // 于是所有经后端创建的视图前端都解析失败 —— pipeline 永远拿不到 AST，
+  // 工具箱退化成「自定义视图类型」、画布空白。症状看起来像 M19 的工具箱问题，
+  // 根因在 M16 P4 注入 stdlib 时留下的：只给 PackageMember 加过 rendering，
+  // 顶层漏了。
+  / RenderingDefinition
+  / RenderingUsage
   / PartDef
   / PortDef
   / ItemDef
