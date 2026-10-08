@@ -66,6 +66,11 @@ export interface View {
   /** 特化引用原文 / render 引用原文（属性窗如实展示） */
   specializesRef?: string;
   renderingRef?: string;
+  /**
+   * M19：命中的标准视图类型的**图形记号章节**（如 §8.2.3.17），
+   * 属性窗展示用。catalog 里有，这里由 UI 层补齐 —— 后端只存名字不存展示文案。
+   */
+  notationRef?: string;
 }
 
 export interface ViewSummary {

@@ -31,6 +31,7 @@ import type { Anchor } from '../lib/anchor';
 import type { EdgeAnchors } from '../lib/edgeAnchor';
 import { checkSyntaxStream, type AIIssue } from '../services/aiApi';
 import type { ExposedElement } from '../types/exposedElement';
+import type { RenderKind } from '../types/view';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
 import { ApiError } from '../services/api';
 import { layoutApi, type LayoutEntityKind } from '../services/layoutApi';
@@ -77,6 +78,17 @@ interface ModelState {
   pipeline: PipelineResult;
   /** 视图专用：后端解析 content 得到的引用元素缓存（非视图会话恒为空） */
   exposedElements: ExposedElement[];
+  /**
+   * M19：标准视图类型相关字段（视图会话专用；包会话恒为空）。
+   * 属性窗 / 顶栏 / 工具箱都从这里读「这是哪种视图」。
+   */
+  standardView?: string;
+  specializesRef?: string;
+  renderingRef?: string;
+  renderingKind?: string;
+  /** 后端的 definition/usage 判定（决定 expose 能否写 —— 官方硬约束） */
+  viewKind?: 'definition' | 'usage';
+  renderKind?: RenderKind;
   saving: boolean;
   saved: boolean;
   /** 内容自上次加载/保存后被修改过 */
@@ -402,6 +414,15 @@ export const useModelStore = create<ModelState>((set, get) => ({
         baseVersion: rec.version,
         baseContent: initialContent,
         exposedElements: rec.exposedElements ?? [],
+        // M19：标准视图类型相关字段（§9.2.20 / §9.2.19）。
+        // 必须带进会话 —— 属性窗与顶栏都是从会话对象读类型信息的，
+        // 漏掉就会显示成「自定义视图类型」，而视图其实有明确的类型。
+        standardView: rec.standardView,
+        specializesRef: rec.specializesRef,
+        renderingRef: rec.renderingRef,
+        renderingKind: rec.renderingKind,
+        viewKind: rec.kind,
+        renderKind: rec.renderKind,
         loading: false,
         saved: false,
         dirty: false,

@@ -365,6 +365,41 @@ AI 生成、导入）都会拿到 unresolved。
 - e2e m19-view-standard **15 passed**（新增 ⑧ expose 端到端 + ⑧b 定义侧死条目置灰；
   ⑧ 的最终判据是**后端 resolve 成功**（unresolved == 0），而不是「文本里有这行」）
 - root 545 / frontend 779 / Go 全绿 / typecheck clean；smoke + m15-viewpoint 10 passed
+## 13. 视图属性窗的「标准视图类型」档（已修）
+
+### 问题
+
+用户在属性窗能看到 name / description / renderer / 颜色，却**看不到「这是哪种视图」**——
+而这恰恰是决定工具箱与呈现语义的那一层。顶栏有徽章、工具箱有徽章，唯独属性窗
+（用户查看详情最常去的地方）没有。
+
+### 顺带抓出：类型信息在两处被静默丢弃
+
+1. **modelStore 会话不带类型字段** —— `loadView` 只把 content / exposedElements 等
+   写进会话，`standardView` / `specializesRef` / `viewKind` 都没带。
+2. **RightPane 逐字段重建 `View`** —— 从会话对象手搓一个 `View` 传给属性窗，
+   重建时没抄这些字段。**逐字段重建天然会丢字段**，这是这类写法的固有风险：
+   丢一个字段不会报错，只会让某个面板默默显示错的东西。
+
+两处一起导致：属性窗永远显示「自定义视图类型」，哪怕这条视图明确特化了
+`StandardViewDefinitions::ActionFlowView`。
+
+### 修法
+
+- `ModelState` 增加标准视图类型相关字段，`loadView` 写入
+- `RightPane` 的两处重建都补上（会话分支 + 摘要分支；摘要接口已一次性带回
+  `standardView`，不必为属性窗多发一次请求）
+- `ViewPropertiesForm` 顶部新增只读档：命中的标准视图类型 / 受限名 / 限定名 /
+  特化引用原文 / 特化自谁 / **官方内容契约清单**（可展开）/ 图形记号章节
+
+只读是有意的：改视图类型等于改模型语义（`view def X :> Y`），不是属性编辑该干的事；
+要换类型请回文本编辑器改特化关系。
+
+### 验证
+
+e2e m19-view-standard **18 passed**（⑩ 类型 / 特化原文 / 内容契约可展开；
+⑩b 自定义视图如实标注并说明「当前使用通用工具箱」）；
+root 545 / frontend 779 / Go 全绿 / typecheck clean
 ## 11. 需求③ 与 M12 渲染路由的交叉点（已修）
 
 ### 问题

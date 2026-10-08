@@ -231,6 +231,14 @@ export const RightPane: React.FC<RightPaneProps> = ({
             version: fullView.version,
             updatedAt: '',
             createdAt: '',
+            // M19：逐字段重建**不能丢字段**。丢掉标准视图类型 → 属性窗显示
+            // 「自定义视图类型」，而这条视图明明特化了 ActionFlowView。
+            standardView: fullView.standardView,
+            specializesRef: fullView.specializesRef,
+            renderingRef: fullView.renderingRef,
+            renderingKind: fullView.renderingKind,
+            kind: fullView.viewKind,
+            renderKind: fullView.renderKind,
           }
         : viewSummary
           ? {
@@ -247,6 +255,10 @@ export const RightPane: React.FC<RightPaneProps> = ({
               version: viewSummary.version ?? 1,
               updatedAt: viewSummary.updatedAt,
               createdAt: '',
+              // M19：摘要里已有标准视图类型（列表接口一次性带回，避免选中再拉一次）
+              standardView: viewSummary.standardView,
+              kind: viewSummary.kind,
+              renderKind: viewSummary.renderKind,
             }
           : null;
 

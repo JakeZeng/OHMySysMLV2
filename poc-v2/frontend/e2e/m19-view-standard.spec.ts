@@ -536,6 +536,34 @@ test('⑨ satisfy 视角选择器：点开 → 选视角 → 写入真实子句'
     .toContain('SafetyViewpoint');
 });
 
+test('⑩ 视图属性窗有「标准视图类型」档：类型 / 特化原文 / 官方内容契约', async ({ page }) => {
+  await openView(page, seedData.actionFlowView);
+  await ensureVisualMode(page);
+
+  const section = page.getByTestId('view-prop-standard-section');
+  await expect(section).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('view-prop-standard-view')).toContainText('动作流视图');
+  // 特化引用**原文**，不做归一化改写
+  await expect(section).toContainText('StandardViewDefinitions::ActionFlowView');
+  await expect(section).toContainText('特化自 互连视图');
+
+  // 官方内容契约清单可展开（点标题展开 details）
+  await page.locator('[data-testid="view-prop-standard-section"] summary').click();
+  const contract = page.getByTestId('view-prop-standard-contract');
+  await expect(contract).toBeVisible({ timeout: 5_000 });
+  await expect(contract).toContainText('Parameters with direction');
+});
+
+test('⑩b 自定义视图在属性窗如实标注「自定义」并说明用的是通用工具箱', async ({ page }) => {
+  await openView(page, seedData.customView);
+  await ensureVisualMode(page);
+
+  const panel = page.getByTestId('view-prop-standard-view');
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await expect(panel).toContainText('自定义视图类型');
+  await expect(panel).toContainText('通用');
+});
+
 test('⑦ 互连视图不受影响：本来就是建模面板，不多出姿态开关', async ({ page }) => {
   await openView(page, seedData.actionFlowView);
   await ensureVisualMode(page);

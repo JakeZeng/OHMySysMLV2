@@ -7,7 +7,7 @@
  */
 
 import * as React from 'react';
-import { Trash2, Plus, Save } from 'lucide-react';
+import { Trash2, Plus, Save, Layers } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { useToast } from '../ui/Toast';
@@ -16,11 +16,81 @@ import type { View } from '../../types/view';
 import { useModelStore } from '../../stores/modelStore';
 import { COLOR_TAGS, COLOR_TAG_CLASS } from '../../types/view';
 import type { ExposedElement } from '../../types/exposedElement';
+import { resolveStandardView, STANDARD_VIEW_BY_NAME } from '../../lib/sysmlViewCatalog';
 
 export interface ViewPropertiesFormProps {
   view: View;
   exposedElements: ExposedElement[];
   onDeleted: () => void;
+}
+
+/**
+ * M19：标准视图类型只读档。
+ *
+ * 显示三件事，各有出处，避免用户把两个正交概念混为一谈：
+ *   1. 命中的标准视图类型（§9.2.20）—— 决定工具箱与呈现语义
+ *   2. 特化引用原文（用户实际写了什么，不做归一化改写）
+ *   3. 官方内容契约清单 —— 让用户对照标准判断「这条能不能放进本视图」
+ *
+ * 未特化任一标准视图时如实说「自定义」，并列出当前用的是通用工具箱。
+ */
+function StandardViewSection({ view }: { view: View }): React.ReactElement {
+  const std = resolveStandardView(view.standardView ?? view.specializesRef ?? view.name);
+  return (
+    <div data-testid="view-prop-standard-section">
+      <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+        视图类型（SysML v2 标准视图）
+      </label>
+      {std ? (
+        <>
+          <div
+            className="mt-1 flex items-center gap-2 rounded bg-violet-50 px-2 py-1.5 text-xs dark:bg-violet-900/20"
+            data-testid="view-prop-standard-view"
+          >
+            <Layers className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />
+            <span className="font-medium text-violet-800 dark:text-violet-200">
+              {std.label}
+            </span>
+            <code className="rounded bg-violet-100 px-1 text-[10px] text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+              {std.shortName}
+            </code>
+            <code className="ml-auto truncate text-[10px] text-gray-500" title={std.qname}>
+              {std.qname}
+            </code>
+          </div>
+          {std.specializes && (
+            <p className="mt-0.5 text-[10px] text-gray-400">
+              特化自 {STANDARD_VIEW_BY_NAME[std.specializes].label}
+              {view.specializesRef ? `（文本中写的是 ${view.specializesRef}）` : ''}
+            </p>
+          )}
+          <details className="mt-1">
+            <summary className="cursor-pointer text-[10px] text-gray-400 hover:text-gray-500">
+              官方内容契约（{std.validContent.length} 条）
+            </summary>
+            <ul className="mt-1 space-y-0.5 pl-3" data-testid="view-prop-standard-contract">
+              {std.validContent.map((c) => (
+                <li key={c} className="text-[10px] leading-snug text-gray-500">
+                  · {c}
+                </li>
+              ))}
+            </ul>
+          </details>
+          {std.notationRef && (
+            <p className="mt-0.5 text-[10px] text-gray-400">图形记号：{std.notationRef}</p>
+          )}
+        </>
+      ) : (
+        <div
+          className="mt-1 rounded bg-amber-50 px-2 py-1.5 text-[10px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          data-testid="view-prop-standard-view"
+        >
+          自定义视图类型：未特化 §9.2.20 的 8 个标准视图之一。当前使用**通用**工具箱
+          （不按标准契约收敛内容面）。
+        </div>
+      )}
+    </div>
+  );
 }
 
 export const ViewPropertiesForm: React.FC<ViewPropertiesFormProps> = ({
@@ -102,6 +172,15 @@ export const ViewPropertiesForm: React.FC<ViewPropertiesFormProps> = ({
 
   return (
     <div className="space-y-3" data-testid="view-properties-form">
+      {/*
+        M19：**标准视图类型**这一档。
+        「这是哪种视图」与「用哪个 renderer 画」是两个正交的概念 —— 属性窗里
+        把它们并排放，且各自说清出处（§9.2.20 / §9.2.19），用户才能对上标准原文。
+        类型本身是 `view def X :> StandardViewDefinitions::Y` 的**特化关系**推出来的，
+        这里只读不改：改类型等于改模型语义，不是属性编辑该干的事。
+      */}
+      <StandardViewSection view={view} />
+
       <div>
         <label className="block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
           名称 <span className="text-red-500">*</span>
