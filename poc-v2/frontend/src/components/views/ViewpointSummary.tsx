@@ -48,6 +48,13 @@ export interface ViewpointSummaryProps {
   ) => void;
   /** M15：可选的子句插入对话框开关控制（由宿主绑定 +子句 按钮） */
   onOpenClauseDialog?: (kind: 'expose' | 'filter' | 'render' | 'satisfy') => void;
+  /**
+   * M19：姿态切换插槽（「进入建模 / 回到呈现」）。
+   *
+   * 由宿主注入而非本组件自绘 —— 「要不要有建模姿态」是宿主按 renderKind 决定的
+   * （interconnection 视图一直是建模面板，不需要开关），本组件不该替它决定。
+   */
+  surfaceToggle?: React.ReactNode;
 }
 
 /** M15：4 类子句按钮定义（图标 + 默认 payload） */
@@ -66,6 +73,7 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
   onOpenViewpoint,
   onInsertClause,
   onOpenClauseDialog,
+  surfaceToggle,
 }) => {
   // M15 P0：即使没有任何子句，也要让 +子句 按钮组可见（用户首次进入空视图能编辑）
   // 因此不再因为 hasMeta=false 就早返回，而是渲染一行空状态 + 按钮。
@@ -211,10 +219,12 @@ export const ViewpointSummary: React.FC<ViewpointSummaryProps> = ({
       {/* M15 P0：+子句 按钮组 — 把 4 类标准子句暴露成 GUI 操作。
            宿主（ViewRenderer / ViewModelingPane）通过 onInsertClause 接管细节；
            没接管时按 onOpenClauseDialog 走对话框流程；都没有则按钮隐藏。 */}
+      {surfaceToggle ? <span className="ml-auto">{surfaceToggle}</span> : null}
+
       {(onInsertClause ?? onOpenClauseDialog) && (
         <span
           data-testid="view-clause-buttons"
-          className="ml-auto flex items-center gap-1"
+          className={cn('flex items-center gap-1', !surfaceToggle && 'ml-auto')}
         >
           {CLAUSE_BUTTONS.map((b) => (
             <button

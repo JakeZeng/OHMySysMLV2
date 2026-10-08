@@ -47,6 +47,18 @@ const SEQUENCE_VIEW = `view def StartUp :> StandardViewDefinitions::SequenceView
 }
 `;
 
+/** 官方为 GridView 推荐的渲染是表格（§9.2.20），本项目归为 tree 只读呈现 */
+const GRID_VIEW = `view def PartsGrid :> StandardViewDefinitions::GridView {
+  render asElementTable;
+}
+`;
+
+/** 官方为 BrowserView 推荐的渲染是树图（§9.2.20），同样落进只读呈现 */
+const BROWSER_VIEW = `view def ModelBrowser :> StandardViewDefinitions::BrowserView {
+  render asTreeDiagram;
+}
+`;
+
 interface Auth {
   token: string;
   userId: string;
@@ -61,6 +73,9 @@ interface Seed {
   actionFlowView: string;
   stateView: string;
   sequenceView: string;
+  /** GridView / BrowserView：官方推荐渲染走只读呈现，需要「进入建模」才拿到工具箱 */
+  gridView: string;
+  browserView: string;
   /** 无特化的自定义视图（工具箱应退化为通用集合） */
   customView: string;
 }
@@ -108,6 +123,8 @@ test.beforeAll(async ({ request }) => {
     actionFlowView: '',
     stateView: '',
     sequenceView: '',
+    gridView: '',
+    browserView: '',
     customView: '',
   };
 });
@@ -143,6 +160,8 @@ test.beforeEach(async ({ request }) => {
   seedData.actionFlowView = await mk('DriveFlow', ACTION_FLOW_VIEW);
   seedData.stateView = await mk('DoorStates', STATE_VIEW);
   seedData.sequenceView = await mk('StartUp', SEQUENCE_VIEW);
+  seedData.gridView = await mk('PartsGrid', GRID_VIEW);
+  seedData.browserView = await mk('ModelBrowser', BROWSER_VIEW);
   seedData.customView = await mk(
     'HomegrownView',
     'view def HomegrownView {\n  render asInterconnectionDiagram;\n}\n',
@@ -352,10 +371,55 @@ test('④ 可视化创建向导：选标准视图类型 → 生成官方写法�
   });
 });
 
+test('⑥ 官方推荐渲染的 GridView：默认只读呈现，但能「进入建模」拿到网格工具箱', async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto(`/projects/${seedData.auth.projectId}?view=${seedData.gridView}`);
+  // 默认姿态是 M12 的只读呈现：没有工具箱
+  await expect(page.getByTestId('view-surface-model')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('view-palette-panel')).toHaveCount(0);
+  await expect(page.getByTestId('view-standard-view')).toContainText('网格视图');
+
+  // 进建模 → 按类型分化的工具箱出现（网格专属条目）
+  await page.getByTestId('view-surface-model').click();
+  await expect(page.getByTestId('view-palette-panel')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('view-toolbox-item-gridColumn')).toBeVisible();
+  await expect(page.getByTestId('view-toolbox-item-gridRowFeature')).toBeVisible();
+  // 且不含动作流视图那套
+  await expect(page.getByTestId('view-toolbox-item-actionUsage')).toHaveCount(0);
+
+  // 切回呈现：工具箱消失，只读呈现回来
+  await page.getByTestId('view-surface-present').click();
+  await expect(page.getByTestId('view-palette-panel')).toHaveCount(0);
+});
+
+test('⑥b BrowserView 同理：树图渲染下也能进建模拿到浏览器工具箱', async ({ page }) => {
+  await login(page);
+  await page.goto(`/projects/${seedData.auth.projectId}?view=${seedData.browserView}`);
+  await expect(page.getByTestId('view-surface-model')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('view-standard-view')).toContainText('浏览器视图');
+
+  await page.getByTestId('view-surface-model').click();
+  await expect(page.getByTestId('view-toolbox-item-browserRoot')).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId('view-toolbox-item-partDef')).toBeVisible();
+});
+
+test('⑦ 互连视图不受影响：本来就是建模面板，不多出姿态开关', async ({ page }) => {
+  await openView(page, seedData.actionFlowView);
+  await ensureVisualMode(page);
+  await expect(page.getByTestId('view-palette-panel')).toBeVisible();
+  // interconnection 一直可编辑，不需要「进入建模」—— 多一个开关就是噪音
+  await expect(page.getByTestId('view-surface-model')).toHaveCount(0);
+  await expect(page.getByTestId('view-surface-present')).toHaveCount(0);
+});
+
 test('⑤ 自定义视图类型如实标注「自定义」，不假装是标准视图', async ({ page }) => {
-  // 用例内的自建视图放在 here 之外易踩坑（取 id 失败时只表现为「面板没出现」，
-  // 错误信息指不到真正的原因），因此与其他视图一起在 beforeEach 里建。
-  const { auth } = seedData;
+  // ⚠️ 用的是**互连**渲染：`renderKind !== 'interconnection'` 的视图走 M12 的
+  // 只读 renderer（ViewRenderer → TreeRenderer 等），那验的是另一条路由（见 ⑥）。
+  // 本例要验的是「自定义**类型**如何呈现」。
   // 先确认视图真的建好了（否则后面「面板没出现」会指不到真正原因）。
   // ⚠️ 不能断言 standardView === '' —— 后端字段是 `omitempty`，空值在 JSON 里
   // **整个键都不存在**；「没有 standardView」本身就是「自定义视图」的证据。

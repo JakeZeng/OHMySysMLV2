@@ -1103,11 +1103,21 @@ export function viewToolbox(standard: StandardViewName | null | undefined): View
       ]);
 
     case 'BrowserView':
+      // 官方契约是「Hierarchical membership structure starting from one or more
+      // exposed root elements」—— 根可以是包、part、需求等**任意**模型元素，
+      // 层级里也会出现它们的成员。所以这里给全结构元素，而不是只给 browserRoot：
+      // 早先只列了根 + 少数几项，结果用户在浏览器视图里连 part def 都放不进去，
+      // 而那正是它要展示的东西（e2e ⑥b 抓出来的）。
       return toolbox([
         { key: 'browser', items: BROWSER_ITEMS },
-        { key: 'general', items: GENERAL_ONLY_ITEMS.filter((i) =>
-          ['interfaceDef', 'enumDef', 'calcDef', 'requirementDef', 'referenceUsage'].includes(i.kind),
-        ) },
+        { key: 'feature', items: FEATURE_NODES },
+        { key: 'boundary', items: BOUNDARY_FEATURES },
+        {
+          key: 'general',
+          items: GENERAL_ONLY_ITEMS.filter((i) =>
+            ['interfaceDef', 'enumDef', 'calcDef', 'requirementDef', 'referenceUsage'].includes(i.kind),
+          ),
+        },
         { key: 'nestedView', items: SEQUENCE_ITEMS.filter((i) => i.kind === 'nestedViewUsage') },
         { key: 'rendering', items: RENDERING_ITEMS },
         { key: 'clause', items: CLAUSE_ITEMS },

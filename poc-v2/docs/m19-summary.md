@@ -289,13 +289,7 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 
 ### 9.5 其它已知限制
 
-- `renderKind !== 'interconnection'` 的视图走 M12 的**只读** renderer
-  （`ViewRenderer` → `TreeRenderer` / `RequirementRenderer` / `BehaviorRenderer`），
-  **不挂建模面板**，因此也看不到视图工具箱。这是既有设计（M15 P2），
-  与视图类型无关，但它意味着标准库里 `GridView`（推荐 `asElementTable`）与
-  `BrowserView`（推荐 `asTreeDiagram`）拿不到工具箱 —— **需求③与 M12 渲染路由
-  的交叉点，下一轮要处理**（给只读 renderer 一个「进入建模」的入口，或让工具箱
-  在只读视图上也能用）。
+- ~~`renderKind !== 'interconnection'` 的视图拿不到工具箱~~ —— **本轮已修**，见 §11。
 - `in p : Real;` / `out p : Real;`（带方向参数）语法可解析，但**画布不渲染
   attribute / parameter 节点**（包层同样如此，属既有行为；若要修需同步动包侧布局）。
 - 官方 `in ref seq;` 这类「方向 + 无显式类型 + `ref`」的写法与 `ref` 关键字歧义，
@@ -304,6 +298,36 @@ whileLoop`）。未实现的理由不是记号难，而是**它是连接而非�
 
 `layoutEngine.test.ts` / `perf.test.ts` 的计时阈值在机器负载高时会误报
 （实测 1000 节点 parse 在负载下 2075ms、静载 306ms），单跑稳定通过，属既有抖动。
+
+---
+
+## 11. 需求③ 与 M12 渲染路由的交叉点（已修）
+
+### 问题
+
+只读呈现是 M12 的既有设计（`ViewRenderer` 按 `renderKind` 分派，非
+interconnection 一律给 `TreeRenderer` / `RequirementRenderer` / `BehaviorRenderer`），
+于是：**标准库给 `GridView` 推荐 `asElementTable`、给 `BrowserView` 推荐
+`asTreeDiagram`，这两种渲染都落进只读分支 → 这两个标准视图类型在 UI 上根本拿不到
+工具箱**。需求③「不同视图类型对应不同工具箱」对它们就不成立。
+
+### 修法（不是把默认改成建模）
+
+缺的是**入口**不是能力。所以给只读呈现加一个显式的姿态开关：
+
+- 默认仍是「呈现」（M12 体验零变化）
+- 顶部条右侧一个「进入建模 / 回到呈现」按钮
+- 进建模姿态挂的是**同一个** `ViewModelingPane`，因此按视图类型分化的工具箱照样在
+- 切换的**不是渲染方式**（那由 `render` 子句决定），而是「这条视图现在拿来展示、
+  还是拿来编辑」—— 两者正交，注释里写明了避免后人混淆
+- 换视图时自动回到「呈现」：不该在用户毫不知情时把可编辑状态漏到另一个视图
+
+### e2e ⑥b 顺手抓出的第二个问题
+
+BrowserView 的工具箱早先只列了 `browserRoot` + 少数几项，于是**用户在浏览器视图里
+连 `part def` 都放不进去** —— 而那正是它要展示的东西（官方契约：
+「hierarchical membership structure starting from one or more exposed root
+elements」，根与层级成员都可以是任意模型元素）。已改为给全结构元素。
 
 ---
 
