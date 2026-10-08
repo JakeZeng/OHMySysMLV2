@@ -492,6 +492,50 @@ test('⑧ expose 选择器：点开 → 选元素 → 写入真实子句 → 后
     .toBe(0);
 });
 
+test('⑨ satisfy 视角选择器：点开 → 选视角 → 写入真实子句', async ({ page }) => {
+  // 先建一个视角（没有视角时选择器应如实说「还没有」而不是写占位注释）
+  const auth = seedData.auth;
+  const vp = await api(page.request, 'post', `/api/v1/projects/${auth.projectId}/viewpoints`, {
+    name: 'SafetyViewpoint',
+    content: 'viewpoint def SafetyViewpoint {\n  subject : Vehicle;\n}\n',
+    packageId: seedData.pkg,
+    description: 'M19 e2e',
+  });
+  const vpId = vp?.data?.id ?? vp?.id ?? '';
+  expect(vpId, '视角应创建成功').not.toBe('');
+
+  await openView(page, seedData.actionFlowUsage);
+  await ensureVisualMode(page);
+
+  await page.getByTestId('view-toolbox-item-clauseSatisfy').click();
+  await expect(page.getByTestId('satisfy-viewpoint-modal')).toBeVisible({ timeout: 10_000 });
+  const option = page.getByTestId('satisfy-viewpoint-option-SafetyViewpoint');
+  await expect(option).toBeVisible({ timeout: 10_000 });
+  await option.click();
+
+  await page.getByTestId('save-content').click();
+  await expect
+    .poll(
+      async () => {
+        const v = await api(page.request, 'get', `/api/v1/views/${seedData.actionFlowUsage}`);
+        return String(v?.data?.content ?? '');
+      },
+      { timeout: 10_000 },
+    )
+    .toContain('satisfy SafetyViewpoint;');
+
+  // 判据落在**解析结果**上：satisfies 字段被后端认出来
+  await expect
+    .poll(
+      async () => {
+        const v = await api(page.request, 'get', `/api/v1/views/${seedData.actionFlowUsage}`);
+        return String(v?.data?.viewpointQualifiedName ?? '');
+      },
+      { timeout: 10_000 },
+    )
+    .toContain('SafetyViewpoint');
+});
+
 test('⑦ 互连视图不受影响：本来就是建模面板，不多出姿态开关', async ({ page }) => {
   await openView(page, seedData.actionFlowView);
   await ensureVisualMode(page);

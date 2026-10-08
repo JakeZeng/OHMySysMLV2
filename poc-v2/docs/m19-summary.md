@@ -271,7 +271,7 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
 | 全部 | `then` 继承连接 | 见下 |
-| 全部 | `expose` / `satisfy` 产物是占位注释 | 需要元素选择器对话框（P3 已记） |
+| ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
 
 ### 9.4 `then` 继承连接（成员之间）
 

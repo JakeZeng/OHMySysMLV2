@@ -909,7 +909,8 @@ const CLAUSE_ITEMS: ViewToolboxItem[] = [
     contract: 'Viewpoint satisfaction',
     description: '显式断言本视图满足某个 Viewpoint（目标由用户选，同 expose）',
     defaultName: 'Viewpoint',
-    generate: (n) => `// satisfy ${n};  ← 请选择 Viewpoint`,
+    // 同 expose：UI 走 SatisfyViewpointPickerModal，这里只是无选择器环境下的兜底样本
+    generate: (n) => `// satisfy ${n};  ← 请在视角选择器中选择`,
     supported: true,
   },
 ];

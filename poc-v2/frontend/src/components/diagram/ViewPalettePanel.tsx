@@ -41,6 +41,11 @@ import {
   type ExposeCandidate,
   type ExposeForm,
 } from '../modals/ExposeElementPickerModal';
+import {
+  SatisfyViewpointPickerModal,
+  toViewpointCandidates,
+  useSatisfyCandidates,
+} from '../modals/SatisfyViewpointPickerModal';
 import { parse } from '@parser/parser';
 
 export interface ViewPalettePanelProps {
@@ -64,6 +69,10 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
   const { showToast } = useToast();
   const [exposePickerOpen, setExposePickerOpen] = React.useState(false);
+  const [satisfyPickerOpen, setSatisfyPickerOpen] = React.useState(false);
+  // 视角列表只在打开 satisfy 选择器时才拉（视图画布常态不需要）
+  const projectId = useModelStore((s) => s.projectId);
+  const viewpoints = useSatisfyCandidates(satisfyPickerOpen ? projectId : null);
 
   /**
    * 标准视图类型的判定顺序：
@@ -115,6 +124,11 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
     // 语法上合法、语义上等于什么都没做。
     if (item.kind === 'clauseExpose') {
       setExposePickerOpen(true);
+      return;
+    }
+    // satisfy 与 expose 同理：满足哪个视角是语义决定，不能自动命名
+    if (item.kind === 'clauseSatisfy') {
+      setSatisfyPickerOpen(true);
       return;
     }
     const name = generateUniqueName(item.defaultName, existingNames);
@@ -278,6 +292,31 @@ export const ViewPalettePanel: React.FC<ViewPalettePanelProps> = ({ view: viewPr
               variant: 'success',
             });
             void picked;
+          }}
+        />
+      )}
+
+      {satisfyPickerOpen && (
+        <SatisfyViewpointPickerModal
+          viewpoints={toViewpointCandidates(viewpoints.viewpoints)}
+          loading={viewpoints.loading}
+          error={viewpoints.error}
+          alreadySatisfied={parsed ? [parsed.satisfies].filter(Boolean) as string[] : []}
+          onClose={() => setSatisfyPickerOpen(false)}
+          onPick={(clause) => {
+            setSatisfyPickerOpen(false);
+            const next = insertClauseIntoView(content, clause, 'NewView');
+            const probe = parse(next);
+            if (!probe.ok) {
+              showToast({
+                title: 'satisfy 写入失败',
+                description: probe.errors?.[0]?.message ?? '插入的子句无法解析',
+                variant: 'error',
+              });
+              return;
+            }
+            setContent(next);
+            showToast({ title: '已写入 satisfy 子句', description: clause, variant: 'success' });
           }}
         />
       )}
