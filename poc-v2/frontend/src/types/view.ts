@@ -110,6 +110,16 @@ export interface ViewSummary {
   filterQualifiedNames?: string[];
   /** M19：本视图属于哪个标准视图类型（§9.2.20 的 8 个之一）；树徽章显示它 */
   standardView?: string;
+  /**
+   * M19：与 standardView 同批的另外三个字段。
+   *
+   * 后端摘要**本来就返回**它们（列表接口一次算好，省得选中视图再拉一次详情），
+   * 但前端早期只声明了 standardView —— 于是视图尚未打开时属性窗会丢掉
+   * 「特化引用原文」。这类「后端给了、前端没接」的空缺不会报错，只会少显示。
+   */
+  renderingKind?: string;
+  specializesRef?: string;
+  renderingRef?: string;
 }
 
 /** SysML v2 §7.26：view body 内 owned 的元素（view-private） */

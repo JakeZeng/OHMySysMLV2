@@ -10,6 +10,7 @@ import { PackagePropertiesForm } from '../forms/PackagePropertiesForm';
 import { ViewPropertiesForm } from '../forms/ViewPropertiesForm';
 import { ProjectPropertiesForm } from '../forms/ProjectPropertiesForm';
 import { EmptyPropertiesPane } from '../forms/EmptyPropertiesPane';
+import { viewFromSession, viewFromSummary } from './viewRebuild';
 import { ElementFormPanel } from '../forms/ElementFormPanel';
 import { ElementInfoPanel } from '../forms/ElementInfoPanel';
 import { ConnectionFormPanel } from '../forms/ConnectionFormPanel';
@@ -215,52 +216,25 @@ export const RightPane: React.FC<RightPaneProps> = ({
 
   // 4. 视图
   if (selectedViewId) {
-    const view: View | null =
-      fullView && fullView.content !== undefined
-        ? {
-            id: fullView.entityId!,
-            projectId: project.id,
-            packageId: '',
-            name: fullView.name,
-            description: fullView.description,
-            content: fullView.content,
-            colorTag: '',
-            renderingCategory: '',
-            exposedElements: fullView.exposedElements,
-            metadata: {},
-            version: fullView.version,
-            updatedAt: '',
-            createdAt: '',
-            // M19：逐字段重建**不能丢字段**。丢掉标准视图类型 → 属性窗显示
-            // 「自定义视图类型」，而这条视图明明特化了 ActionFlowView。
-            standardView: fullView.standardView,
-            specializesRef: fullView.specializesRef,
-            renderingRef: fullView.renderingRef,
-            renderingKind: fullView.renderingKind,
-            kind: fullView.viewKind,
-            renderKind: fullView.renderKind,
-          }
-        : viewSummary
-          ? {
-              id: viewSummary.id,
-              projectId: project.id,
-              packageId: viewSummary.packageId,
-              name: viewSummary.name,
-              description: viewSummary.description,
-              content: '',
-              colorTag: viewSummary.colorTag,
-              renderingCategory: '',
-              exposedElements: [],
-              metadata: {},
-              version: viewSummary.version ?? 1,
-              updatedAt: viewSummary.updatedAt,
-              createdAt: '',
-              // M19：摘要里已有标准视图类型（列表接口一次性带回，避免选中再拉一次）
-              standardView: viewSummary.standardView,
-              kind: viewSummary.kind,
-              renderKind: viewSummary.renderKind,
-            }
-          : null;
+    // M19：重建规则抽到 viewRebuild.ts（纯函数 + 单测）。原来这两段是内联
+    // 对象字面量，标准视图类型字段被静默丢弃过 —— 见该文件头注释。
+    const view: View | null = viewFromSession(
+      {
+        entityId: fullView?.entityId ?? null,
+        name: fullView?.name ?? viewSummary?.name ?? '',
+        description: fullView?.description,
+        content: fullView?.content,
+        version: fullView?.version ?? 1,
+        exposedElements: fullView?.exposedElements,
+        standardView: fullView?.standardView,
+        specializesRef: fullView?.specializesRef,
+        renderingRef: fullView?.renderingRef,
+        renderingKind: fullView?.renderingKind,
+        viewKind: fullView?.viewKind,
+        renderKind: fullView?.renderKind,
+      },
+      project.id,
+    ) ?? (viewSummary ? viewFromSummary(viewSummary, project.id) : null);
 
     if (!view) return <EmptyPropertiesPane />;
 
