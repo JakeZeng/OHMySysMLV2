@@ -301,7 +301,7 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | GeometryView | 坐标系 | `frame` 记号未实现 |
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
-| **全部 / 动作体** | **无花括号动作体**（官方 Actions.sysml 的写法） | 见 §10.1，官方原文如此 |
+| ~~**全部 / 动作体** / **无花括号动作体**（官方 Actions.sysml 的写法）~~ | **已解除**：文本层归一化已支持，见 §10.1 |
 | ~~**全部 / 包** / `standard library package` 包前缀~~ | **已解除**：可选前缀已支持（AST `isStandard`），见 §10.1 |
 | ~~全部 / `then` 继承连接~~ | **已解除**：语法层已落地，见 §9.4 |
 | ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
@@ -371,7 +371,7 @@ whileLoop`）。此前未实现的理由是**它是连接而非成员**，需要
 2. **赋值同名不注册** —— 官方 `assign index := 1; then assign index := i + 1;` 两条语句的后继名
    都是 `index`，两个节点共享一个键，无论「先写优先」还是「后写优先」都会把边指错。**宁可丢
    这条边，也不画一条错的**：assignment 不进 `nameToViewNodeId`。
-3. **⚠️ 官方动作体可以是**无花括号**的（官方原文），而本实现不认** ——
+3. **~~⚠️ 官方动作体可以是**无花括号**的（官方原文），而本实现不认~~ —— 已实现** ——
    `sysml.library/Systems Library/Actions.sysml` 里 `ForLoopAction` 的原文是：
 
    ```
@@ -383,8 +383,9 @@ whileLoop`）。此前未实现的理由是**它是连接而非成员**，需要
 
    没有花括号，靠换行 + 缩进界定动作体。**这是官方标准库的写法**，不是方言。
    此前本节曾写「官方动作体必须用花括号」并把测试样例改成花括号体——那是**按自家
-   解析器的限制去修改官方示例**，正是 M16 P1 那类老路，已更正。真正的缺口是
-   解析器不支持无花括号体，记号原文已逐字查得，见 §10.1。
+   解析器的限制去修改官方示例**，正是 M16 P1 那类老路，已更正。
+   本轮已实现（见 §10.1）：在解析前做一层纯文本归一化，把无花括号体包上花括号。
+   护栏 `tests/behaviorStructureNotation.test.ts` 已翻转成正向断言。
 
 **写样例的顺序坑**：`then X;` 紧跟 `X` 的声明本身会产出自环边（`b → b`）。这是官方记号语义的
 **正确结果**（源 = 前一个具名成员），不是 bug；想让后继接在前驱后面，得让目标在别处先声明、
@@ -623,7 +624,7 @@ action { send 4 to r; }              // ok
 `E000_PARSE_ERROR`，Expected "def"）。这是 OccurrenceUsage 语法本身的缺口，与 `send`
 无关，本轮未处理。
 
-**⚠️ 无花括号动作体（已逐字查得，官方 Actions.sysml 原文，下一轮必须支持）**：
+**✅ 无花括号动作体（已实现，M19.6）**：官方 `ForLoopAction` 的原文是
 
 ```
 private action initialization
@@ -636,11 +637,25 @@ then private action whileLoop
 	}
 ```
 
-官方 `ForLoopAction` 就是无花括号动作体（换行 + 缩进界定），我们的解析器不认
-（`action initialization` 被读成完整声明，`assign` 变成它的兄弟）。
-实现要点：`action` 声明后若**不以** `;` / `:` / `{` 结尾，则后续行是它隐式的 body，
-以同级缩进的下一条成员为界。PEG 里要按行首缩进判界，属本文件里第一次需要
-**缩进敏感**的规则，需单独设计。
+无花括号、靠换行 + 缩进界定动作体。原来解析器把 `action initialization` 读成完整声明、
+`assign` 变成它的兄弟。
+
+**实现位置：`parser/implicitActionBodies.ts` 的文本归一化，不是改 pegjs 语法。**
+本 pegjs 全文靠 `whitespace = [ \t\n\r]` 吞掉所有空白，语法里**没有**缩进上下文。
+纯 PEG 要把「声明行的缩进」这个捕获值拿去约束后续匹配是不可能的（正则不能引用前面
+捕获的字符串）；要让语法缩进敏感，等于把整份 2000+ 行语法的 WS 规则全部重写。
+归一化只做一件事：给无花括号体补上 `{ }`，幂等、已带花括号的文本原样通过。
+
+**判定的关键：缩进是唯一能区分两种官方写法的依据。** 必须同时满足：裸 `action <名>`
+（不含 `:` 类型引用、不含注释）、不以 `;` `{` `}` `]` `)` 收尾、且**下一个有效行的
+缩进比它更深**。少了缩进那条，就会把官方的**具名循环动作**
+（`action aLoop` + **同缩进** `while i > 0 { … } until b;`）误判成隐式体——那条回归
+已经被 `tests/behaviorStructureNotation.test.ts` 的一条新增测试钉住。
+
+另外补了 `ActionUsageInBody` 的可见性前缀（`private action initialization`），此前
+官方原文在 part def 体里一进来就报 `Expected "action" but "p" found`。AST 上
+`visibility` 字段已就位。测试：新增 `tests/implicitActionBodies.test.ts`（14 条）+
+`behaviorStructureNotation.test.ts` 护栏翻转（+1）。
 
 **✅ `standard library package` 包前缀（已实现，M19.5）**：官方标准库每个文件都以
 `standard library package <Name> {` 开头（如 `standard library package Actions {`），
@@ -668,9 +683,9 @@ then private action whileLoop
    在只读视图上也能用。
 2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层 +
    画布渲染 + 工具箱均已完成**（见 §9.4）；~~`send` 动作 / `standard library package`
-   前缀~~ **已完成**（见 §10.1）。**下一步只剩 §10.1 的无花括号动作体**
-   （官方 ForLoopAction 原文，最需要，且需要本 pegjs 里第一次出现的缩进敏感规则）；
-   之后是 trigger / 坐标系 / 表格列 / 迁移效果动作（各需先查证官方记号）。
+   前缀~~ **已完成**（见 §10.1）；~~无花括号动作体~~ **已完成**（见 §10.1）。
+   §10.1 里逐字查得记号的三项**全部落地**。**下一步是 trigger / 坐标系 /
+   表格列 / 迁移效果动作**（各需先查证官方记号，别猜）。
    写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
 
 3. ~~**视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档~~ **已完成**（见 §13）。

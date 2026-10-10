@@ -352,14 +352,15 @@ describe('官方 Actions.sysml · ForLoopAction 的 body（assign / perform 的�
     expect(succs[0].visibility).toBe('private');
   });
 
-  it('护栏（缺口）：官方标准库用的**无花括号**动作体，本实现还不认', () => {
+  it('官方标准库的**无花括号**动作体已认（此前是护栏，现已实现）', () => {
     // sysml.library/Systems Library/Actions.sysml 里 ForLoopAction 的**原文**就是
     // 无花括号的：动作声明后靠换行 + 缩进界定 body。这是官方写法，不是方言。
     // 上一轮曾误判成「必须用花括号」并把示例改成花括号体（见 docs/m19-summary.md §9.4）
-    // —— 那是按自家解析器的限制去修改官方示例。这里把它钉成一条已知缺口：
-    // 目前确实解析不了，等支持无花括号动作体后再把断言翻转。
-    // 不要通过「把官方原文改成花括号体」让这条变绿。
-    const r = parse(`package Actions {
+    // —— 那是按自家解析器的限制去修改官方示例，正是 M16 P1 犯的错。
+    // 现在解析器在文本层把无花括号体归一化成花括号体（见 parser/implicitActionBodies.ts），
+    // 断言方向反过来：官方原文必须原样通过，且 `assign` 必须**在** initialization
+    // 的体内而不是它的兄弟。
+    const m = ok(`package Actions {
 	action def ForLoopAction {
 		private action initialization
 			assign index := 1;
@@ -371,8 +372,60 @@ describe('官方 Actions.sysml · ForLoopAction 的 body（assign / perform 的�
 			}
 	}
 }`);
-    expect(r.ok).toBe(false);
-    expect(r.errors.some((e) => e.code === 'E000_PARSE_ERROR')).toBe(true);
+
+    const defs = findKind(m, 'actionDefinition');
+    expect(defs).toHaveLength(1);
+    // 动作定义自身只有两个成员：initialization 与那条 then 后继。
+    // assign 不能漏到这一层 —— 那是隐式体没闭合的症状。
+    const members = (defs[0] as { body?: unknown[] }).body;
+    expect(members?.length).toBe(2);
+    expect(members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'actionUsage', name: 'initialization', visibility: 'private' }),
+        expect.objectContaining({ kind: 'succession' }),
+      ]),
+    );
+    expect(
+      (members as Array<Record<string, unknown>> | undefined)?.every(
+        (x) => x.kind !== 'assignmentAction',
+      ),
+    ).toBe(true);
+
+    // 隐式体被正确闭合：assign 进了 initialization 的 body
+    const inits = findKind(m, 'actionUsage').filter(
+      (a) => (a as { name?: string }).name === 'initialization',
+    );
+    expect(inits).toHaveLength(1);
+    expect(findKind(inits[0], 'assignmentAction')).toHaveLength(1);
+
+    // `then` 的后继是 whileLoop（其后跟着更深缩进的 while 块 = 隐式体），
+    // 前驱必须是 initialization（隐式体闭合位置正确，
+    // 否则前驱会被算成 whileLoop 或漏成 null）
+    const succs = findKind(m, 'succession');
+    expect(succs).toHaveLength(1);
+    const succ = succs[0] as { source?: string; target?: string; visibility?: string };
+    expect(succ.source).toBe('initialization');
+    expect(succ.target).toBe('whileLoop');
+    expect(succ.visibility).toBe('private');
+  });
+
+  it('官方具名循环动作不被误判成无花括号体', () => {
+    // `action aLoop` + **同缩进**的 `while … until …` 是官方的具名循环动作
+    // （NamedLoopAction：`action <名> while <条件> { … } until <测试>;`），
+    // 不是无花括号动作体。缩进是区分两者的唯一依据 —— 见上一轮的回归。
+    const m = ok(`package T {
+	action {
+		attribute i : ScalarValues::Integer := 0;
+		attribute b : ScalarValues::Boolean;
+		action aLoop
+		while i > 0 {
+			assign i := i - 1;
+		} until b;
+	}
+}`);
+    const named = findKind(m, 'namedLoopAction');
+    expect(named).toHaveLength(1);
+    expect(named[0].name).toBe('aLoop');
   });
 
   it('`standard library package` 前缀已认（此前是护栏，现已实现）', () => {

@@ -12,6 +12,7 @@
  */
 
 import { locationOf, type ParseError, type ParseResult, type SysMLModel } from '../ast/model';
+import { normalizeImplicitActionBodies } from './implicitActionBodies';
 
 // 引入 peggy 生成的代码（ESM 格式：export { peg$parse as parse, ... }）
 // @ts-expect-error - generated file has no type definitions
@@ -37,11 +38,16 @@ declare global {
 export function parse(source: string): ParseResult {
   const errors: ParseError[] = [];
 
-  // 注入源码供语法内访问
-  globalThis.__SYSML_SOURCE = source;
+  // M19.6：官方标准库的动作体可以是无花括号的（换行 + 缩进界定）。本 pegjs 的
+  // 语法里没有任何缩进上下文，纯语法层无法判定隐式体的边界，所以先在文本层
+  // 把无花括号体包上 {}，再交给既有语法。已带花括号的文本原样通过。
+  const normalized = normalizeImplicitActionBodies(source);
+
+  // 注入源码供语法内访问 —— 用归一化后的文本，因为偏移量来自它
+  globalThis.__SYSML_SOURCE = normalized;
 
   try {
-    const result = rawParse(source) as SysMLModel;
+    const result = rawParse(normalized) as SysMLModel;
     // M10: 扁平化 — 将包内的 stateMachine / activity / requirement / constraintBlock 提升到顶层
     // 原因：状态机可视化、行为仿真、需求视图等模块都依赖 model.{stateMachines,activities,...}[0]。
     // peggy 解析时这些元素只在包内出现时不会被加入顶层数组，所以这里递归 pull-up。

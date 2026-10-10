@@ -1335,13 +1335,18 @@ EventOccurrence
 // ⚠️ `name` 可省：官方示例大量使用**匿名**用法（StructuredControlTest.sysml 里的
 // `action { … }`）。SysML v2 的 Usage 名可匿名（由拥有者命名），之前强制要名字
 // 于是整个官方结构化控制示例解析不了。
+// §7.7.5 ActionUsage：`action a;` / `action { … }`（匿名）
+// M19.6：官方标准库的 ForLoopAction 里写的是 `private action initialization` ——
+// 动作**用法**带可见性前缀（§7.17.1 修饰符）。此前本规则只认 initial / final，
+// 于是官方标准库原文在 part def 体里一进来就报错。
 ActionUsageInBody
-  = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS !("def" !IdentifierChar) name:(n:Identifier { return n; })? typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
+  = vis:VisibilityPrefix? isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS !("def" !IdentifierChar) name:(n:Identifier { return n; })? typeRef:UsageTypeSpec? body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'actionUsage',
         id: nextId('actionUsage'),
         name,
+        visibility: vis || undefined,
         typeRef: typeRef || undefined,
         isInitial: !!isInitial,
         isFinal: !!isFinal,
