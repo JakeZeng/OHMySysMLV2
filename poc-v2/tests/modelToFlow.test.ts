@@ -1,4 +1,4 @@
-/**
+﻿/**
  * M16 P4：合成视图画布 —— 跨包 expose 元素渲染为幽灵节点（只读、源包 tooltip）。
  */
 
@@ -81,5 +81,42 @@ describe('modelToFlow 合成画布（M16 P4）', () => {
     expect(ghost).toBeDefined();
     expect((ghost!.data as any).label).toBe('C');
     expect((ghost!.data as any).sourcePackage).toBe('A::B');
+  });
+});
+
+describe('M19.5 send 动作上画布', () => {
+  it('`send <payload> [from <sender>] to <receiver>;` 产出独立节点，不产生边', () => {
+    const r = buildGraph(`view def V {
+  send payload from sender to receiver;
+}`);
+    const sends = r.nodes.filter((n) => n.id.startsWith('vsend:'));
+    expect(sends).toHaveLength(1);
+    // 复用 accept 节点类型：前端无需注册新类型，也不改节点类型集合
+    expect(sends[0]!.type).toBe('sysmlAccept');
+    expect((sends[0]!.data as any).label).toBe('send payload from sender to receiver');
+    expect((sends[0]!.data as any).kind).toBe('sendAction');
+    expect((sends[0]!.data as any).sender).toBe('sender');
+    expect((sends[0]!.data as any).receiver).toBe('receiver');
+    // send 本身不产生结构边：它是一条语句，边只由 flow / then 产生
+    expect(r.edges.filter((e) => e.source === sends[0]!.id || e.target === sends[0]!.id)).toHaveLength(0);
+  });
+
+  it('send 不注册进 nameToViewNodeId：receiver 同名时 then 仍指向真正的动作', () => {
+    // send 的 receiver 与一个真动作同名。若把 send 的 receiver 当键注册，
+    // `then receiver;` 就会指到 send 节点上，画出一条错边。
+    const r = buildGraph(`view def V {
+  send payload from sender to receiver;
+  action receiver;
+  then receiver;
+}`);
+    const sends = r.nodes.filter((n) => n.id.startsWith('vsend:'));
+    expect(sends).toHaveLength(1);
+    const target = r.nodes.find((n) => (n.data as any)?.label === 'receiver');
+    expect(target).toBeDefined();
+    expect(target!.id).not.toBe(sends[0]!.id);
+    const edges = r.edges.filter((e) => e.target === target!.id);
+    expect(edges.length).toBeGreaterThanOrEqual(1);
+    // 没有任何边指向 send 节点
+    expect(r.edges.filter((e) => e.target === sends[0]!.id)).toHaveLength(0);
   });
 });

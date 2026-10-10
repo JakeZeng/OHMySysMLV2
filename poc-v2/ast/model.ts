@@ -57,6 +57,11 @@ export interface Package extends SysMLNode {
    * 注：自造的 `package Sub : Parent` 特化方言已按官方规范移除（Package 无特化能力）。
    */
   isImplicitRoot?: boolean;
+  /**
+   * M19.5：官方标准库的 `standard library package <Name> {` 形式。
+   * 官方 sysml.library 里每个文件都带这个前缀 —— 不认它就解析不了官方原文。
+   */
+  isStandard?: boolean;
   members: NamespaceMember[];
 }
 

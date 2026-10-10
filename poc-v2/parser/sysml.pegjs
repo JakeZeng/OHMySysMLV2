@@ -691,13 +691,17 @@ QName
 // M16 P1（Q18=B）：官方 Package 无特化能力（PackageDeclaration = 'package' Identification?，
 // 元模型 Package extends Namespace，不是 Classifier）——自造的 `package Sub : Parent` 已移除。
 // 包间复用的官方手段是 import（含 `::*` / `::**` / `[filter]`）与 alias。
+// M19.5：官方标准库每个文件都以 `standard library package <Name> {` 开头
+// （sysml.library/Systems Library/Actions.sysml 等），缺了前缀就解析不了官方原文。
+// 前缀是可选的 —— 普通用户模型不写它。
 Package
-  = "package" WS name:QualifiedName OPEN _ members:(_ PackageMember)* CLOSE
+  = prefix:("standard library" WS)? "package" WS name:QualifiedName OPEN _ members:(_ PackageMember)* CLOSE
     {
       return {
         kind: 'package',
         id: nextId('pkg'),
         name,
+        isStandard: !!prefix,
         members: members.map(m => m[1]),
         location: locationOf(location().start.offset),
       };
@@ -1124,7 +1128,37 @@ AcceptAction
       };
     }
 
-// 动作体成员 = 既有定义体成员 + 上述 6 类行为结构。
+// §7.7.6 SendActionUsage —— 官方记号 `send <payload> [from <sender>] to <receiver>;`
+//
+// 记号出处：sensmetry 的 send-action-parameters 校验规则给出的正反例（可直接当
+// 测试输入）：
+//     action { send; }          // error: A send action must have at least 2 owned
+//                               //        input parameters, expected 2 more
+//     occurrence r;
+//     action { send 4 to r; }   // ok
+// 规范侧对应三个参数（§7.17.7）：payload_argument / sender_argument / receiver_argument。
+// 本实现收 payload 与 receiver 为必需、sender 可选 —— 与规范「未给 sender 时取 action
+// 的 this 上下文」一致。
+//
+// ⚠️ payload / sender / receiver 用 QualifiedName 而不是 ActionExprText：
+// ActionExprText 是 `$(![;{}] .)+`，会一路吃到分号把 `to` 和 receiver 全吞进去。
+SendAction
+  = "send" WS payload:QualifiedName
+    from:(WS "from" WS f:QualifiedName { return f; })?
+    WS "to" WS receiver:QualifiedName
+    _ ";"
+    {
+      return {
+        kind: 'sendAction',
+        id: nextId('send'),
+        payload,
+        sender: from || undefined,
+        receiver,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// 动作体成员 = 既有定义体成员 + 上述 7 类行为结构。
 // 两处共用（PartBodyMember / ViewDefBodyClause），保证 `action def A { … }` 与
 // 视图体里的行为结构是同一套规则，不会出现「这里能写那里不能」。
 ActionBodyMember
@@ -1134,6 +1168,7 @@ ActionBodyMember
   / LoopControlStructure
   / PerformAction
   / AcceptAction
+  / SendAction
   / SuccessionStatement
   / PartBodyMemberNoStructure
 

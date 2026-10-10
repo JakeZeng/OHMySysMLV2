@@ -295,14 +295,14 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | 视图类型 | 置灰项 | 为什么 |
 |---|---|---|
 | ActionFlowView | 泳道 | 图形记号层概念（§8.2.3.17），语言层无对应构造 |
-| ActionFlowView | send 动作 | `payload` / `receiver` 的文本记号未查证到官方形态（accept / perform 已实现） |
+| ~~ActionFlowView / send 动作~~ | **已解除**：记号已查证并实现，见 §10.1 |
 | ActionFlowView | change / time trigger | transition 触发器目前只支持 `[ … ]` 形态 |
 | SequenceView | 事件后继（独立插入） | 消息体内的 \	hen event\ 已实现；单独插入时源无处可依（由前一个事件回填），故置灰 |
 | GeometryView | 坐标系 | `frame` 记号未实现 |
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
 | **全部 / 动作体** | **无花括号动作体**（官方 Actions.sysml 的写法） | 见 §10.1，官方原文如此 |
-| **全部 / 包** | `standard library package` 包前缀 | 见 §10.1，官方标准库每个文件都用 |
+| ~~**全部 / 包** / `standard library package` 包前缀~~ | **已解除**：可选前缀已支持（AST `isStandard`），见 §10.1 |
 | ~~全部 / `then` 继承连接~~ | **已解除**：语法层已落地，见 §9.4 |
 | ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
 
@@ -607,7 +607,21 @@ action { send 4 to r; }              // ok
 
 即 `send <payload> [from <sender>] to <receiver>;`。规范侧对应三个参数：
 `payload_argument` / `sender_argument` / `receiver_argument`（§7.17.7）。
-实现时应与既有的 `acceptAction` / `performAction` 同构进 `ActionBodyMember`。
+
+**✅ 已实现（M19.5，`SendAction` 规则）**：`send` + 必需 payload + 可选 `from <sender>`
++ 必需 `to <receiver>` + `;`。payload / sender / receiver 用 `QualifiedName`（不能用
+`ActionExprText` —— 它会一路吃到分号把 `to` 和 receiver 全吞进去）。工具箱
+`sendAction` 条目已从置灰翻转为 `supported: true`，画布侧复用 `sysmlAccept` 节点类型
+（该组件对缺失字段优雅降级，省掉前端类型注册与 Record 完备性改动）。
+
+⚠️ **`send` 刻意不注册进 `nameToViewNodeId`**：官方记号里 send 没有自己的名字，
+若拿 payload / receiver 当键，会与真正的结构元素名互相覆盖，`then` 就会指到错节点上
+（与 assignment 不注册是同一纪律）。`tests/modelToFlow.test.ts` 里用「receiver 与一个
+真动作同名」把它钉死。
+
+**⚠️ 顺带确认的独立缺口**：官方样例里那句 `occurrence r;` 仍解析失败（报
+`E000_PARSE_ERROR`，Expected "def"）。这是 OccurrenceUsage 语法本身的缺口，与 `send`
+无关，本轮未处理。
 
 **⚠️ 无花括号动作体（已逐字查得，官方 Actions.sysml 原文，下一轮必须支持）**：
 
@@ -628,9 +642,14 @@ then private action whileLoop
 以同级缩进的下一条成员为界。PEG 里要按行首缩进判界，属本文件里第一次需要
 **缩进敏感**的规则，需单独设计。
 
-**⚠️ `standard library package` 包前缀（已逐字查得）**：官方标准库每个文件都以
+**✅ `standard library package` 包前缀（已实现，M19.5）**：官方标准库每个文件都以
 `standard library package <Name> {` 开头（如 `standard library package Actions {`），
-我们的 `Package` 规则只认 `package`。要能解析官方标准库原文就必须补这个前缀。
+原来的 `Package` 规则只认 `package`。现在 `Package` 规则加了可选前缀
+`("standard library" WS)?` 并在 AST 上标 `isStandard`。
+
+**刻意设为可选**：普通用户模型不写它，加了会逼所有人多打几个字。`Package` 接口里
+`isStandard?: boolean`，未写前缀时解析器返回 `false`（不是 `undefined`，便于前端
+直接判断）。测试见 `behaviorStructureNotation.test.ts`（原护栏已翻转成正向断言）。
 
 
 **Control nodes**：`MergeAction` / `DecisionAction` / `JoinAction` / `ForkAction` 都是
@@ -648,9 +667,10 @@ then private action whileLoop
    只读 renderer → 拿不到工具箱。给只读 renderer 一个「进入建模」入口，或让工具箱
    在只读视图上也能用。
 2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层 +
-   画布渲染 + 工具箱均已完成**（见 §9.4）。下一步是 §10.1 里已逐字查得记号的三项：
-   **无花括号动作体**（官方 ForLoopAction 原文，最需要）、`send` 动作、
-   `standard library package` 前缀；再做 trigger / 坐标系 / 表格列 / 迁移效果动作。
+   画布渲染 + 工具箱均已完成**（见 §9.4）；~~`send` 动作 / `standard library package`
+   前缀~~ **已完成**（见 §10.1）。**下一步只剩 §10.1 的无花括号动作体**
+   （官方 ForLoopAction 原文，最需要，且需要本 pegjs 里第一次出现的缩进敏感规则）；
+   之后是 trigger / 坐标系 / 表格列 / 迁移效果动作（各需先查证官方记号）。
    写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
 
 3. ~~**视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档~~ **已完成**（见 §13）。

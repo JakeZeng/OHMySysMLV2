@@ -375,11 +375,45 @@ describe('官方 Actions.sysml · ForLoopAction 的 body（assign / perform 的�
     expect(r.errors.some((e) => e.code === 'E000_PARSE_ERROR')).toBe(true);
   });
 
-  it('护栏（缺口）：官方标准库的 `standard library package` 前缀也不认', () => {
+  it('`standard library package` 前缀已认（此前是护栏，现已实现）', () => {
     // 官方标准库每个文件都以 `standard library package <Name> {` 开头。
-    // 缺这个前缀意味着「解析官方标准库原文」这件事目前做不到。
+    // 前缀设为可选（普通用户模型不写它），AST 上用 isStandard 标记。
     const r = parse('standard library package Actions { }');
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const pkg = r.model.packages[0] as { isStandard?: boolean };
+      expect(pkg.isStandard).toBe(true);
+    }
+    // 不带前缀是普通 package，isStandard 为 false
+    const plain = parse('package Actions { }');
+    if (plain.ok) {
+      const pkg = plain.model.packages[0] as { isStandard?: boolean };
+      expect(pkg.isStandard).toBe(false);
+    }
+  });
+
+  it('`send` 动作：官方记号 `send <payload> [from <sender>] to <receiver>;` 已认（此前是护栏，现已实现）', () => {
+    // 记号来源：sensmetry/sysml-core-stdlib-lsp 的校验规则 send-action-parameters
+    // 引用的官方正确用法 `action { send 4 to r; }`（该规则把 `action { send; }` 判为错误，
+    // 即 send 至少要带 payload 与 receiver）。
+    const r = parse(`package P {
+	action SendP { send payload from sender to receiver; }
+}`);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const sends = findKind(r.model, 'sendAction');
+      expect(sends).toHaveLength(1);
+      expect(sends[0]).toMatchObject({
+        payload: 'payload',
+        sender: 'sender',
+        receiver: 'receiver',
+      });
+    }
+    // 不带 from 也是合法形；payload/receiver 可带限定名
+    expect(parse(`package P { action A { send p to r; } }`).ok).toBe(true);
+    expect(parse(`package P { action A { send P::q to R::s; } }`).ok).toBe(true);
+    // 裸 `send;` 不带 payload/receiver —— 与官方校验规则的判定一致，仍应失败
+    expect(parse(`package P { action A { send; } }`).ok).toBe(false);
   });
 });
 
@@ -404,3 +438,4 @@ describe('行为结构不破坏既有语法（回归护栏）', () => {
     expect(m.packages[0].members.length).toBeGreaterThan(0);
   });
 });
+

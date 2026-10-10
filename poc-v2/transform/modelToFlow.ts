@@ -482,6 +482,22 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
       ),
     );
   }
+  // M19.5 发送动作上画布（与工具箱里刚解除置灰的项对应）
+  for (const { node: sd, qname } of viewContent.sends) {
+    const id = `vsend:${sd.id}`;
+    // 刻意**不**注册 nameToViewNodeId：`send` 没有自己的名字（官方记号是
+    // `send <payload> to <receiver>;`），若拿 payload / receiver 当键，
+    // 会与真正的结构元素名互相覆盖，`then` 就会指到错的节点上。
+    nodes.push(
+      makeSendNode(
+        id,
+        String((sd as { payload?: string }).payload ?? ''),
+        (sd as { sender?: string }).sender,
+        String((sd as { receiver?: string }).receiver ?? ''),
+        keys.alloc(elementKeyBase('sendAction', qname)),
+      ),
+    );
+  }
   // M19.2 时序：事件发生上画布，消息成边（与工具箱里刚解除置灰的两项对应）
   for (const { node: ev, qname } of viewContent.events) {
     const id = `vevent:${ev.id}`;
@@ -1220,6 +1236,8 @@ interface ViewContentBuckets {
   messages: Q<Record<string, unknown>>[];
   // M19.3 继承连接（`then`）—— 连接而非成员，端点靠名字解析
   successions: Q<Record<string, unknown>>[];
+  // M19.5 发送动作（`send <payload> to <receiver>;`）
+  sends: Q<Record<string, unknown>>[];
 }
 
 function emptyViewContentBuckets(): ViewContentBuckets {
@@ -1239,6 +1257,7 @@ function emptyViewContentBuckets(): ViewContentBuckets {
     events: [],
     messages: [],
     successions: [],
+    sends: [],
   };
 }
 
@@ -1258,6 +1277,7 @@ const VIEW_CONTENT_DEEP_KINDS = new Set([
   'assignmentAction',
   'performAction',
   'acceptAction',
+  'sendAction',
   'eventOccurrence',
   'messageFlow',
   // M19.3 继承连接（`then`）
@@ -1359,6 +1379,9 @@ function collectViewContentDeep(ns: { name?: string; members: any[] }, buckets: 
           break;
         case 'acceptAction':
           buckets.accepts.push({ node: m, qname });
+          break;
+        case 'sendAction':
+          buckets.sends.push({ node: m, qname });
           break;
         case 'eventOccurrence':
           buckets.events.push({ node: m, qname });
@@ -1542,6 +1565,9 @@ function collectMembers(
         break;
       case 'acceptAction':
         viewContent?.accepts.push({ node: m, qname });
+        break;
+      case 'sendAction':
+        viewContent?.sends.push({ node: m, qname });
         break;
       // M19.2 时序元素（事件发生 / 消息）
       case 'eventOccurrence':
@@ -1772,6 +1798,29 @@ function makePerformNode(id: string, target: string, stableKey: string): Node {
     type: 'sysmlPerform',
     position: { x: 0, y: 0 },
     data: { label: `perform ${target}`, kind: 'performAction', target, stableKey },
+  };
+}
+
+/**
+ * M19.5 §7.7.6 发送动作：`send <payload> [from <sender>] to <receiver>;`
+ *
+ * label 里 sender 是可选的，缺失时不显示空段落 —— 规范规定未给 sender 时
+ * 取 action 的 this 上下文，展示成「无 sender」比显示一个空括号更诚实。
+ */
+function makeSendNode(
+  id: string,
+  payload: string,
+  sender: string | undefined,
+  receiver: string,
+  stableKey: string,
+): Node {
+  const label =
+    sender ? `send ${payload} from ${sender} to ${receiver}` : `send ${payload} to ${receiver}`;
+  return {
+    id,
+    type: 'sysmlAccept',
+    position: { x: 0, y: 0 },
+    data: { label, kind: 'sendAction', payload, sender, receiver, stableKey },
   };
 }
 

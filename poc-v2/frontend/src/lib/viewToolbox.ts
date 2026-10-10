@@ -537,12 +537,13 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     icon: '📤',
     specRef: '§7.7.6 SendActionUsage',
     contract: 'Send and accept actions',
-    description: '发送动作',
-    defaultName: 'Send',
-    generate: (n) => `send ${n};`,
-    supported: false,
-    unsupportedReason:
-      '发送动作的记号（payload / receiver）未查证到官方文本形态，先只开放 accept 与 perform',
+    description:
+      '发送动作：`send <载荷> [from <发送方>] to <接收方>;`（sender 可省略，' +
+      '省略时取所在 action 的 this 上下文）',
+    defaultName: 'payload',
+    defaultName2: 'receiver',
+    generate: (n, t = 'receiver') => `send ${n} to ${t};`,
+    supported: true,
   },
   {
     kind: 'changeTimeTrigger',
