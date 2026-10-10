@@ -39,9 +39,14 @@ function ok(src: string) {
   return r.model;
 }
 
-function findKind(m: unknown, kind: string, out: Record<string, unknown>[] = []) {
+function findKind(m: unknown, kind: string, out: Record<string, unknown>[] = [], seen: Set<unknown> = new Set()) {
   if (!m || typeof m !== 'object') return out;
   const node = m as Record<string, unknown>;
+  // ⚠️ 按引用去重：Activity 同时持有 `actions`/`flows`（分类视图）与
+  // `members`（全量视图），两者指向**同一批对象**。不去重会把每个 flow
+  // 数两次，于是「活动里有 1 条 flow」的断言变成 2。
+  if (seen.has(node)) return out;
+  seen.add(node);
   if (node.kind === kind) out.push(node);
   // ⚠️ 顶层成员不在 package.members 里：File 规则把 activity / state machine /
   // connection / requirement 等**分流到各自的数组**（M16 P1 的收集策略）。
@@ -60,7 +65,7 @@ function findKind(m: unknown, kind: string, out: Record<string, unknown>[] = [])
     'flows',
   ]) {
     const v = node[key];
-    if (Array.isArray(v)) for (const c of v) findKind(c, kind, out);
+    if (Array.isArray(v)) for (const c of v) findKind(c, kind, out, seen);
   }
   return out;
 }
@@ -165,10 +170,14 @@ describe('时序记号的回归护栏', () => {
     expect(findKind(r.model, 'messageFlow')).toHaveLength(0);
   });
 
-  it('裸 `then …;` 仍未实现（独立一轮工作，见 M19 交接文档）', () => {
-    // 钉住现状：官方 `then state wait;` 这类「成员之间的继承连接」还不支持。
-    // 实现之后把本测试改成「能解析」。
-    const r = parse('package S {\n\tstate def S {\n\t\tthen wait;\n\t}\n}');
-    expect(r.ok).toBe(false);
+  it('`then` 继承连接：源由同 body 前一个具名成员决定（官方 §14.2.6）', () => {
+    // M19.3 实现后官方最常用的连接词已落地。源**不写在语法里**（PEG 无状态），
+    // 由 resolveSuccessions() 从「同 body 前一个具名成员」回填。
+    const r = parse('package S {\n\tstate def S {\n\t\tstate open;\n\t\tthen wait;\n\t}\n}');
+    expect(r.ok).toBe(true);
+    const succ = findKind(r.model, 'succession');
+    expect(succ).toHaveLength(1);
+    expect(succ[0].target).toBe('wait');
+    expect(succ[0].source).toBe('open');
   });
 });

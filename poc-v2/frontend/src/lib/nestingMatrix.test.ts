@@ -145,9 +145,12 @@ describe('nestingMatrix — unsupportedReason', () => {
     expect(unsupportedReason('stateMachine', 'transition')).toBeUndefined();
   });
 
-  it('状态机家族在非状态机容器 → 引导先建状态机', () => {
+  it('状态机家族在非状态机/零件定义容器 → 引导先建对应容器', () => {
     expect(unsupportedReason('package', 'state')).toContain('状态机');
-    expect(unsupportedReason('partDef', 'transition')).toContain('状态机');
+    // M19.3：partDef 现在接受 transition，不再需要引导（旧断言钉在这里，
+    // 正是「矩阵与语法不同步」的另一面）。portDef 仍不接受。
+    expect(unsupportedReason('portDef', 'transition')).toContain('状态机');
+    expect(unsupportedReason('partDef', 'transition')).toBeUndefined();
   });
 
   it('语法未支持元素 → 说明后续扩展', () => {

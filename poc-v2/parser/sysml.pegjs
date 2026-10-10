@@ -236,6 +236,61 @@
       location: locationOf(loc),
     };
   }
+
+  // M19.3：后继的名字 —— 控制节点 / 动作 / 状态用 `name`，perform 用 `target`。
+  function successorName(d) {
+    if (!d) return undefined;
+    return d.name || d.target || undefined;
+  }
+  // M19.3：把每条 `then X;` 的源填成同一容器里**前一个具名成员**。
+  //
+  // 为什么能这么做：`then` 的源在语义上是「同一个 body 里排在它前面的成员」，
+  // 而 body 在 AST 里就是成员数组 —— 顺序即语义，遍历一次即可。
+  //
+  // 递归要覆盖所有成员数组：members / body / actions / flows / states /
+  // declaration 里的嵌套成员。漏一层 = 那一层的 then 永远是空源（边上画不出来）。
+  function resolveSuccessions(root) {
+    const CHILD_KEYS = ['members', 'body', 'actions', 'flows', 'states'];
+
+    function memberName(m) {
+      if (!m || typeof m !== 'object') return undefined;
+      if (m.kind === 'succession') return undefined; // 继承连接本身不是源
+      // 连接不是 occurrence：flow / transition / message 表达的是 A→B 的**边**，
+      // 不是命名实体。它们的 `target` 字段是边的一端，不是名字 —— 若把它当名字，
+      // `flow a to b; then c;` 会把 c 的源错认成 `b`。
+      if (m.kind === 'controlFlow' || m.kind === 'transition' || m.kind === 'messageFlow') return undefined;
+      return m.name || m.target || undefined;
+    }
+
+    function walkList(list) {
+      if (!Array.isArray(list)) return;
+      let prevName;
+      for (const m of list) {
+        if (m && m.kind === 'succession') {
+          // 源为空时**保留 undefined**，不猜：官方也允许「没有前驱」的 then
+          // （它表达与 body 外上下文相连），猜一个反而会画错边。
+          if (m.source === undefined && prevName !== undefined) m.source = prevName;
+        } else {
+          const n = memberName(m);
+          if (n) prevName = n;
+        }
+        for (const k of CHILD_KEYS) {
+          if (m && Array.isArray(m[k])) walkList(m[k]);
+        }
+        if (m && m.declaration) {
+          // `then action b;` 这种「后继自带声明」：声明体里的成员也要解析，
+          // 且它本身成为新的前驱（后续的 then 接的是它，不是它前面那个）。
+          if (Array.isArray(m.declaration.body)) walkList(m.declaration.body);
+          const dn = memberName(m.declaration);
+          if (dn) prevName = dn;
+        }
+      }
+    }
+
+    for (const key of ['packages', 'views', 'viewpoints', 'activities', 'stateMachines', 'requirements']) {
+      walkList(root[key]);
+    }
+  }
 }}
 
 // ─── 入口 ──────────────────────────────────────────────────────────────
@@ -284,7 +339,11 @@ File
           location: locationOf(rootMembers[0].location?.offset ?? 0),
         });
       }
-      return { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments, views, viewpoints };
+      // M19.3：`then` 的源由**同一 body 里的前一个成员**决定，语法层拿不到，
+      // 这里统一回填一次（见 SuccessorDeclaration 上方的说明）。
+      const model = { packages, connections, stateMachines, activities, requirements, traceLinks, constraintBlocks, enums, comments, views, viewpoints };
+      resolveSuccessions(model);
+      return model;
     }
 
 // 官方 RootNamespace（Pilot SysML.xtext L36）= PackageBodyElement*：
@@ -449,6 +508,7 @@ ViewDefBodyClause
   / ActionBodyMember
   // `in p : Real;` / `out p : Real;` —— §7.7.10 带方向的参数用法
   / ImplicitFeatureWithDir
+  / DirectedReferenceUsage
   / PackageMember
 
 // 官方 expose 形式（§8.2.2.26 BNF）。`**` 分支必须排在 `*` 之前。
@@ -785,9 +845,16 @@ PartBodyMemberNoStructure
   // AttributeDef 必须排在 Attribute 前（`attribute def X` vs `attribute x : T`）
   / AttributeDef
   / InterfaceDef
-  // S5c：行为定义同样可内联嵌套（`state` usage 不在 part body 里，无歧义）
+  // S5c：行为定义同样可内联嵌套
   / ActionDefinition
   / StateDefinition
+  // M19.3：状态**用法**与迁移语句也是定义体的合法成员。官方最经典的 SysML
+  // 例子正是这个形状（因此上面那句「state usage 不在 part body 里」已过时）：
+  //     part def Door { state open; state closed; transition open to closed; }
+  // 改造前 def body 里只能放 `state def`，于是带状态的 part 定义根本写不出来。
+  // StateDef 必须排在 StateDefinition 之后 —— 两者由 `def` 守卫区分。
+  / StateDef
+  / TransitionStatement
   / CalcDefinition
   / UseCaseDef
   / AnalysisCaseDef
@@ -804,6 +871,7 @@ PartBodyMemberNoStructure
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  / DirectedReferenceUsage
   // ── M19：标准视图的内容契约元素 ──────────────────────────────
   // 官方 8 个标准视图的「Valid nodes and edges」逐条对应下面这些产生式。
   // 缺任何一条，工具箱列出来的元素用户就写不出来（目录与语法必须同批交付）。
@@ -941,10 +1009,24 @@ AssignmentAction
       };
     }
 
-// §7.7.6 PerformActionUsage
-// 官方原文：`perform c.incr;`（AssignmentTest.sysml 的 calc def 内）
+// §7.7.6 PerformActionUsage —— 官方有**两种**形态，两种都收：
+//     perform <特征路径>;                      引用一个已存在的动作
+//     perform action <名> { … }                内联声明并执行一个动作
+//   （后者见 StructuredControlTest / ServerSequenceRealization-3 的原文）
+// ⚠️ 只实现第一种时，第二种会静默退化成「perform + 动作用法被当成别的东西」，
+//   报错还落在动作名上。
 PerformAction
-  = "perform" WS target:FeaturePath _ ";"
+  = "perform" WS decl:ActionUsageInBody
+    {
+      return {
+        kind: 'performAction',
+        id: nextId('perform'),
+        target: decl.name,
+        declaration: decl,
+        location: locationOf(location().start.offset),
+      };
+    }
+  / "perform" WS target:FeaturePath _ ";"
     {
       return {
         kind: 'performAction',
@@ -1052,9 +1134,61 @@ ActionBodyMember
   / LoopControlStructure
   / PerformAction
   / AcceptAction
+  / SuccessionStatement
   / PartBodyMemberNoStructure
 
-// ─── M19.2：时序视图的内容契约元素（官方 Interaction Sequencing Examples 原文）──
+// ─── M19.3：`then` 继承连接（官方示例里最常见的连接词）──────────────────
+//
+// `then` 不是「又声明了一个元素」，而是**当前成员的后继**：语义上等价于
+// SuccessionConnectorUsage，源是同一个 body 里**前一个成员**。
+//
+// 官方原文里出现过的全部形态（逐条来自 StructuredControlTest / AssignmentTest /
+// ServerSequenceRealization-3）：
+//     then private action whileLoop while … { … }   后继 + 声明 + 可见性前缀
+//     then merge continuePublishing;                 后继是控制节点
+//     then decide;                                  后继是控制节点且无名
+//     then action publishing { … }                   后继是新动作声明
+//     then state wait;                               后继是状态用法
+//     then increment;                                后继指向已存在的特征
+//     then perform body;                             后继是 perform
+//     then assign index := index + 1;                 后继是赋值
+//
+// ⚠️ 源（source）**不在语法里** —— 它由 `then` 在同一 body 中的**前一个成员**决定。
+// PEG 是无状态的，所以这里只产出 `{source: undefined}`，由 File 阶段的
+// `resolveSuccessions()` 回填（见文件末尾）。这是本文件里唯一一处「后处理」的
+// 需求，代价换来的是不必把 source 作为隐式上下文塞进每个 body 规则。
+SuccessorDeclaration
+  = NamedLoopAction
+  / ActionUsageInBody
+  / StateDef
+  / ControlNodeUsage
+  / PerformAction
+  / AssignmentAction
+
+SuccessionStatement
+  = "then" WS d:SuccessorDeclaration
+    {
+      return {
+        kind: 'succession',
+        id: nextId('succ'),
+        target: successorName(d),
+        declaration: d,
+        source: undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+  / "then" WS name:Identifier _ ";"
+    {
+      return {
+        kind: 'succession',
+        id: nextId('succ'),
+        target: name,
+        source: undefined,
+        location: locationOf(location().start.offset),
+      };
+    }
+
+// ─── M19：时序视图的内容契约元素（官方 Interaction Sequencing Examples 原文）──
 //
 // 依据 sysml/src/examples/Interaction Sequencing Examples/ServerSequenceRealization-3.sysml：
 //     part :>> producer :> producer_3 {
@@ -1272,6 +1406,7 @@ PortBodyMember
   / PortRedefines
   / Attribute
   / ImplicitFeatureWithDir
+  / DirectedReferenceUsage
   / DocStatement
 
 // ─── Part Usage ────────────────────────────────────────────────────────
@@ -1406,6 +1541,28 @@ ImplicitFeatureWithDir
   = dir:Direction WS name:Identifier WS ":" WS typeRef:QualifiedName defv:DefaultValue? _ ";"
     { return dirAttr(location().start.offset, name, typeRef, dir, defv); }
 
+// M19.3：`<方向> ref <名> : <类型>;` —— 官方 ServerSequenceRealization-3 全篇在用
+//（`in ref request : Subscribe[1];` / `out ref response : Deliver;`）。
+//
+// ⚠️ 没有这条规则时，`in ref request : T;` 会被 ImplicitFeatureWithDir 读成
+// 「方向 in + 名字 ref」，然后卡在 `:` 上报 `Expected ":" but "r" found` ——
+// 报错信息完全指不到真因。
+//
+// 放在 ImplicitFeatureWithDir **之前**：`ref` 出现在方向关键字之后、名字之前，
+// 位置上没有歧义，必须优先匹配。
+DirectedReferenceUsage
+  = dir:Direction WS "ref" WS name:Identifier multiplicity:(_ Multiplicity)? WS ":" WS typeRef:QualifiedName typeMult:(_ Multiplicity)? defv:DefaultValue? _ ";"
+    {
+      return {
+        kind: 'referenceUsage',
+        id: nextId('ref'),
+        name,
+        typeRef,
+        direction: dir,
+        location: locationOf(location().start.offset),
+      };
+    }
+
 // 默认值：官方写法是 `:=`（`attribute count : ScalarValues::Integer := 0;`），
 // 旧的 `=` 形式保留兼容。
 // ⚠️ `:=` 必须排前面 —— PEG 有序选择，`"="` 会把 `:=` 的冒号留给后面，
@@ -1440,8 +1597,19 @@ StateMachineMember
   = StateDef
   / TransitionStatement
 
+// ⚠️ body 可选：官方状态用法常带 body（AssignmentTest.sysml 原文
+//     `state increment { do assign counter.count := counter.count + 1; }`）。
+//     改造前只接受 `state name;`，于是带 body 的状态退到 StateDefinition、
+//     报出「Expected "def"」这种完全指不到真因的错。
+//
+// ⚠️ 两个负前瞻守卫必不可少（回归护栏）：`state` 是 `state def X {}`
+// （StateDefinition）与 `state machine X {}`（StateMachine）的公共前缀。
+// body 与 `;` 一旦可选，`StateDef` 就能把 `def` / `machine` 当成名字吃掉，
+// 再吐出「剩余 token 不在预期位置」这种完全指不到真因的错。
+// `!IdentifierChar` 与 `ActionUsage` 同形：`state defX;` 里的 `defX` 是名字，
+// 只有 `def` + 分隔符才是真正的 `state def`。
 StateDef
-  = isInitial:("initial" WS)? isFinal:("final" WS)? "state" WS name:Identifier _ ";"
+  = isInitial:("initial" WS)? isFinal:("final" WS)? "state" WS !("def" !IdentifierChar) !("machine" _) name:Identifier body:PartUsageBody? _ ";"?
     {
       return {
         kind: 'stateDef',
@@ -1449,6 +1617,7 @@ StateDef
         name,
         isInitial: !!isInitial,
         isFinal: !!isFinal,
+        body: body || undefined,
         location: locationOf(location().start.offset),
       };
     }
@@ -1499,6 +1668,10 @@ Activity
         name,
         actions,
         flows,
+        // M19.3：保留**全部**成员。以前只挑 action / flow 两类，其余（`then`
+        // 继承连接、控制结构、参数…）在构造节点时被静默丢掉 —— 活动体里的
+        // `then a; then b;` 因此永远解析不到、也画不出来。
+        members: members.map(m => m[1]),
         location: locationOf(location().start.offset),
       };
     }
@@ -1506,6 +1679,8 @@ Activity
 ActivityMember
   = ActionDef
   / FlowStatement
+  // M19.3：活动体内的 `then` 继承连接（官方示例里动作之间就是用 then 连的）
+  / SuccessionStatement
 
 ActionDef
   = isInitial:("initial" WS)? isFinal:("final" WS)? "action" WS name:Identifier _ ";"

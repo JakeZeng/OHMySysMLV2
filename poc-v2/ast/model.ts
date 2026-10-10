@@ -247,6 +247,23 @@ export interface StateActionUsage extends SysMLNode {
   phase: 'entry' | 'do' | 'exit';
 }
 
+/**
+ * M19.3 `then` 继承连接（SuccessionConnectorUsage）。
+ *
+ * `then` 不是「又声明了一个元素」，而是**当前成员的后继**。源（source）不在
+ * 语法里 —— 它是同一个 body 里排在它前面的具名成员，由 parser 的
+ * `resolveSuccessions()` 在 File 阶段回填。
+ */
+export interface Succession extends SysMLNode {
+  kind: 'succession';
+  /** 后继的名字（状态 / 动作 / 控制节点名，或 perform 的特征路径） */
+  target: string;
+  /** 后继成员；`then <已有特征>;` 这种裸引用形式没有 */
+  declaration?: NamespaceMember;
+  /** 同 body 里的前一个具名成员；没有前驱时为 undefined（不猜） */
+  source?: string;
+}
+
 /** M19 视图内容成员 union（PartBodyMember / NamespaceMember 共用子集） */
 export type M19ViewContentMember =
   | StructureDefinition
@@ -254,7 +271,8 @@ export type M19ViewContentMember =
   | ActionUsage
   | ControlNodeUsage
   | BindingConnectorUsage
-  | StateActionUsage;
+  | StateActionUsage
+  | Succession;
 
 // ─── Usage ──────────────────────────────────────────────────────────────
 

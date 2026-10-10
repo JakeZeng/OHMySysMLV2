@@ -168,6 +168,16 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     // `part def P { action a; }` 在 SysML v2 里成立（ActionUsage 是 Usage）。
     // 此前差分测试红在这里：语法接受、矩阵说不接受。
     'activityAction',
+    // M19.3：状态**用法**与迁移语句同样是 PartBodyMember 的合法成员。
+    // 官方最经典的 SysML v2 例子正是这个形状：
+    //     part def Door { state open; state closed; transition open to closed; }
+    // 改造前 PartBodyMember 只接受 `state def`，于是带状态的 part 定义写不出来
+    // （语法报「Expected "def"」，完全指不到真因）。矩阵与语法此前不同步，
+    // 差分测试把这四处钉红 —— 现在两边一致了。
+    'state',
+    'initialState',
+    'finalState',
+    'transition',
   ],
   portDef: ['portUsage', 'attributeUsage'],
   // 状态机成员是 state / initial state / final state / transition（usage 形态）；
@@ -286,15 +296,20 @@ export function unsupportedReason(
 ): string | undefined {
   if (ALLOWED_SETS[container].has(kind)) return undefined;
 
-  // 状态机家族：语法支持但只能在状态机内使用
+  // 状态机家族：语法支持，但只能在状态机或零件定义内使用。
+  // M19.3 起 part def 的 body 也接受 state / transition（官方 `part def Door
+  // { state open; transition open to closed; }`），此前这条提示对所有非状态机
+  // 容器一刀切，会在 part def 里错说「先在文本模式创建 state machine」——
+  // 用户其实就在一个能直接收状态的地方。
   if (
     (kind === 'state' ||
       kind === 'initialState' ||
       kind === 'finalState' ||
       kind === 'transition') &&
-    container !== 'stateMachine'
+    container !== 'stateMachine' &&
+    container !== 'partDef'
   ) {
-    return '需在状态机内使用：先在文本模式创建 state machine，再向其 body 添加该元素';
+    return '需在状态机或零件定义内使用：先创建 state machine 或 part def，再向其 body 添加该元素';
   }
 
   // 语法尚未支持的元素（语法扩展波次）

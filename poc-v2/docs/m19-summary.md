@@ -258,6 +258,37 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | `flow m from …` 即可 | `flow :>> m from …`（名字前带重定义） | ServerSequenceRealization-3 |
 | 带 body 的语句结尾要 `;` | `… { … }` 后**没有分号** | 同上 |
 | `:>>` 中 `:` 与 `>>` 之间可要空白 | 紧邻，`:>>` 是整个记号 | 同上 |
+| 状态只能是 `state n;`（无 body） | `state increment { do assign …; }`（状态可带 body） | AssignmentTest |
+| `part def` 体里只能放 `state def` | `part def Door { state open; transition open to closed; }` | 官方教程最经典例子 |
+| 活动体只有 action / flow 两类成员 | 控制结构 / `then` / 参数同样是活动成员 | AssignmentTest |
+| `then` 没有统一形态 | 8 种：`then a;` / `then action a {}` / `then private action a;` / `then state wait;` / `then merge x;` / `then decide;` / `then perform b;` / `then assign i := 1;` | AssignmentTest / StructuredControlTest / ServerSequenceRealization-3 |
+
+### 9.2.1 本轮（`then`）顺带修掉的三个既有缺陷
+
+都是「语法层接受不了官方原文」这类根因级缺陷，不是加新功能：
+
+1. **`part def` 里写不出状态与迁移** —— `PartBodyMember` 只接 `StateDefinition`（`state def`），
+   于是 `part def Door { state open; }` 报「Expected "def"」，报错位置完全指不到真因。
+   官方教程第一个状态示例就是这个形状。已在 `PartBodyMember` 补 `StateDef` 与
+   `TransitionStatement`（必须排在 `StateDefinition` 之后，两者由 `def` 守卫区分）。
+   `frontend/src/lib/nestingMatrix.ts` 的矩阵此前与语法不同步，差分测试把
+   `partDef > state / initialState / finalState / transition` 四条钉红 —— 现在两边一致了。
+2. **活动体只保留两类成员，其余静默丢弃** —— `Activity` 构造时只挑 `actionDef` 与
+   `controlFlow`，其它成员（`then`、控制结构、参数）在构造节点时消失。现在同时保留
+   `members`（全量）与 `actions`/`flows`（分类视图，指向同一批对象）。
+   ⚠️ 副作用：`tests/sequenceNotation.test.ts` 的 `findKind` 递归同时遍历 `members`
+   / `actions` / `flows`，每个 flow 被数两次 —— helper 已按引用去重（`seen` Set），
+   这才是「1 条 flow」断言的正确语义。
+3. **`then` 的源被连接类成员污染** —— `resolveSuccessions()` 的 `memberName` 用
+   `m.name || m.target` 取名，而 `controlFlow` / `transition` / `messageFlow` 都有
+   `target` 字段（边的端点，不是名字）。于是 `flow a to b; then c;` 会把 c 的源
+   错认成 `b`。已显式排除连接类 kind。
+4. **改 StateDef 时踩出的回归：`state def` 被 `StateDef` 吃掉** —— 给 `StateDef` 加可选
+   body 时，`body` 与 `;` 都变成可选，于是 `StateDef` 能把 `state def X {}` 里的 `def`
+   当成名字吃掉，抢在 `StateDefinition` 之前，随后吐出「剩余 token 不在预期位置」这种
+   指不到真因的错。`state machine X {}` 同理。修法是参照 `ActionUsage` 已有的守卫写法，
+   加两个负前瞻：`!("def" !IdentifierChar) !("machine" _)`。
+   ⚠️ 注意 `!IdentifierChar` 是必需的：`state defX;` 里的 `defX` 是合法名字。
 
 ### 9.3 仍然置灰的项
 
@@ -270,16 +301,51 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | GeometryView | 坐标系 | `frame` 记号未实现 |
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
-| 全部 | `then` 继承连接 | 见下 |
+| ~~全部 / `then` 继承连接~~ | **已解除**：语法层已落地，见 §9.4 |
 | ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
 
-### 9.4 `then` 继承连接（成员之间）
+### 9.4 `then` 继承连接（成员之间）—— 已实现
 
 官方示例里动作/状态之间普遍用 `then` 连接（`then state wait;` / `then private action
-whileLoop`）。未实现的理由不是记号难，而是**它是连接而非成员**，落进现有语法需要
-一套 successor 表达（源 / 目标 / 可选多重性），会牵动 AST 与画布边语义 —— 属于独立
-一轮工作，不适合塞进本轮。`behaviorStructureNotation.test.ts` 里有一条测试**钉住这个
-现状**（断言官方 `then` 写法当前解析失败），实现之后把该测试改成「能解析」即可。
+whileLoop`）。此前未实现的理由是**它是连接而非成员**，需要一套 successor 表达（源 /
+目标）与画布边语义。这一轮已把语法层落地，官方全部 8 种形态可解析。
+
+**记号（官方 §14.2.5 / §14.2.6，逐字钉在 `tests/successionNotation.test.ts`）**：
+
+```
+<succession declaration> ::= [visibility] then <action usage>
+<action usage>           ::= [<direction>] action [name] [: type] [concrete]
+<state usage>            ::= state [name] [: type] [concrete]
+```
+
+官方原文三段（测试输入，逐字喂进 parser）：
+
+- `AssignmentTest`：`then private action a;` / `then private action b { assign j := i; };` /
+  `then a;` / `then action a { assign j := 1; assign i := i - j; };`
+- `StructuredControlTest`：`if (i < 100) then assign i := i + 1; else assign i := 100;` /
+  `loop then assign i := 2;` / `state increment { do assign i := 2; }`
+- `ServerSequenceRealization-3`：`then merge request;` / `then event;` / `then action Send;` /
+  `then decide;` / `then state wait;`
+
+**两个关键设计决定**：
+
+1. **源不写进语法**。官方规定源是「同一 body 里排在它前面的具名成员」，而 PEG 无状态，
+   跨语句引用前驱只能靠后处理。`resolveSuccessions()` 在 File 阶段一次性回填
+   `source`，代价是 AST 里该字段先为 `undefined` 再被填。递归覆盖
+   `members / body / actions / flows / states` 与 `declaration.body` 每一层 —— 漏一层，
+   那一层的 `then` 永远空源，边上画不出来。
+2. **无前驱时保留 `undefined`，不猜**。官方允许 `then` 与 body 外的上下文相连
+   （§14.2.6 尾注），猜一个源反而画错边。
+
+**两条不该出现的 succession 也被钉住**：
+
+- **succession 自身不成为后续 then 的源** —— 官方 `then a; then b; then c;` 表达链式
+  a→b→c，若让 succession 成为前驱会连成 a→b、a→c。
+- **`accept X` 后面跟的 `then Y` 不是 body 级 succession** —— 它属于
+  AcceptActionUsage 的 ownedRelationship（已映射为 `thenTarget`），测试专门断言
+  「不该出现 `Incr → increment` 这条 succession」。
+
+**仍未落地**：`then` 的画布渲染（succession 边）与工具箱解除置灰，属下一轮。
 
 **刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已为此返工过一轮。
 
@@ -500,10 +566,10 @@ state aState  {
    `GridView` / `BrowserView` 按标准库推荐渲染（表格 / 树图），而这两种渲染走
    只读 renderer → 拿不到工具箱。给只读 renderer 一个「进入建模」入口，或让工具箱
    在只读视图上也能用。
-2. 按 §10.1 的查证结果补齐剩余置灰项：优先 `then` 继承连接（需要一套 successor
-   表达 + 边语义，独立一轮工作），再做 send 动作 / trigger / 时序图事件与消息。
+2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层已完成**
+   （见 §9.4），下一步是它的**画布渲染**（succession 边）与工具箱解除置灰；
+   再做 send 动作 / trigger / 时序图事件与消息。
    写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
-3. **视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档，
-   应展示特化引用 / rendering 类别 / 官方内容契约清单。
+3. ~~**视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档~~ **已完成**（见 §13）。
 4. **参数上画布**：`in p : Real;` / `out p : Real;` 语法可解析但不渲染节点
    （attribute 全局都不渲染，属既有行为；若要修需同步动包侧布局）。
