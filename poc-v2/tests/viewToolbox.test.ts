@@ -253,7 +253,14 @@ describe('工具箱条目自身的不变量', () => {
 
   it('每条都有规范出处与内容契约归属', () => {
     for (const item of allItems) {
-      expect(item.specRef, item.kind).toMatch(/§/);
+      // 出处有两种形态：
+      //   · `§x.y …`        —— 规范章节引用
+      //   · `Systems Library/…` —— 直接指向已离线核对的标准库原文件
+      // 后者是**更硬**的出处：它证明「记号在官方源码里查过了」，而不是猜一个章节号。
+      // 三条「官方记号不存在」的置灰项（changeTimeTrigger / transitionEffect /
+      // coordinateFrame）用的就是这种形态 —— 出处就是「核过 Views.sysml / Actions.sysml /
+      // States.sysml 全文，确认无此构造」。
+      expect(item.specRef, item.kind).toMatch(/§|Systems Library/);
       expect(item.contract, item.kind).toBeTruthy();
       expect(item.description, item.kind).toBeTruthy();
     }

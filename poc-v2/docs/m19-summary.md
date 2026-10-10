@@ -292,19 +292,29 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 
 ### 9.3 仍然置灰的项
 
-| 视图类型 | 置灰项 | 为什么 |
+**判定依据**：`sysml.library/Systems Library/` 三个包的原文件已离线核对 ——
+Actions.sysml（15183B，SHA `cc78878`）、States.sysml（3371B，SHA `9d77348`）、
+Views.sysml（3973B，SHA `3084780`）。此前的置灰理由里有几条建立在**未经核实的前提**
+上，本轮逐条对着原文件改判：
+
+| 视图类型 | 置灰项 | 结论 |
 |---|---|---|
-| ActionFlowView | 泳道 | 图形记号层概念（§8.2.3.17），语言层无对应构造 |
+| ActionFlowView | 泳道 | **官方记号不存在**。泳道是图形记号层概念（§8.2.3.17），语言层无对应构造 |
+| ActionFlowView | change / time trigger | **官方记号不存在**。`Actions.sysml` 的 `TransitionAction` 用<br>`ref acceptedMessage … >> trigger` +<br>`ref receiver >> triggerTarget`，<br>**没有** `change` / `time` / `event` 关键词。`DecisionTransitionAction` 的注释更直接：<br> *"A DecisionTransitionAction is a TransitionAction and NonStateTransitionPerformance that has a guard, but no trigger or effects."*<br>文本形态只有我们已实现的 `[ … ]`（`sysml.pegjs:1666`） |
+| SequenceView | 事件后继（独立插入） | **设计如此**。消息体内的 `then event` 已实现；单独插入时源无处可依（由前一个事件回填） |
+| GeometryView | 坐标系 | **官方记号不存在**。`Views.sysml`（唯一视图包）里没有任何 `frame` / `coordinate` 构造，标准库目录里也没有 `Frames.sysml` / `Geometry.sysml` |
+| GridView | 列视图 / 关系矩阵 | **记号存在但刻意不实现**。`asElementTable` 的列写法是<br>`view columnView[0..*] ordered { abstract ref rendering >> viewRendering[0..1]; }`<br>—— 一个 `view` 用法，**只出现在标准库自己的渲染定义里**，用户模型不写。我们不支持 `view` 用法带多重性 + `ordered`，这是标准库内部细节 |
+| ~~StateTransitionView / 迁移效果动作~~ | **已解除**（前提本身是错的）。官方记号是挂在 **state** 上的<br>`entry action a;` / `do action a;` / `exit action a;`<br>（`States.sysml` 的 `StateAction`：`entry action entryAction >>> 'entry';` / `do action doAction: Action >>> 'do';` / `exit action exitAction: Action >>> 'exit';`），**不是**挂在 transition 上。<br>`sysml.pegjs:1387-1418` 两种写法（`entry action a;` 与 `entry assign x := 0;`）都已实现，实测解析通过。此前的「transition 带 body」是我们自己的臆测 |
 | ~~ActionFlowView / send 动作~~ | **已解除**：记号已查证并实现，见 §10.1 |
-| ActionFlowView | change / time trigger | transition 触发器目前只支持 `[ … ]` 形态 |
-| SequenceView | 事件后继（独立插入） | 消息体内的 \	hen event\ 已实现；单独插入时源无处可依（由前一个事件回填），故置灰 |
-| GeometryView | 坐标系 | `frame` 记号未实现 |
-| GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
-| StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
-| ~~**全部 / 动作体** / **无花括号动作体**（官方 Actions.sysml 的写法）~~ | **已解除**：文本层归一化已支持，见 §10.1 |
-| ~~**全部 / 包** / `standard library package` 包前缀~~ | **已解除**：可选前缀已支持（AST `isStandard`），见 §10.1 |
+| ~~全部 / 动作体 / 无花括号动作体（官方 Actions.sysml 的写法）~~ | **已解除**：文本层归一化已支持，见 §10.1 |
+| ~~全部 / 包 / `standard library package` 包前缀~~ | **已解除**：可选前缀已支持（AST `isStandard`），见 §10.1 |
 | ~~全部 / `then` 继承连接~~ | **已解除**：语法层已落地，见 §9.4 |
 | ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
+
+> **一个教训**：三条置灰项（change/time trigger、坐标系、迁移效果动作）被挂在那里
+> 的原因不是「我们没做」，而是**我们把官方没有的东西当成了官方有的东西**。
+> 本轮对着原文件核对才发现：只有 GridView 的 `columnView` 是真有记号的（且不需要做），
+> 另外三条根本无从实现。所以「置灰」这个说法对它们也不准确 —— 应该是**标不适用**。
 
 
 ### 9.4 `then` 继承连接（成员之间）—— 已实现
@@ -553,9 +563,10 @@ elements」，根与层级成员都可以是任意模型元素）。已改为给
 
 ## 10. 下一步
 
-### 10.1 置灰项的官方记号（已查证，下一轮可直接开工，不要再猜）
+### 10.1 置灰项的官方记号（已全部查证，能落地的都落地了）
 
-来源：`sysml.library/Systems Library/Actions.sysml`（官方原文，本轮已 fetch）。
+来源：`sysml.library/Systems Library/` 三个包的原文件（Actions.sysml SHA `cc78878`、
+States.sysml SHA `9d77348`、Views.sysml SHA `3084780`，本轮均已 fetch）。
 
 **控制结构**（`ActionFlowView` 的「Control structures」契约项）对应的类：
 
@@ -581,8 +592,9 @@ then private action whileLoop
 ```
 
 即：**`assign <目标> := <表达式>;` / `then` / `perform <名称>;` / `while <表达式> { … }`**
-都是官方关键字，不是自造方言。`if` / `loop` 的具体表面形式需再查
-`ControlPerformances.sysml` 或规范 §7.7.5 图形/文本记号章节确认。
+都是官方关键字，不是自造方言。`if` / `loop` 的表面形式也已实现并钉在
+`tests/successionNotation.test.ts`：`if (i < 100) then assign i := i + 1; else assign i := 100;`
+与 `loop then assign i := 2;`。
 
 **send / accept**（`ActionFlowView` 的「Send and accept actions」契约项）——
 
@@ -675,6 +687,23 @@ then private action whileLoop
 但那是「执行一个动作」；生命线上的**事件发生**是另一套（`EventOccurrenceUsage`），
 需要查 `Occurrences.sysml` 确认，**不要拿 `perform` 直接当事件发生用**。
 
+**❌ 三项查证后确认「官方记号不存在」——不是我们没实现，是无从实现**（详见 §9.3 的表格）：
+
+1. **change / time / event trigger**：`Actions.sysml` 的 `TransitionAction` 用
+   `ref acceptedMessage … >> trigger` 与 `ref receiver >> triggerTarget`，
+   `DecisionTransitionAction` 的注释明写 *"has a guard, but no trigger or effects"*。
+   标准库目录里也没有 `Triggers.sysml`。文本形态只有 `[ … ]`（已实现）。
+2. **坐标系**：`Views.sysml`（唯一视图包）里没有任何 `frame` / `coordinate` 构造，
+   标准库目录里也没有 `Frames.sysml` / `Geometry.sysml`。
+3. **迁移效果动作**：**这项其实是误判** —— 官方记号是挂在 **state** 上的
+   `entry action a;` / `do action a;` / `exit action a;`（`States.sysml` 的
+   `StateAction`：`entry action entryAction >>> 'entry';` 等），
+   **不是**挂在 transition 上，也不存在 `change` / `time` / `effect` 关键词。
+   我们**早已实现**（`sysml.pegjs:1387-1418`，`entry action a;` 与
+   `entry assign x := 0;` 两种写法），实测解析通过、AST 里是 `stateAction`
+   带 `phase: 'entry' | 'do' | 'exit'`。此前 §9.3 把这项列为「未实现」是
+   把一个臆造的记号当成了官方记号。
+
 ### 10.2 其余待办
 
 1. ~~**需求③ × M12 渲染路由的交叉点**~~ **已完成**（见 §11）：只读呈现加了显式的
@@ -683,12 +712,15 @@ then private action whileLoop
 
    ⚠️ 本节此前一直把它写成「目前最大的缺口」，是**文档没跟上代码**（§11 早就标了
    已修，这里是旧描述）。已更正。
-2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层 +
-   画布渲染 + 工具箱均已完成**（见 §9.4）；~~`send` 动作 / `standard library package`
-   前缀~~ **已完成**（见 §10.1）；~~无花括号动作体~~ **已完成**（见 §10.1）。
-   §10.1 里逐字查得记号的三项**全部落地**。**下一步是 trigger / 坐标系 /
-   表格列 / 迁移效果动作**（各需先查证官方记号，别猜）。
-   写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
+2. ~~按 §10.1 的查证结果补齐剩余置灰项~~ **已完成，且结论与预期不同**。
+   §10.1 里逐字查得记号的三项（`then` 继承连接 / `send` 动作 /
+   `standard library package` 前缀 / 无花括号动作体）**全部落地**
+   （见 §9.4、§10.1）。§9.3 剩下的三项则**对着原文件核对后改判**（见 §9.3、§10.1 末）：
+   change/time trigger 与坐标系是**官方记号不存在**（无从实现），
+   迁移效果动作是**早已实现**（`entry`/`do`/`exit` 挂在 state 上，`sysml.pegjs:1387-1418`，
+   此前的「transition 带 body」是臆造的记号）。工具箱现在没有「已查证且可落地」
+   的剩余项了。写完任何新项仍须让 `viewToolbox.test.ts` 的差分变绿
+   （它会自动指出还有哪些写不出来）。
 
 3. ~~**视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档~~ **已完成**（见 §13）。
 4. **参数上画布**：`in p : Real;` / `out p : Real;` 语法可解析但不渲染节点

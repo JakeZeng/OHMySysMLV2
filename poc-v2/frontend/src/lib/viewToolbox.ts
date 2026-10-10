@@ -549,13 +549,19 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     kind: 'changeTimeTrigger',
     label: 'change / time trigger',
     icon: '⏱',
-    specRef: '§7.7.7 TriggerUsage',
+    specRef: 'Systems Library / Actions.sysml :: TransitionAction',
     contract: 'Change and time triggers',
-    description: 'change 与 time 触发器',
+    description:
+      '官方记号里不存在 change / time / event 关键词。触发器是 TransitionAction 的 ' +
+      '`ref acceptedMessage … >> trigger`（消息触发）',
     defaultName: 'Trigger',
-    generate: (n) => `trigger ${n};`,
+    generate: () =>
+      '// 官方无此记号 —— 触发器用 transition A to B [ … ] 的方括号形态（已实现）',
     supported: false,
-    unsupportedReason: '触发器记号尚未实现（transition 的触发器目前只支持 `[ … ]` 形态）',
+    unsupportedReason:
+      '官方记号不存在。Actions.sysml 的 TransitionAction 用 ref acceptedMessage … >> trigger ' +
+      '与 ref receiver >> triggerTarget；DecisionTransitionAction 的注释明写 "has a guard, but ' +
+      'no trigger or effects"。文本形态只有已实现的 [ … ]',
   },
 ];
 
@@ -723,13 +729,21 @@ const STATE_ITEMS: ViewToolboxItem[] = [
     kind: 'transitionEffect',
     label: 'transition effect（迁移效果动作）',
     icon: '💥',
-    specRef: '§7.7.3 TransitionUsage::ownedEffect',
+    specRef: 'Systems Library / States.sysml :: StateAction',
     contract: 'Transition usages with triggers, guards, and actions',
-    description: '迁移的效果动作（TransitionUsage 拥有的 ActionUsage）',
+    description:
+      '效果动作挂在 **state** 上，不在 transition 上：`entry action a;` / ' +
+      '`do action a;` / `exit action a;`（已实现，见「状态」组）',
     defaultName: 'Effect',
-    generate: (n) => `transition effect ${n};`,
+    generate: () =>
+      '// 效果动作挂在 state 上：entry action a; / do action a; / exit action a;\n' +
+      '//   （也可写 entry assign x := 0; —— 见「状态」组的「状态动作」条目）',
     supported: false,
-    unsupportedReason: '迁移效果动作需要 transition 带 body 的形态，当前语法只支持单行迁移',
+    unsupportedReason:
+      '官方记号不存在于此形式。States.sysml 的 StateAction 把效果动作挂在 state 上 ' +
+      '（entry action entryAction >>> \'entry\' / do action doAction >>> \'do\' / ' +
+      'exit action exitAction >>> \'exit\'）；transition 本身不带效果动作。' +
+      '请用「状态」组的「状态动作」条目',
   },
 ];
 
@@ -803,13 +817,19 @@ const GEOMETRY_ITEMS: ViewToolboxItem[] = [
     kind: 'coordinateFrame',
     label: 'coordinate frame（坐标系）',
     icon: '📐',
-    specRef: '§7.20 CoordinateFrame',
+    specRef: 'Systems Library / Views.sysml',
     contract: 'Coordinate frame',
-    description: '坐标系',
+    description:
+      '官方记号里不存在坐标系构造。Views.sysml（唯一视图包）里没有任何 frame / ' +
+      'coordinate 定义',
     defaultName: 'WorldFrame',
-    generate: (n) => `frame ${n};`,
+    generate: () =>
+      '// 官方记号不存在 —— Views.sysml 无 frame / coordinate 构造，' +
+      '标准库目录里也没有 Frames.sysml',
     supported: false,
-    unsupportedReason: '坐标系记号（frame / coordinate frame）尚未实现，待后续语法扩展',
+    unsupportedReason:
+      '官方记号不存在。已核 Views.sysml（3973B）全文，无任何 frame / coordinate 构造；' +
+      '标准库目录里也没有 Frames.sysml 或 Geometry.sysml。此项无从实现，而非待补语法',
   },
   {
     kind: 'quantityAttribute',
@@ -833,7 +853,8 @@ const GRID_ITEMS: ViewToolboxItem[] = [
     specRef: '§9.2.19 asElementTable::columnView',
     contract: 'Tabular view',
     description:
-      '表格的一列 = 一个视图（`columnView : View[0..*] ordered`）。列的定义属于 rendering usage，暂以注释形态给出',
+      '表格的一列 = 一个视图。官方记号是 `view columnView[0..*] ordered { abstract ref ' +
+      'rendering >> viewRendering[0..1]; }`，只出现在标准库 asElementTable 的定义里',
     defaultName: 'ColumnA',
     generate: (n) => `// column ${n} : View;  ← 列定义属 rendering usage（§9.2.19 asElementTable）`,
     supported: false,
