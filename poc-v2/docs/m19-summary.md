@@ -345,7 +345,37 @@ whileLoop`）。此前未实现的理由是**它是连接而非成员**，需要
   AcceptActionUsage 的 ownedRelationship（已映射为 `thenTarget`），测试专门断言
   「不该出现 `Incr → increment` 这条 succession」。
 
-**仍未落地**：`then` 的画布渲染（succession 边）与工具箱解除置灰，属下一轮。
+**画布渲染与工具箱（本轮落地）**：
+
+- **画布边**：琥珀色实线 + `label: 'then'` + 动画，`data.semantics.kind = 'succession'`。
+  语义字段是「前驱 / 后继」—— 不叫「源动作 / 目标动作」，因为后继可能是状态或控制节点。
+  端点按名字解析，解析不到就静默丢弃，绝不造悬空边（与 flow / transition / message 同一纪律）。
+- **两个构造点**：视图 / 视角体里裸写的 `then` 走视图内容桶；**活动容器**里的 `then` 必须就地
+  处理 —— `collectMembers` 不递归进 activity 体（进一次就把 `act.flows` 再收一遍，画布上多出
+  重复的流边），端点用活动自己的 `actionNameToId` 解。反过来，「视图体里嵌 activity」的那种写法
+  的 succession 会进桶但解不到端点 —— 静默丢弃，绝不画一条错的。
+- **工具箱**：`thenSuccession`（`then <目标>;`）进 ActionFlowView 的「动作与流」组，
+  `supported: true`，差分测试在全部视图类型下通过。`eventSuccession` **保持置灰** —— 消息体内的
+  `then event` 必须和它前面的 event 一起写，单独插入时源无处可依。
+- **可见性前缀补齐**：官方标准库 ForLoopAction 原文是 `then private action whileLoop`，此前 `then`
+  只收 `Identifier`，把 `private` 读成后继名再卡在 `action` 上 —— 官方自己的写法解析不了。
+  `SuccessionStatement` 加 `VisibilityPrefix?`，AST 加 `visibility`。
+
+**本轮探针抓出的三个坑**：
+
+1. **声明形式不建节点** —— `then action b {}` 的 `b` 是 succession 的子节点，不会被别的路径
+   捡到。必须显式推进对应桶并建节点，否则它只在文本里、画布看不见。
+2. **赋值同名不注册** —— 官方 `assign index := 1; then assign index := i + 1;` 两条语句的后继名
+   都是 `index`，两个节点共享一个键，无论「先写优先」还是「后写优先」都会把边指错。**宁可丢
+   这条边，也不画一条错的**：assignment 不进 `nameToViewNodeId`。
+3. **⚠️ 官方动作体必须用花括号** —— 写成「换行 + 缩进」的隐式体（`action initialization`
+   换行 `assign i := 1;`）不是官方记号：解析器把 `action initialization` 读成一条完整声明、把
+   `assign` 当成它的兄弟，于是后继的前驱变成 `i` 而不是 `initialization`。这正是 M16 P1 那种
+   自造方言的老路 —— 本轮一个「看起来只是省括号」的官方示例测试样例差点把它固化下来。
+
+**写样例的顺序坑**：`then X;` 紧跟 `X` 的声明本身会产出自环边（`b → b`）。这是官方记号语义的
+**正确结果**（源 = 前一个具名成员），不是 bug；想让后继接在前驱后面，得让目标在别处先声明、
+后继写在**另一个**成员之后。
 
 **刻意不写自造记号**：这些项的坑正是「自造方言」—— M16 P1 已为此返工过一轮。
 

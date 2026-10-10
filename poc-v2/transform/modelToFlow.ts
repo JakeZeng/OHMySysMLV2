@@ -347,6 +347,26 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         });
       }
     }
+    // M19.3 活动体内的 `then`。
+    //
+    // 为什么在这里就地处理、而不是靠视图内容桶：collectMembers **不**递归进
+    // activity 体（进一次就会把 act.flows 再收一遍，画布上多出重复的流边），
+    // 所以活动里的继承连接只存在于 act.members 里。端点必须用活动自己的
+    // actionNameToId 解 —— 那是 `action:` 前缀的真实节点 id；若图成注册进
+    // nameToViewNodeId，会跟视图体里的同名动作互相覆盖，边可能指错节点。
+    //
+    // 反过来，「视图体里嵌 activity」的那种写法（`view V { activity A { … then y; } }`）
+    // 的 succession 会进桶但解不到端点 —— 静默丢弃，绝不画一条错的。
+    for (const m of act.members) {
+      if (!m || m.kind !== 'succession') continue;
+      const srcName = String(m.source ?? '');
+      const tgtName = String(m.target ?? '');
+      if (!srcName || !tgtName) continue;
+      const srcId = actionNameToId.get(srcName);
+      const tgtId = actionNameToId.get(tgtName);
+      if (!srcId || !tgtId) continue;
+      edges.push(makeSuccessionEdge(srcId, tgtId, srcName, tgtName, m, qname, keys));
+    }
   }
 
   // 3d. 节点构造（M19：标准视图的内容契约元素）
@@ -404,6 +424,9 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // M19.1 行为结构：与上面同一原则 —— 用户在工具箱点得到的东西必须在画布上看得见
   for (const { node: cs, qname } of viewContent.controlStructures) {
     const id = `vstruct:${cs.id}`;
+    // 具名循环（`action aLoop while …`）可被 `then aLoop;` 指向
+    const csName = String((cs as { name?: string }).name ?? '');
+    if (csName) nameToViewNodeId.set(csName, id);
     nodes.push(
       makeControlStructureNode(
         id,
@@ -416,6 +439,13 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
       ),
     );
   }
+  // ⚠️ assignment **不**注册名字进 nameToViewNodeId：官方写法里
+  //     assign index := 1;
+  //     then assign index := index + 1;
+  // 两条语句的后继名都是 `index`（AssignmentAction 没有 name，`successorName` 取
+  // target），两个不同节点共享同一个键 —— 无论「先写优先」还是「后写优先」都会
+  // 把边指到错的节点上（甚至自环）。宁可丢这条边，也不画一条错的：解析不到端点
+  // 就静默丢弃，与既有 flow / transition / message 的处理一致。
   for (const { node: as, qname } of viewContent.assignments) {
     const id = `vassign:${as.id}`;
     nodes.push(
@@ -429,6 +459,8 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   }
   for (const { node: pa, qname } of viewContent.performs) {
     const id = `vperform:${pa.id}`;
+    // `then perform body;` 的后继名就是 perform 的目标路径，注册它才能连得上
+    nameToViewNodeId.set(String((pa as { target?: string }).target ?? ''), id);
     nodes.push(
       makePerformNode(
         id,
@@ -439,6 +471,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   }
   for (const { node: ac, qname } of viewContent.accepts) {
     const id = `vaccept:${ac.id}`;
+    nameToViewNodeId.set(String((ac as { name?: string }).name ?? ''), id);
     nodes.push(
       makeAcceptNode(
         id,
@@ -565,6 +598,19 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         },
       } as EdgeData,
     });
+  }
+  // M19.3 `then` 继承连接 → 边（视图 / 视角体里裸写的那些）。
+  // 源是 parser 的 resolveSuccessions() 从「同 body 前一个具名成员」回填的；
+  // 无前驱时 source 为 undefined，自然不会有边（官方允许与 body 外上下文相连，
+  // 猜一条反而会画错）。活动容器里的那批在 3c 就地处理。
+  for (const { node: s, qname } of viewContent.successions) {
+    const srcName = String((s as { source?: string }).source ?? '');
+    const tgtName = String((s as { target?: string }).target ?? '');
+    if (!srcName || !tgtName) continue;
+    const srcId = nameToViewNodeId.get(srcName);
+    const tgtId = nameToViewNodeId.get(tgtName);
+    if (!srcId || !tgtId) continue;
+    edges.push(makeSuccessionEdge(srcId, tgtId, srcName, tgtName, s, qname, keys));
   }
 
   // 3e. 节点构造（M5 需求）
@@ -1106,6 +1152,49 @@ function makeAllocationEdge(
 // ─── 收集 ──────────────────────────────────────────────────────────────
 
 /**
+ * M19.3：`then` 继承连接 → 边。
+ *
+ * 两个构造点共用它（活动容器节点 3c、视图内容桶），避免样式/语义字段在两处
+ * 各自漂移：
+ *   · 活动容器 —— `activity A { action x; then y; }` 的成员不在视图内容桶里
+ *     （collectMembers 不进 activity 体），要在活动自己的 actionNameToId 里解端点；
+ *   · 视图内容桶 —— 视图 / 视角体里裸写的 `then`。
+ *
+ * 端点解析不到就**静默丢弃**，绝不造悬空边 —— 与 flow / transition / message
+ * 同一条纪律。样式上刻意区别于 flow（青色）与 transition（紫色）：后继是
+ * **时间序**关系，用琥珀色 + 实线，避免被读成「控制流」。
+ */
+function makeSuccessionEdge(
+  srcId: string,
+  tgtId: string,
+  srcName: string,
+  tgtName: string,
+  s: Record<string, unknown>,
+  ownerQName: string,
+  keys: StableKeys,
+): Edge {
+  return {
+    id: `vedge:${s.id}`,
+    source: srcId,
+    target: tgtId,
+    type: 'straight',
+    label: 'then',
+    animated: true,
+    style: { stroke: '#fa8c16', strokeWidth: 2 },
+    data: {
+      location: s.location,
+      stableKey: keys.alloc(connKeyBase(joinQName([ownerQName], srcName), joinQName([ownerQName], tgtName))),
+      semantics: {
+        kind: 'succession',
+        sourceAction: srcName,
+        targetAction: tgtName,
+        ownerQName,
+      },
+    } as EdgeData,
+  };
+}
+
+/**
  * M19：标准视图内容契约元素的收集桶。
  *
  * 这些元素（动作 / 控制节点 / 状态动作 / 渲染用法 / 绑定，以及视图体里裸写的
@@ -1129,6 +1218,8 @@ interface ViewContentBuckets {
   // M19.2 时序元素（事件发生 / 消息）
   events: Q<Record<string, unknown>>[];
   messages: Q<Record<string, unknown>>[];
+  // M19.3 继承连接（`then`）—— 连接而非成员，端点靠名字解析
+  successions: Q<Record<string, unknown>>[];
 }
 
 function emptyViewContentBuckets(): ViewContentBuckets {
@@ -1147,6 +1238,7 @@ function emptyViewContentBuckets(): ViewContentBuckets {
     accepts: [],
     events: [],
     messages: [],
+    successions: [],
   };
 }
 
@@ -1168,7 +1260,54 @@ const VIEW_CONTENT_DEEP_KINDS = new Set([
   'acceptAction',
   'eventOccurrence',
   'messageFlow',
+  // M19.3 继承连接（`then`）
+  'succession',
 ]);
+
+/**
+ * M19.3：收集一条 `then` 继承连接。
+ *
+ * 两件事都要做：
+ *   1) succession 本身进桶 —— 它最终变成一条边（源 = 前一个成员，目标 = 后继）。
+ *   2) **声明形式**的 `then` 要额外产出节点。`then action publishing { … }` 里的
+ *      `publishing` 是一个新动作，不建节点它就只在文本里、画布看不见，而且后续
+ *      `then` 想指向它也解析不到端点。声明是 succession 的**子节点**而非兄弟，
+ *      不会被别的收集路径捡到，所以必须在这里显式入桶。
+ */
+function collectSuccession(m: Record<string, unknown>, qname: string, buckets: ViewContentBuckets): void {
+  const decl = m.declaration as Record<string, unknown> | undefined;
+  if (decl) {
+    const dq = joinQName(nsNameParts(qname), String(decl.name ?? ''));
+    switch (decl.kind) {
+      case 'actionUsage':
+        buckets.actions.push({ node: decl, qname: dq });
+        break;
+      case 'stateDef':
+        buckets.states.push({ node: decl, qname: dq });
+        break;
+      case 'controlNode':
+        buckets.controlNodes.push({ node: decl, qname: dq });
+        break;
+      case 'controlStructure':
+      case 'namedLoopAction':
+        buckets.controlStructures.push({ node: decl, qname: dq });
+        break;
+      // perform / assign 是叶子行为语句，单独成节点（下方 assignments/performs 桶）
+      case 'assignmentAction':
+        buckets.assignments.push({ node: decl, qname: dq });
+        break;
+      case 'performAction':
+        buckets.performs.push({ node: decl, qname: dq });
+        break;
+    }
+  }
+  buckets.successions.push({ node: m, qname });
+}
+
+/** 从 qname（"a.b.c"）取命名空间前缀 —— 用于给 def 体内的成员补全限定名 */
+function nsNameParts(qname: string): string[] {
+  return qname ? qname.split('.') : [];
+}
 
 /**
  * M19：下钻进 def body 挑出视图内容契约元素。
@@ -1226,6 +1365,9 @@ function collectViewContentDeep(ns: { name?: string; members: any[] }, buckets: 
           break;
         case 'messageFlow':
           buckets.messages.push({ node: m, qname });
+          break;
+        case 'succession':
+          collectSuccession(m, qname, buckets);
           break;
       }
     }
@@ -1407,6 +1549,10 @@ function collectMembers(
         break;
       case 'messageFlow':
         viewContent?.messages.push({ node: m, qname });
+        break;
+      // M19.3 继承连接（`then`）
+      case 'succession':
+        if (viewContent) collectSuccession(m, qname, viewContent);
         break;
       case 'enumDef':
       case 'comment':

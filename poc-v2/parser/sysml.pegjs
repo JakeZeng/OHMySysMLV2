@@ -1166,13 +1166,14 @@ SuccessorDeclaration
   / AssignmentAction
 
 SuccessionStatement
-  = "then" WS d:SuccessorDeclaration
+  = "then" WS v:VisibilityPrefix? d:SuccessorDeclaration
     {
       return {
         kind: 'succession',
         id: nextId('succ'),
         target: successorName(d),
         declaration: d,
+        visibility: v || undefined,
         source: undefined,
         location: locationOf(location().start.offset),
       };

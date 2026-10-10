@@ -323,20 +323,33 @@ describe('官方 Actions.sysml · ForLoopAction 的 body（assign / perform 的�
     expect(findKind(m, 'performAction')).toHaveLength(1);
   });
 
-  it('`then` 继承连接仍未实现（诚实记录，不假装支持）', () => {
-    // 这条测试**钉住现状**：官方原文里的 `then action aLoop` 现在解析不了。
-    // 实现 `then` 之后本测试应改写成「能解析」——那时才配说还原完成。
+  it('官方 ForLoopAction 原文整段可解析（含 `then private action` 可见性前缀）', () => {
+    // M19.3 落地后这条护栏改成正向断言。关键点是 `then private action whileLoop`
+    // 的**可见性前缀** —— 官方标准库自己就这么写，此前解析不了（`then` 只收
+    // `Identifier`，把 `private` 读成后继名，然后卡在 `action` 上）。
+    // ⚠️ 动作体必须用**花括号**：官方 ForLoopAction 原文就是
+    // `action initialization { assign index := 1; }`。写成「换行 + 缩进」的
+    // 隐式体不是官方记号，解析器会把 `action initialization` 读成一条完整声明、
+    // 把 `assign` 当成它的兄弟 —— 于是后继的前驱变成了 `i` 而不是 `initialization`。
+    // 那条路是造方言，正好是 M16 P1 返工的老路。
     const r = parse(`package Actions {
 	action {
-		action initialization
+		action initialization {
 			assign i := 1;
-		then private action whileLoop
+		}
+		then private action whileLoop {
 			while i > 0 {
 				assign i := i - 1;
 			}
+		}
 	}
 }`);
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    const succs = findKind(r.model, 'succession');
+    expect(succs).toHaveLength(1);
+    expect(succs[0].target).toBe('whileLoop');
+    expect(succs[0].source).toBe('initialization');
+    expect(succs[0].visibility).toBe('private');
   });
 });
 

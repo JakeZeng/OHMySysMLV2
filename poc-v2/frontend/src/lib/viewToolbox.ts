@@ -46,6 +46,7 @@ export type ViewToolboxKind =
   | 'actionInParam'
   | 'actionOutParam'
   | 'actionFlow'
+  | 'thenSuccession'
   | 'bindingConnector'
   | 'assignmentAction'
   | 'performAction'
@@ -411,6 +412,21 @@ const ACTION_FLOW_ITEMS: ViewToolboxItem[] = [
     defaultName: 'NewFlow',
     defaultName2: 'TargetAction',
     generate: (n, t = 'TargetAction') => `flow ${n} to ${t};`,
+    supported: true,
+  },
+  {
+    kind: 'thenSuccession',
+    label: 'then（继承连接）',
+    icon: '➹',
+    specRef: '§7.7.4 SuccessionConnectorUsage',
+    contract: 'Succession connections between actions',
+    description:
+      '时间先后关系：`then <目标>;`。源是它**前面**的那条语句（写在哪就接在哪），' +
+      '目标必须是视图里已声明的动作/状态/控制节点',
+    // `then` 没有自己的名字（源由插入位置决定），第一个参数是占位、被 generate 忽略。
+    defaultName: 'then',
+    defaultName2: 'NextAction',
+    generate: (_n, t = 'NextAction') => `then ${t};`,
     supported: true,
   },
   {

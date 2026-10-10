@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { modelToFlow } from '../transform/modelToFlow';
 import {
+  EDGE_KIND_LABEL,
   edgeHighlightFields,
   edgeSemanticsOf,
   edgeTitle,
@@ -26,7 +27,7 @@ const SRC = `package Vehicle {
   part def VehicleSystem;
   requirement def MaxPower;
   state machine Ignition { state Off; state On; transition Off to On; }
-  activity Drive { action Start; action Stop; flow Start to Stop; }
+  activity Drive { action Stop; action Start; flow Start to Stop; then Stop; }
   connect Car.powerOut to Engine.fuelIn;
   satisfy MaxPower by VehicleSystem;
   allocate LogicUnit to PhysUnit;
@@ -57,15 +58,15 @@ function fieldsOf(kind: EdgeKind): Record<string, string> {
   return out;
 }
 
-describe('连线语义：五类边各自带对字段', () => {
-  it('五类连线都在画布上产出边（改造前 allocation 一条都不出）', () => {
+describe('连线语义：六类边各自带对字段', () => {
+  it('六类连线都在画布上产出边（改造前 allocation 一条都不出）', () => {
     const kinds = new Set(
       build()
         .edges.map((e) => edgeSemanticsOf(e.data)?.kind)
         .filter((k): k is EdgeKind => !!k),
     );
     expect([...kinds].sort()).toEqual(
-      ['allocation', 'connection', 'flow', 'trace', 'transition'].sort(),
+      ['allocation', 'connection', 'flow', 'succession', 'trace', 'transition'].sort(),
     );
   });
 
@@ -106,6 +107,63 @@ describe('连线语义：五类边各自带对字段', () => {
     expect(sem.sourceAction).toBe('Start');
     expect(sem.targetAction).toBe('Stop');
     expect(sem.ownerQName).toBe('Drive');
+  });
+
+  it('succession：源是「前一个具名成员」，flow 这类连接不当源', () => {
+    // SRC 里活动是 `action Stop; action Start; flow Start to Stop; then Stop;`
+    // `flow` 不贡献名字，所以 `then Stop;` 的源是 `Start` 而不是 `Stop`。
+    const sem = edgeOfKind('succession');
+    expect(sem.kind).toBe('succession');
+    expect(sem.sourceAction).toBe('Start');
+    expect(sem.targetAction).toBe('Stop');
+    expect(sem.ownerQName).toBe('Drive');
+  });
+
+  it('succession：声明形式同时产出节点与边（`then action b {}`）', () => {
+    const r = parse('view def V {\n\taction a;\n\tthen action b {};\n}');
+    if (!r.ok) throw new Error('parse failed: ' + JSON.stringify(r.errors[0]));
+    const g = modelToFlow(r.model);
+    // b 是被 `then` 声明出来的动作，不建节点它就只在文本里
+    expect(g.nodes.some((n) => n.data?.label === 'b')).toBe(true);
+    const e = g.edges.find((x) => edgeSemanticsOf(x.data)?.kind === 'succession');
+    expect(e).toBeDefined();
+    expect(edgeSemanticsOf(e!.data)).toMatchObject({ sourceAction: 'a', targetAction: 'b' });
+  });
+
+  it('succession：解析不到端点就丢弃，绝不造悬空边', () => {
+    // b / c 都没声明 —— 两条 succession 都要静默丢弃
+    const r = parse('view def V {\n\taction a;\n\tthen b;\n\tthen c;\n}');
+    if (!r.ok) throw new Error('parse failed');
+    const g = modelToFlow(r.model);
+    expect(g.edges.filter((x) => edgeSemanticsOf(x.data)?.kind === 'succession')).toHaveLength(0);
+  });
+
+  it('succession：无前驱时 source 为 undefined，自然不出边（不猜）', () => {
+    // `then` 排在第一个 —— 没有「前一个具名成员」，source 保持 undefined。
+    // 官方允许这种与 body 外上下文相连的写法，猜一条源反而会画错边。
+    const r = parse('view def V {\n\tthen a;\n\taction a;\n}');
+    if (!r.ok) throw new Error('parse failed');
+    const g = modelToFlow(r.model);
+    expect(g.edges.filter((x) => edgeSemanticsOf(x.data)?.kind === 'succession')).toHaveLength(0);
+  });
+
+  it('succession：赋值同名不注册（宁可丢边也不画错边）', () => {
+    // `assign i := 1;` 与 `then assign i := i + 1;` 的后继名都是 `i`，
+    // 两个节点共享一个键会让边指到错的节点上 —— 所以 assignment 不进 nameToViewNodeId。
+    const r = parse('view def V {\n\tassign i := 1;\n\tthen assign i := i + 1;\n}');
+    if (!r.ok) throw new Error('parse failed');
+    const g = modelToFlow(r.model);
+    expect(g.edges.filter((x) => edgeSemanticsOf(x.data)?.kind === 'succession')).toHaveLength(0);
+  });
+
+  it('succession：属性窗给「前驱/后继」两栏，不冒充动作对', () => {
+    const sem = edgeOfKind('succession');
+    const keys = edgeHighlightFields(sem).map((f) => f.key);
+    const labels = edgeHighlightFields(sem).map((f) => f.label);
+    expect(keys).toEqual(['sourceAction', 'targetAction']);
+    expect(labels).toEqual(['前驱', '后继']);
+    expect(edgeTitle(sem)).toBe('Start ➹ Stop');
+    expect(EDGE_KIND_LABEL['succession']).toContain('Succession');
   });
 
   it('trace：带关系词与两端', () => {

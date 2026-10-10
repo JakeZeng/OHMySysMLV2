@@ -27,13 +27,14 @@
  * `stableKey.ts` 与 DiagramCanvas 里 `selectedRef` 的同款处理）。
  */
 
-/** 五种连线类型。 */
+/** 六种连线类型。 */
 export type EdgeKind =
   | 'connection'
   | 'transition'
   | 'flow'
   | 'trace'
-  | 'allocation';
+  | 'allocation'
+  | 'succession';
 
 /** 需求追溯关系词（ast/model.ts 的 TraceLink.relation）。 */
 export type TraceRelation = 'satisfy' | 'verify' | 'refine' | 'allocate';
@@ -106,12 +107,29 @@ export interface AllocationSemantics {
   physicalRef: string;
 }
 
+/**
+ * `succession` —— M19.3 `then <目标>;` 继承连接（§7.7.4 SuccessionConnectorUsage）
+ *
+ * 与 `flow` 的区别：flow 是**控制流**（谁控制谁），succession 是**时间序**
+ * （谁在谁之后发生）。属性窗要能分开这两种关系，不能都叫「A → B」。
+ */
+export interface SuccessionSemantics {
+  kind: 'succession';
+  /** 前驱成员的名字（parser 的 resolveSuccessions 从同 body 前一个成员回填） */
+  sourceAction: string;
+  /** 后继成员的名字 */
+  targetAction: string;
+  /** 所属容器的限定名（视图 / 状态定义 / 活动 …） */
+  ownerQName: string;
+}
+
 export type EdgeSemantics =
   | ConnectionSemantics
   | TransitionSemantics
   | FlowSemantics
   | TraceSemantics
-  | AllocationSemantics;
+  | AllocationSemantics
+  | SuccessionSemantics;
 
 // ─── 展示用元数据（属性窗的标题 / 徽章 / 配色）─────────────────────────
 
@@ -122,6 +140,7 @@ export const EDGE_KIND_LABEL: Record<EdgeKind, string> = {
   flow: '控制流 Flow',
   trace: '需求追溯 Trace',
   allocation: '分配 Allocation',
+  succession: '继承连接 Succession',
 };
 
 /** 徽章配色，与节点表单的 KIND_COLOR 同一套观感。 */
@@ -131,6 +150,9 @@ export const EDGE_KIND_COLOR: Record<EdgeKind, string> = {
   flow: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-200',
   trace: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
   allocation: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+  // 琥珀（trace）偏黄、橙色偏红：两者语义都涉及「先后」，但 succession 是行为
+  // 时间序、trace 是需求依赖，必须能一眼分开。与 modelToFlow 里的描边 #fa8c16 一致。
+  succession: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200',
 };
 
 /** 追溯关系词的中文说明 —— 关系词本身是英文缩写，光给词看不懂。 */
@@ -163,7 +185,8 @@ export function edgeSemanticsOf(data: unknown): EdgeSemantics | null {
     k === 'transition' ||
     k === 'flow' ||
     k === 'trace' ||
-    k === 'allocation'
+    k === 'allocation' ||
+    k === 'succession'
   ) {
     return sem as EdgeSemantics;
   }
@@ -183,6 +206,8 @@ export function edgeTitle(sem: EdgeSemantics): string {
       return `${sem.relation}：${sem.sourceRef} → ${sem.targetRef}`;
     case 'allocation':
       return `${sem.logicalRef} → ${sem.physicalRef}`;
+    case 'succession':
+      return `${sem.sourceAction} ➹ ${sem.targetAction}`;
   }
 }
 
@@ -243,10 +268,15 @@ export function edgeViewModelOf(data: unknown): EdgeViewModel {
     kindColor: EDGE_KIND_COLOR[sem.kind],
     title: edgeTitle(sem),
     fields: edgeHighlightFields(sem),
-    ...(sem.kind === 'transition' || sem.kind === 'flow'
+    ...(sem.kind === 'transition' || sem.kind === 'flow' || sem.kind === 'succession'
       ? {
           owner: {
-            label: sem.kind === 'transition' ? '所属状态机' : '所属活动',
+            label:
+              sem.kind === 'transition'
+                ? '所属状态机'
+                : sem.kind === 'succession'
+                  ? '所属容器'
+                  : '所属活动',
             value: sem.ownerQName,
           },
         }
@@ -312,6 +342,13 @@ export function edgeHighlightFields(
       return [
         { key: 'logicalRef', label: '逻辑侧', value: sem.logicalRef },
         { key: 'physicalRef', label: '物理侧', value: sem.physicalRef },
+      ];
+    case 'succession':
+      // 刻意不叫「源动作/目标动作」：后继可能是状态、控制节点或 perform，
+      // 叫「动作」会让用户误以为只能连动作。
+      return [
+        { key: 'sourceAction', label: '前驱', value: sem.sourceAction },
+        { key: 'targetAction', label: '后继', value: sem.targetAction },
       ];
   }
 }

@@ -262,6 +262,9 @@ export interface Succession extends SysMLNode {
   declaration?: NamespaceMember;
   /** 同 body 里的前一个具名成员；没有前驱时为 undefined（不猜） */
   source?: string;
+  /** 可见性前缀。官方标准库 `then private action whileLoop …`（ForLoopAction
+   *  原文）就是这种形态 —— 缺了它，标准库自己的写法解析不了。 */
+  visibility?: 'public' | 'private' | 'protected';
 }
 
 /** M19 视图内容成员 union（PartBodyMember / NamespaceMember 共用子集） */
@@ -373,6 +376,12 @@ export interface Activity extends SysMLNode {
   name: string;
   actions: ActionDefinition[];
   flows: ControlFlow[];
+  /**
+   * M19.3：保留**全部**成员（解析器侧新增，见 sysml.pegjs 的 activity 规则）。
+   * `actions` / `flows` 只挑两类，其余（`then` 继承连接、控制结构、assign…）
+   * 在这里才留得住 —— 活动体里的 `then a;` 要靠它才能画出边。
+   */
+  members?: NamespaceMember[];
 }
 
 export interface ActionDefinition extends SysMLNode {
