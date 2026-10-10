@@ -301,8 +301,11 @@ M16 P1 缺的那道闸 —— 当时自造方言被当成规范写进调色板�
 | GeometryView | 坐标系 | `frame` 记号未实现 |
 | GridView | 列视图 / 关系矩阵 | 列属 rendering usage 的 owned subrendering，不是视图体成员 |
 | StateTransitionView | 迁移效果动作 | transition 带 body 的形态未实现 |
+| **全部 / 动作体** | **无花括号动作体**（官方 Actions.sysml 的写法） | 见 §10.1，官方原文如此 |
+| **全部 / 包** | `standard library package` 包前缀 | 见 §10.1，官方标准库每个文件都用 |
 | ~~全部 / `then` 继承连接~~ | **已解除**：语法层已落地，见 §9.4 |
 | ~~`expose` / `satisfy` 是占位注释~~ | **已解除**：expose / satisfy 都有真正的选择器（见 §12） |
+
 
 ### 9.4 `then` 继承连接（成员之间）—— 已实现
 
@@ -368,10 +371,20 @@ whileLoop`）。此前未实现的理由是**它是连接而非成员**，需要
 2. **赋值同名不注册** —— 官方 `assign index := 1; then assign index := i + 1;` 两条语句的后继名
    都是 `index`，两个节点共享一个键，无论「先写优先」还是「后写优先」都会把边指错。**宁可丢
    这条边，也不画一条错的**：assignment 不进 `nameToViewNodeId`。
-3. **⚠️ 官方动作体必须用花括号** —— 写成「换行 + 缩进」的隐式体（`action initialization`
-   换行 `assign i := 1;`）不是官方记号：解析器把 `action initialization` 读成一条完整声明、把
-   `assign` 当成它的兄弟，于是后继的前驱变成 `i` 而不是 `initialization`。这正是 M16 P1 那种
-   自造方言的老路 —— 本轮一个「看起来只是省括号」的官方示例测试样例差点把它固化下来。
+3. **⚠️ 官方动作体可以是**无花括号**的（官方原文），而本实现不认** ——
+   `sysml.library/Systems Library/Actions.sysml` 里 `ForLoopAction` 的原文是：
+
+   ```
+   private action initialization
+       assign index := 1;
+   then private action whileLoop
+       while index <= size(seq) { … }
+   ```
+
+   没有花括号，靠换行 + 缩进界定动作体。**这是官方标准库的写法**，不是方言。
+   此前本节曾写「官方动作体必须用花括号」并把测试样例改成花括号体——那是**按自家
+   解析器的限制去修改官方示例**，正是 M16 P1 那类老路，已更正。真正的缺口是
+   解析器不支持无花括号体，记号原文已逐字查得，见 §10.1。
 
 **写样例的顺序坑**：`then X;` 紧跟 `X` 的声明本身会产出自环边（`b → b`）。这是官方记号语义的
 **正确结果**（源 = 前一个具名成员），不是 bug；想让后继接在前驱后面，得让目标在别处先声明、
@@ -571,7 +584,8 @@ then private action whileLoop
 `ControlPerformances.sysml` 或规范 §7.7.5 图形/文本记号章节确认。
 
 **send / accept**（`ActionFlowView` 的「Send and accept actions」契约项）——
-记号在 `TransitionAction` 的 definition body 里：
+
+`accept` 的记号在 `TransitionAction` 的 definition body 里：
 
 ```
 state aState  {
@@ -581,6 +595,43 @@ state aState  {
 
 即 `accept <payload> via <port>` 与 `then done`。`SendAction` / `AcceptMessageAction`
 的 payload 是 `in` / `inout` 参数。
+
+**`send` 的记号已逐字查得（sensmetry 的 `send-action-parameters` 校验规则给出的
+正反例，可直接当测试输入）**：
+
+```
+action { send; }                     // error: A send action must have at least 2 owned input parameters
+occurrence r;
+action { send 4 to r; }              // ok
+```
+
+即 `send <payload> [from <sender>] to <receiver>;`。规范侧对应三个参数：
+`payload_argument` / `sender_argument` / `receiver_argument`（§7.17.7）。
+实现时应与既有的 `acceptAction` / `performAction` 同构进 `ActionBodyMember`。
+
+**⚠️ 无花括号动作体（已逐字查得，官方 Actions.sysml 原文，下一轮必须支持）**：
+
+```
+private action initialization
+	assign index := 1;
+then private action whileLoop
+	while index <= size(seq) {
+		assign var := seq#(index);
+		then perform body;
+		then assign index := index + 1;
+	}
+```
+
+官方 `ForLoopAction` 就是无花括号动作体（换行 + 缩进界定），我们的解析器不认
+（`action initialization` 被读成完整声明，`assign` 变成它的兄弟）。
+实现要点：`action` 声明后若**不以** `;` / `:` / `{` 结尾，则后续行是它隐式的 body，
+以同级缩进的下一条成员为界。PEG 里要按行首缩进判界，属本文件里第一次需要
+**缩进敏感**的规则，需单独设计。
+
+**⚠️ `standard library package` 包前缀（已逐字查得）**：官方标准库每个文件都以
+`standard library package <Name> {` 开头（如 `standard library package Actions {`），
+我们的 `Package` 规则只认 `package`。要能解析官方标准库原文就必须补这个前缀。
+
 
 **Control nodes**：`MergeAction` / `DecisionAction` / `JoinAction` / `ForkAction` 都是
 `ControlAction` 的特化，`bind start = done;`（瞬时节点，无固有行为）—— 本轮实现的
@@ -596,10 +647,12 @@ state aState  {
    `GridView` / `BrowserView` 按标准库推荐渲染（表格 / 树图），而这两种渲染走
    只读 renderer → 拿不到工具箱。给只读 renderer 一个「进入建模」入口，或让工具箱
    在只读视图上也能用。
-2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层已完成**
-   （见 §9.4），下一步是它的**画布渲染**（succession 边）与工具箱解除置灰；
-   再做 send 动作 / trigger / 时序图事件与消息。
+2. 按 §10.1 的查证结果补齐剩余置灰项。~~优先 `then` 继承连接~~ **语法层 +
+   画布渲染 + 工具箱均已完成**（见 §9.4）。下一步是 §10.1 里已逐字查得记号的三项：
+   **无花括号动作体**（官方 ForLoopAction 原文，最需要）、`send` 动作、
+   `standard library package` 前缀；再做 trigger / 坐标系 / 表格列 / 迁移效果动作。
    写完必须让 `viewToolbox.test.ts` 的差分变绿（它会自动指出还有哪些写不出来）。
+
 3. ~~**视图属性窗**：`ViewPropertiesForm` 目前没有「标准视图类型」这一档~~ **已完成**（见 §13）。
 4. **参数上画布**：`in p : Real;` / `out p : Real;` 语法可解析但不渲染节点
    （attribute 全局都不渲染，属既有行为；若要修需同步动包侧布局）。

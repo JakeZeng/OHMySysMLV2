@@ -351,6 +351,36 @@ describe('官方 Actions.sysml · ForLoopAction 的 body（assign / perform 的�
     expect(succs[0].source).toBe('initialization');
     expect(succs[0].visibility).toBe('private');
   });
+
+  it('护栏（缺口）：官方标准库用的**无花括号**动作体，本实现还不认', () => {
+    // sysml.library/Systems Library/Actions.sysml 里 ForLoopAction 的**原文**就是
+    // 无花括号的：动作声明后靠换行 + 缩进界定 body。这是官方写法，不是方言。
+    // 上一轮曾误判成「必须用花括号」并把示例改成花括号体（见 docs/m19-summary.md §9.4）
+    // —— 那是按自家解析器的限制去修改官方示例。这里把它钉成一条已知缺口：
+    // 目前确实解析不了，等支持无花括号动作体后再把断言翻转。
+    // 不要通过「把官方原文改成花括号体」让这条变绿。
+    const r = parse(`package Actions {
+	action def ForLoopAction {
+		private action initialization
+			assign index := 1;
+		then private action whileLoop
+			while index <= size(seq) {
+				assign var := seq#(index);
+				then perform body;
+				then assign index := index + 1;
+			}
+	}
+}`);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.code === 'E000_PARSE_ERROR')).toBe(true);
+  });
+
+  it('护栏（缺口）：官方标准库的 `standard library package` 前缀也不认', () => {
+    // 官方标准库每个文件都以 `standard library package <Name> {` 开头。
+    // 缺这个前缀意味着「解析官方标准库原文」这件事目前做不到。
+    const r = parse('standard library package Actions { }');
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('行为结构不破坏既有语法（回归护栏）', () => {
