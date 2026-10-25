@@ -220,6 +220,30 @@ export const STATE_SCHEMA: FormSchema = {
   ],
 };
 
+/**
+ * M19 需求①：官方新增元素的**通用表单**。
+ *
+ * 这一批元素（metadata / variant / individual / analysis / event / message …）
+ * 形态差别很大，给每个写一份表单不现实；用一份「只有名字」的最小表单：
+ *   - 名字可改（走 `renameNode` 的 AST 偏移编辑，与其它元素同一套通道）；
+ *   - 不给「属性」等可重复段 —— 那属于 part def 专属，
+ *     挂上去会让人以为能给 metadata 用法加属性（改出来的文本是非法的）。
+ */
+export const USAGE_SCHEMA: FormSchema = {
+  nodeType: 'sysmlUsage',
+  title: 'Usage（官方扩展用法）',
+  sections: [
+    {
+      key: 'basic',
+      label: '基础信息',
+      fields: [
+        ...BASIC_IDENTITY,
+        { key: 'typeRef', label: '类型', widget: 'text', required: false, placeholder: 'Type' },
+      ],
+    },
+  ],
+};
+
 export const ACTION_SCHEMA: FormSchema = {
   nodeType: 'sysmlAction',
   title: 'Action（动作）',
@@ -377,6 +401,8 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlVerificationCaseDef: VERIFICATION_CASE_DEF_SCHEMA,
   sysmlState: STATE_SCHEMA,
   sysmlAction: ACTION_SCHEMA,
+  // M19 需求①：官方新增元素的通用表单（只有名字 + 类型）
+  sysmlUsage: USAGE_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,
   sysmlConstraint: CONSTRAINT_SCHEMA,
   sysmlGhost: GHOST_SCHEMA,

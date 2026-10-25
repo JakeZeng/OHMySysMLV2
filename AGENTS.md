@@ -132,6 +132,24 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
   - **官方语法回归固化**：`poc-v2/tests/officialSyntax.test.ts` 现在 **59 条**（第 29 条起是本轮新增），逐条抄自官方模型并标行号。根 vitest **587/587**、frontend **816/816**、Go 全绿、typecheck clean。
   - **需求②最后一条：视图内编辑 owned 元素 → 回写视图 content**。⚠️ 这条一做就抓出 **两个真 bug**：① `transform/textEdit.ts` 的 `collectMembers` 把视图成员当**包**递归（`collectFromPackage(m)`）→ 成员是元素、没有 `.members` 字段 → `pkg.members is not iterable` → **视图里一改名/一删除就整页崩**（包会话却正常，因为包走 `model.packages`）。修法：抽出 `collectMember`，包成员与视图成员共用。② `findBlockRange` 对「无体声明」按**整行**删 → 一行写着 `view V { expose Vehicle::Car; part def LocalWidget; }` 时，删掉 owned 元素会**把整个视图连同 expose 子句抹掉**（实测 content 变空串）。修法：按「语句起点（向前扫到 `;`/`{`/`}`）→ 语句终点（有体配平括号、无体找 `;`）」定位，只删那一条声明。
   - **后端 expose 解析归一**：权威实现是**前端 TS PEG**（`views/scope.ts`），后端 `viewBody_filter.go` 的词法扫描只作**兜底**（脚本调用 / 老客户端）。`handler.CreateView` 改成「客户端送了 `exposedElements` 就直接用、**不再跑** `ComputeExposed`」（之前虽然最终值会被覆盖，但白跑一遍且中间态与前端不一致）；legacy 扫描器 `scanPackageMembers` 升级成**命名空间栈 + 花括号深度**版本，子包成员（`Pkg::Sub::Wheel`）与定义体成员（`Pkg::Vehicle::engine`）现在也扫得到，闭合后正确出栈（`Pkg::Roof` 不会被挂到已闭合的子包下）。⚠️ 坑：包文本本身是 `package <包名> { … }`，**最外层**的 package 声明不能再拼一次名字（否则扫出 `Pkg::Pkg::Vehicle` 双前缀）。
+- **M19 · 第五轮（2026-10-25）画布补齐「体成员」→ 文本 ↔ 可视化真正等价**：
+  - **发现**：`modelToFlow` 只画**命名空间层**的元素（package / view 的成员）+ 端口 —— 定义体里的成员（`part engine : Engine;` / `action x;` / `@Safety{…}` / `variant part …` / `individual …` / `event occurrence …`）**画布上完全看不见**。官方模型整篇能解析了，但画布几乎空白 → 需求②「文本与可视化等价」在体成员上是断的。
+  - **做法**：`transform/modelToFlow.ts` 新增 `collectBodyMembers`（递归走 `body`），把体成员画出来；官方新增的那批 kind 走**通用节点** `sysmlUsage`（灰色卡片 + `«kind»` 标题，`data.kind` 带真实 kind，属性窗用 `USAGE_SCHEMA` 只给「名字 + 类型」）。
+  - **⚠️ 关键决策：体成员摆顶层，不做 owner 的子节点**。试过挂 `parentId`，两个硬伤：① 零件定义在画布上是**卡片**（200×80），体成员再大也是 200×80 → 子卡片盖住父卡片；② ELK 会把 owner 的子节点（徽标 + 图元）一起布局，端口相对坐标跟着变 → 打破「同一 owner 的两个端口纵向排开」这条既有不变量（回归：`tests/layoutEngine.test.ts` 第 7 条直接变红）。层级信息改由 **stableKey 的 owner 路径**承载（`partUsage:P::Vehicle::engine`），层级展示仍由**树**负责（需求③）。
+  - **顺带**：解析器补 `AnalysisUsage` / `VerificationUsage` / `RequirementUsage` 到**定义体**成员表（SysML v2：Usage 可被 Definition 拥有；⚠️ 必须排在 `analysis case/def` 形态之后，否则 `case` 会被当名字吃掉）。
+  - **画什么 / 不画什么**（写进注释）：属性走**数量徽标**、连接与分配走**边**、`doc`/`import`/`alias` 不是元素、`controlFlow`/`successionAsUsage` 是语句 —— 这些都不上画布。
+  - **回归**：新增 `poc-v2/tests/canvasCoverage.test.ts`（17 条）钉住「体成员上画布 + stableKey 带 owner 路径 + 官方新增 kind 上画布 + 藏在深处的元素（端口体 / 语句体 / 需求体 / exhibit state / 包级 state）」。
+  - **「藏在深处」的六种位置**（漏一层就少一批元素）：端口体（`port p { event occurrence e; }`）、语句体（`then action a { … }` / `satisfy R by X { … }`）、需求体、exhibit state（⚠️ 嵌套状态在 `nested.states`，**不在** `body`）、包级 state usage（官方第 456 行）。
+  - **用官方模型做覆盖核对**（临时探针）：有名字的元素几乎全部上画布（partUsage 98/98、actionUsage 27/27、eventOccurrence 14/14、requirementUsage 13/13、metadataUsage 11/11、variantUsage 5/5、stateDef 17/17）；剩下差值都是**有意不画**的：属性（208，走数量徽标）、端口（84，走边框徽标）、无名约束块（8）、语句与端点。
+  - **⚠️ e2e 提醒**：Vite 只 watch `poc-v2/frontend` —— 改 `poc-v2/transform|parser|ast|views` 后**必须重启 Vite**（`Stop-Process` 掉占用 3002 端口的旧进程，否则新实例起不来）再跑 e2e，否则跑的是旧代码。
+- **M19 · 第五轮 b（2026-10-25）画布等价性的 e2e 收口：抓到 1 个真 bug + 3 个夹具坑**：
+  - **🔴 真 bug（产品坏了，不是测试坏了）：「聚焦元素」把整个模型挤出视口**。`DiagramCanvas` 的 `applyPendingSelect` / `focusNode` / `focusNodeByName` 原来用 `instance.fitView({ nodes: [单个节点], padding: 0.5 })` —— RF 对**单个**节点会把它放到视口中央并**放到最大缩放**（`maxZoom` 默认 2）。一张 169×60 的卡片在 876×630 的画布里直接顶到 2 倍 → 其余节点全被挤出视口，用户看到「只剩一个卡片」。实测症状：m17 的 A5 用例抓到的画布是 `scale(2)` + 4 个节点只露出 1 个 → `Wheel` 节点在视口外 → 从它的边框带拖不出连线。**修法**：新增 `focusNodeInView()` —— 语义改成「**聚焦 = 居中 + 高亮，不改缩放**」：节点已在视野里就**完全不动视口**，在视野外才 `setCenter(..., { zoom: 当前缩放 })`。
+  - **顺带修**：`focusNodeByName` 用的是 `useImperativeHandle(ref, …, [])` 闭包里**首帧那份 nodes**（通常是空数组）→ 永远返回 false。改成读 RF 实时 store（`instance.getNodes()`）。
+  - **夹具坑①：按名字取节点必须按节点类型消歧**。Playwright 的 `hasText` 是**大小写不敏感**的子串匹配，而画布上同时有 `part def Engine;`（`sysmlPartDef`，文本 «part def» Engine）和 `part engine : Engine;`（`sysmlPartUsage`，文本 «part» : Engine）—— 都含 "engine"，`.first()` 取到哪个纯看 DOM 顺序。改用 `.react-flow__node-<type>` 过滤。
+  - **夹具坑②：空白点不能写死比例**。新增画布节点后，原来那块「碰巧没人」的屏幕位置被节点占了 → 按下去变成「拖节点」而不是「拖空白」。改成扫网格 + `elementFromPoint` **自校验**（命中的元素不在任何 `.react-flow__node` / 控件 / 缩略图里才算数），并且**平移之后要重新取一次**（内容挪了，老坐标可能已压在节点上）。
+  - **夹具坑③（产品特性，别当 bug 修）**：React Flow 的 `autoPanOnSelection`（默认开）—— **框选矩形拖到画布边缘 40px 以内会自动平移画布**（`@xyflow/system` 的 `calcAutoPan`：越靠近边缘越快，每帧最多 15px）。所以「空白点」必须离边缘留出「拖拽距离 + 40px」的余量，否则「不按空格拖空白不产生平移」那条用例会红在一个**产品特性**上（本轮实测平移量高达 336px）。
+  - **顺带**：m16-p5 的整组用例加 `test.setTimeout(90_000)`（原来吃全局 30s 预算，实测单条 26~40s，全量连跑随机红）。
+
 
 - Tech review (`tech_review_report.md`) scored 4.4/10 — historical artifact from the pre-M1 design phase; read it before scoping new work
 - Go is the locked backend language; DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for production

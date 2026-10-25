@@ -163,7 +163,7 @@ async function gotoVehicleCanvas(page: Page, auth: Auth): Promise<Locator> {
   await page.waitForTimeout(1500);
 
   const node = page
-    .locator('.react-flow__node')
+    .locator('.react-flow__node-sysmlPartDef')
     .filter({ hasText: 'Vehicle' })
     .filter({ hasNotText: 'VehicleModel' })
     .first();
@@ -270,11 +270,26 @@ async function countEdges(page: Page): Promise<number> {
   return page.locator('.react-flow__edge').count();
 }
 
-/** 按名字取画布上的顶层图元（排除「同名但更外层」的那个，比如 Vehicle vs VehicleModel） */
-function nodeByLabel(page: Page, label: string, exclude?: string): Locator {
-  let l = page.locator('.react-flow__node').filter({ hasText: label });
-  if (exclude) l = l.filter({ hasNotText: exclude });
-  return l.first();
+/**
+ * 按名字取画布上的顶层图元。
+ *
+ * ⚠️ **必须按节点类型消歧**，不能只按文本匹配。
+ *
+ * 原因：Playwright 的 `hasText` 是**大小写不敏感**的子串匹配，而画布上现在
+ * 同时存在「定义」和「体成员用法」两种同名图元 ——
+ *   `part def Engine;`  → `sysmlPartDef` 节点，文本 «part def» Engine
+ *   `part engine : Engine;` → `sysmlPartUsage` 节点，文本 «part» : Engine
+ * 两者都含 "engine"，`.first()` 取到哪个纯看 DOM 顺序 → 用例红在跟它要验的
+ * 东西无关的地方（M19 第五轮新增体成员节点后 A4 就这么红的）。
+ *
+ * `nodeType` 就是 React Flow 挂在根节点上的类型 class（`react-flow__node-<type>`），
+ * 由 `DiagramCanvas` 的 `nodeTypes` 映射决定，改组件不会让本用例静默失效。
+ */
+function nodeByLabel(page: Page, label: string, nodeType?: string): Locator {
+  const base = nodeType
+    ? page.locator(`.react-flow__node-${nodeType}`)
+    : page.locator('.react-flow__node');
+  return base.filter({ hasText: label }).first();
 }
 
 /**
@@ -316,11 +331,63 @@ async function edgeStartPoint(edge: Locator): Promise<{ x: number; y: number } |
   return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
 }
 
-/** 画布上一块确定是空白的坐标（避开右上角控件 / 缩略图 / 左下角图例） */
+/**
+ * 画布上一块**确定是空白**的坐标。
+ *
+ * ⚠️ 不能写死比例坐标（原来用 0.28/0.82）：M19 第五轮给定义体成员补了画布节点
+ * （`part engine : Engine;` 之类），那块位置被节点占了 → 按下去变成「拖某个节点」
+ * 而不是「拖空白」→ 平移用例红在一个跟它要验的东西无关的地方。
+ *
+ * 这里扫一圈网格并用 `elementFromPoint` **自校验**：命中的元素不在任何
+ * `.react-flow__node` 里、也不在控件/缩略图/面板里才算数。命中不了就抛错 ——
+ * 让用例红在真正的意图上，而不是默默点歪。
+ *
+ * ## 为什么还必须离画布边缘留余量
+ *
+ * React Flow 的 `autoPanOnSelection`（默认开）：**框选矩形拖到画布边缘 40px
+ * 以内会自动平移画布**（`@xyflow/system` 的 `calcAutoPan`：越靠近边缘速度越快，
+ * 每帧最多 15px）。
+ *
+ * 踩过的坑：本helper 一开始优先挑「最下面那排空白」，拖 80px 正好越过下边缘
+ * → 触发自动平移 → 「不按空格拖空白不产生平移」那条用例红在一个**产品特性**
+ * 上（平移量高达 336px）。
+ *
+ * 所以候选点必须留出「拖拽距离 + 自动平移触发区」的余量：
+ * 下面留 130px（拖 90 + 触发区 40），右边留 200px（拖 180 + 触发区 40）。
+ */
 async function blankPoint(page: Page): Promise<{ x: number; y: number }> {
   const pane = page.locator('.react-flow__pane').first();
-  const box = (await pane.boundingBox())!;
-  return { x: box.x + box.width * 0.28, y: box.y + box.height * 0.82 };
+  const pb = (await pane.boundingBox())!;
+  const RIGHT_MARGIN = 200;
+  const BOTTOM_MARGIN = 130;
+  const candidates: { x: number; y: number }[] = [];
+  // 优先下半部（模型一般布局在上方），从左往右扫
+  for (let fy = 0.88; fy >= 0.08; fy -= 0.06) {
+    for (let fx = 0.08; fx <= 0.92; fx += 0.06) {
+      const x = pb.x + pb.width * fx;
+      const y = pb.y + pb.height * fy;
+      if (x + RIGHT_MARGIN > pb.x + pb.width) continue;
+      if (y + BOTTOM_MARGIN > pb.y + pb.height) continue;
+      candidates.push({ x, y });
+    }
+  }
+  for (const c of candidates) {
+    const clean = await page.evaluate(
+      ([x, y]) => {
+        const el = document.elementFromPoint(x as number, y as number);
+        if (!el) return false;
+        return (
+          el.closest('.react-flow__node') === null &&
+          el.closest('.react-flow__controls') === null &&
+          el.closest('.react-flow__minimap') === null &&
+          el.closest('.react-flow__panel') === null
+        );
+      },
+      [c.x, c.y],
+    );
+    if (clean) return c;
+  }
+  throw new Error('画布上找不到空白点（所有候选位置都被节点/控件覆盖）');
 }
 
 /**
@@ -429,10 +496,15 @@ test.describe('M17 画布交互', () => {
     await expect(page.locator('[data-testid="canvas-wrapper"][data-space-pan="1"]')).toHaveCount(0);
 
     // ── 不按空格拖空白 = 框选，不是平移 ──
+    //
+    // ⚠️ 必须**重新取**空白点：上一段平移把画布内容整体挪了，原来那块屏幕
+    // 坐标现在可能正好压在某个节点上 —— 那就变成「拖节点」而不是「拖空白」，
+    // 用例就红在跟它要验的东西无关的地方。
+    const blank2 = await blankPoint(page);
     const before = await viewportOffset(page);
-    await page.mouse.move(blank.x, blank.y);
+    await page.mouse.move(blank2.x, blank2.y);
     await page.mouse.down();
-    await page.mouse.move(blank.x + 160, blank.y + 80, { steps: 14 });
+    await page.mouse.move(blank2.x + 160, blank2.y + 80, { steps: 14 });
     await page.mouse.up();
     await page.waitForTimeout(300);
     const afterDrag = await viewportOffset(page);
@@ -486,11 +558,12 @@ test.describe('M17 画布交互', () => {
     await injectAuth(page, auth);
     await gotoVehicleCanvas(page, auth);
 
-    const wheel = nodeByLabel(page, 'Wheel');
-    // Playwright 的 hasText / hasNotText 对字符串是**大小写不敏感**的，
-    // 所以不能靠 hasNotText: 'engine' 排除同名子节点 —— 画布上这三个图元
-    // 本身就没有子节点，直接按文本取即可。
-    const engine = nodeByLabel(page, 'Engine');
+    const wheel = nodeByLabel(page, 'Wheel', 'sysmlPartDef');
+    // 按**节点类型**取，不要靠 hasText 排除：
+    // Playwright 的 hasText 对字符串大小写不敏感，画布上同时存在
+    // `part def Engine;`（sysmlPartDef）和 `part engine : Engine;`（sysmlPartUsage）
+    // 两个含 "engine" 的图元，只按文本取会拿到错的那个。
+    const engine = nodeByLabel(page, 'Engine', 'sysmlPartDef');
     await expect(wheel).toBeVisible({ timeout: 15_000 });
     await expect(engine).toBeVisible({ timeout: 15_000 });
 
@@ -575,7 +648,7 @@ test.describe('M17 画布交互', () => {
     await injectAuth(page, auth);
     await gotoVehicleCanvas(page, auth);
 
-    const wheel = nodeByLabel(page, 'Wheel');
+    const wheel = nodeByLabel(page, 'Wheel', 'sysmlPartDef');
     await expect(wheel).toBeVisible({ timeout: 15_000 });
 
     // 判据的前提：视口不是恒等变换，否则「画布坐标 == 屏幕坐标」，
@@ -689,7 +762,7 @@ test.describe('M17 画布交互', () => {
     await injectAuth(page, auth);
     await gotoVehicleCanvas(page, auth);
 
-    const owner = nodeByLabel(page, 'Vehicle');
+    const owner = nodeByLabel(page, 'Vehicle', 'sysmlPartDef');
     await expect(owner).toBeVisible({ timeout: 15_000 });
     const badge = portBadge(page);
     await expect(badge, '画布上没有端口徽标节点').toBeVisible({ timeout: 15_000 });

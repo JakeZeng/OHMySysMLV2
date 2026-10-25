@@ -327,6 +327,15 @@ NamespaceOrTopLevel
   / AnalysisDefinition
   / VerificationCaseDef
   / VerificationDefinition
+  // M19 需求①：分析 / 验证 / 需求的 **usage** 形态也能写在定义体里
+  // （SysML v2 里 AnalysisCaseUsage / VerificationCaseUsage / RequirementUsage
+  //  都是 Usage，可以被 Definition 拥有）。
+  //
+  // ⚠️ 必须排在对应的 **def / case** 形态之后 —— `analysis case X` 里
+  //    "case" 会被当名字吃掉（NotDefKeyword 只挡 "def"）。
+  / AnalysisUsage
+  / VerificationUsage
+  / RequirementUsage
   / PartRedefinesUsage
   / PartUsage
   / ItemUsage
@@ -820,6 +829,15 @@ PartBodyMember
   / AnalysisDefinition
   / VerificationCaseDef
   / VerificationDefinition
+  // M19 需求①：分析 / 验证 / 需求的 **usage** 形态也能写在定义体里
+  // （SysML v2 里 AnalysisCaseUsage / VerificationCaseUsage / RequirementUsage
+  //  都是 Usage，可以被 Definition 拥有）。
+  //
+  // ⚠️ 必须排在对应的 **def / case** 形态之后 —— `analysis case X` 里
+  //    "case" 会被当名字吃掉（NotDefKeyword 只挡 "def"）。
+  / AnalysisUsage
+  / VerificationUsage
+  / RequirementUsage
   / PartRedefinesUsage
   / PartUsage
   / ItemUsage

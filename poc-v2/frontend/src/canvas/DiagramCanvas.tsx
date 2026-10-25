@@ -498,6 +498,47 @@ const ActionNode: React.FC<NodeProps> = ({ data, selected }) => {
 const MemoActionNode = React.memo(ActionNode);
 
 /**
+ * M19 需求①：官方新增元素的**通用节点**。
+ *
+ * 这一批元素（metadata / variant / individual / analysis / event / message /
+ * join / fork / objective …）在画布上的呈现诉求相同：
+ * 「它叫什么」+「它是什么 kind」。所以用一张**石板灰**卡片，
+ * kind 原样显示在标题行（`«metadataUsage»` 之类）。
+ *
+ * 为什么不用彩色：这些 kind 数量多、彼此语义差异大，逐一配色既啰嗦又容易
+ * 撞色；灰底 + kind 文本反而最不容易误解（用户看到 kind 名就知道是什么）。
+ */
+const UsageNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & { kind?: string; typeRef?: string };
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#d9d9d9' : '#fafafa',
+        border: `2px solid ${selected ? '#595959' : '#bfbfbf'}`,
+        borderRadius: '4px',
+        padding: '6px 10px',
+        minWidth: '140px',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#8c8c8c', width: 8, height: 8 }} />
+      <div style={{ fontSize: '9px', color: '#8c8c8c', marginBottom: '2px', textTransform: 'uppercase' }}>
+        {`«${d.kind ?? 'usage'}»`}
+      </div>
+      <div style={{ fontWeight: 600, color: '#262626' }}>{d.label}</div>
+      {d.typeRef ? (
+        <div style={{ fontSize: '10px', color: '#8c8c8c' }}>{String(d.typeRef)}</div>
+      ) : null}
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#8c8c8c', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoUsageNode = React.memo(UsageNode);
+
+/**
  * M17 S8：状态机 / 活动成为**一等容器节点**。
  *
  * 此前矩阵里 `stateMachine` / `activity` 两行已经编码成 ContainerKind，
@@ -787,6 +828,8 @@ const nodeTypes = {
   sysmlActivity: MemoActivityNode,
   sysmlRequirement: MemoRequirementNode,
   sysmlConstraint: MemoConstraintBlockNode,
+  // M19 需求①：官方新增元素的通用节点（metadata / variant / individual / analysis …）
+  sysmlUsage: MemoUsageNode,
   sysmlGhost: MemoGhostNode,
 };
 
@@ -1226,6 +1269,58 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   }, []);
 
   /**
+   * M19：把某个节点**带进视野**（聚焦），但**不改缩放**。
+   *
+   * ## 为什么不能用 `fitView({ nodes: [target] })`
+   *
+   * 那是改造前的写法，症状是「点一下树上的元素，整个模型就没了」：
+   *
+   *   - RF 的 `fitView` 对**单个**节点会把它放到视口中央并**放到最大** ——
+   *     一张 169×60 的卡片在 876×630 的画布里能放大到 `maxZoom`（RF 默认 2）；
+   *   - 缩放一旦顶到 2，模型里其它节点就被挤出视口 → 用户看到「只剩一个卡片」，
+   *     别的节点还得手动滚出去找。
+   *
+   * 实测（M19 第五轮 e2e）：m17 的 A5 用例抓到的就是 zoom=2 + 4 个节点只露出 1 个。
+   *
+   * 聚焦的语义本来就只是「把这个元素带到眼前」，**不是**「放大它」：
+   *   - 节点已经在视野里 → **完全不动视口**（用户的视角归用户管）；
+   *   - 节点在视野外 → 居中到它，**保持当前缩放**。
+   *
+   * @param inst  RF 实例
+   * @param nodeId 目标节点 id
+   * @param viewW/viewH 画布可视区尺寸（CSS px）
+   */
+  const focusNodeInView = useCallback(
+    (inst: ReactFlowInstance, nodeId: string, viewW: number, viewH: number) => {
+      const internal = inst.getInternalNode(nodeId);
+      if (!internal) return;
+      const pa = internal.internals.positionAbsolute;
+      const w = internal.measured?.width ?? 0;
+      const h = internal.measured?.height ?? 0;
+      const vp = inst.getViewport();
+      const zoom = vp.zoom || 1;
+      const viewX = -vp.x / zoom;
+      const viewY = -vp.y / zoom;
+      const viewWFlow = viewW / zoom;
+      const viewHFlow = viewH / zoom;
+      const inside =
+        pa.x >= viewX &&
+        pa.y >= viewY &&
+        pa.x + w <= viewX + viewWFlow &&
+        pa.y + h <= viewY + viewHFlow;
+      if (inside) return; // 已经在视野里 → 不动用户的视口
+      inst.setCenter(pa.x + w / 2, pa.y + h / 2, { zoom, duration: 300 });
+    },
+    [],
+  );
+
+  /** 画布可视区尺寸（CSS px）；拿不到时退化成 0（此时不移动视口） */
+  const viewportSize = useCallback((): { w: number; h: number } => {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    return { w: rect?.width ?? 0, h: rect?.height ?? 0 };
+  }, []);
+
+  /**
    * M18：外部（工程树）请求选中的节点，可能**此刻还不在画布上**。
    *
    * 树的点击会触发 scope content 的异步加载 → pipeline → ELK 布局，这条链走完
@@ -1249,12 +1344,14 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     onSelectionChange?.(target);
     const instance = rfInstanceRef.current;
     if (instance) {
-      instance.fitView({ nodes: [target], duration: 500, padding: 0.5 });
+      // M19：聚焦 = 带进视野（不改缩放），别用 fitView —— 那会把缩放顶到 maxZoom
+      const { w, h } = viewportSize();
+      focusNodeInView(instance, wanted, w, h);
       setHighlightedNodeId(wanted);
       scheduleClear();
     }
     return true;
-  }, [nodes, onSelectionChange, scheduleClear]);
+  }, [nodes, onSelectionChange, scheduleClear, focusNodeInView, viewportSize]);
 
   // 节点到位（pipeline / 布局回来）后补选：只在有 pending 时跑，不干扰正常交互
   React.useEffect(() => {
@@ -1285,7 +1382,9 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       if (!instance) return;
       const node = instance.getNode(nodeId);
       if (node) {
-        instance.fitView({ nodes: [node as Node], duration: 500, padding: 0.5 });
+        // M19：只带进视野，不改缩放（见 focusNodeInView 的说明）
+        const { w, h } = viewportSize();
+        focusNodeInView(instance, nodeId, w, h);
         setHighlightedNodeId(nodeId);
         scheduleClear();
       }
@@ -1293,11 +1392,14 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
     focusNodeByName(name: string): boolean {
       const instance = rfInstanceRef.current;
       if (!instance) return false;
-      const target = nodes.find(
-        (n) => String((n.data as { label?: string } | undefined)?.label ?? '') === name,
-      );
+      // 用 RF 的**实时** store，不要用 props 里的 nodes ——
+      // handle 的依赖是 []，闭包里的 nodes 是首帧那份（通常是空数组）。
+      const target = instance
+        .getNodes()
+        .find((n) => String((n.data as { label?: string } | undefined)?.label ?? '') === name);
       if (!target) return false;
-      instance.fitView({ nodes: [target], duration: 500, padding: 0.5 });
+      const { w, h } = viewportSize();
+      focusNodeInView(instance, target.id, w, h);
       setHighlightedNodeId(target.id);
       scheduleClear();
       return true;

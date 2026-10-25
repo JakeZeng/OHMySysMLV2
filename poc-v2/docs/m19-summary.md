@@ -552,4 +552,197 @@ SysML v2 的引用按名解析 → 源包里把 `Car` 改成 `Truck`、或把包
 - 根 vitest **587/587**、frontend vitest **816/816**、Go 全绿、typecheck clean；
 - e2e 全量 **97/97**（13 spec）。
 
+---
+
+## 二之五、第五轮：画布补齐「体成员」→ 文本 ↔ 可视化真正等价
+
+### 5.1 发现：官方模型能解析了，但画布几乎是空的
+
+需求①让官方参考模型（1580 行）**整篇解析通过**之后，逐条核对「这个元素在
+画布上看得见吗」，发现一个此前一直被忽略的事实：
+
+`transform/modelToFlow.ts` 只画**命名空间层**的元素（package / view 的成员）
++ 端口徽标。**定义体 / 用法体里的成员一个都不画**：
+
+```sysml
+part def Vehicle {
+  part engine : Engine;     ← 画布上看不见
+  attribute mass : Real;    ← 看不见（只在节点上显示数量徽标）
+  action generateTorque;    ← 看不见
+  @Safety{isMandatory = true;}  ← 看不见
+  variant part auto : Transmission;  ← 看不见
+  individual a : Road { … }         ← 看不见
+  event occurrence doorClosed;       ← 看不见
+}
+```
+
+官方模型里绝大部分元素都写在**体**里 —— 也就是说：解析器认识它们，
+树（`views/hierarchy.ts` 泛化遍历）也显示它们，**只有画布看不见**。
+需求②「文本与可视化无障碍切换」在这一半元素上是断的。
+
+### 5.2 做法
+
+- `transform/modelToFlow.ts` 新增 `collectBodyMembers`：递归走 `body`，
+  把体成员画出来（part/port/structure def、part/item/reference usage、
+  状态机、活动、需求、约束块，以及官方新增的那批 kind）。
+- 官方新增的那批 kind 走**通用节点** `sysmlUsage`：灰色卡片 + `«kind»` 标题，
+  `data.kind` 带真实 kind → 属性窗 / 树 / 校验器都能按 kind 识别。
+  属性窗配一份 `USAGE_SCHEMA`（只有「名字 + 类型」），避免套用 part def 的
+  「属性」段（那会让人以为能给 metadata 用法加属性）。
+- 解析器补 `AnalysisUsage` / `VerificationUsage` / `RequirementUsage` 到
+  **定义体**成员表 —— SysML v2 里 Usage 可以被 Definition 拥有。
+  ⚠️ 顺序坑：必须排在 `analysis case/def` 形态之后，否则 `case` 会被当名字吃掉。
+
+### 5.3 关键决策：体成员摆顶层，不做 owner 的子节点
+
+第一版把体成员挂成 owner 的子节点（`parentId`），两个硬伤：
+
+1. 零件定义在画布上是**卡片**（200×80），体成员也是一张 200×80 的卡片 →
+   子卡片整个盖住父卡片；
+2. ELK 会把 owner 的子节点（端口徽标 + 体成员图元）一起参与布局，
+   端口的相对坐标跟着变 → 打破「同一 owner 的两个端口纵向排开」这条既有
+   不变量（`tests/layoutEngine.test.ts` 第 7 条当场变红）。
+
+所以体成员与命名空间成员**一样摆顶层**（画布是「结构视图」，本来就不画嵌套；
+层级由**树**表达 —— 需求③）。层级信息改由 **stableKey 的 owner 路径**承载：
+
+```
+partUsage:P::Vehicle::engine
+timesliceUsage:P::V::a::t0
+```
+
+这样身份仍然唯一、可反查回 owner，且不破坏端口布局。
+
+### 5.4 画什么 / 不画什么
+
+| 成员 | 画布表现 | 理由 |
+|---|---|---|
+| part / port / structure def、part / item / reference usage | 节点 | 结构元素 |
+| 状态机、活动、需求、约束块 | 节点（容器） | 容器语义 |
+| 官方新增 kind（metadata / variant / individual / analysis / event / message / join / objective …） | `sysmlUsage` 通用节点 | 语义各异，呈现诉求相同 |
+| `portUsage` | owner 边框上的**徽标** | 既有机制（M17） |
+| `attributeUsage` | 节点上的**数量徽标** | 画成节点会把画布塞满小方块 |
+| `connection` / `allocation` | **边** | 它们是边不是节点 |
+| `controlFlow` / `successionAsUsage` / `satisfy` | **边**（语句） | 同上（但它们的**体**里可能有元素 → 体仍然遍历） |
+| `doc` / `import` / `alias` / 注释 | 不画 | 不是元素 |
+| 无名元素（`constraint { … }`） | 不画 | 没有名字 → 无法被选中 / 定位 |
+
+### 5.5 「藏在深处」的元素
+
+官方模型里有一批元素不在命名空间层，而在**更深的容器**里。漏掉任何一层，
+画布上就少一批元素（需求②的等价性再次断裂）：
+
+| 位置 | 官方写法 | 例子 |
+|---|---|---|
+| 端口体 | `port p { event occurrence e; }` | 12 个 event occurrence |
+| 语句体 | `then action a { action b; }` | 6 个 action usage |
+| 语句体 | `satisfy R by X { requirement q : Q; }` | 3 个 requirement usage |
+| 需求体 | `requirement def R { requirement q : Q; }` | 5 个 requirement usage |
+| exhibit state | `exhibit state S { state a { state b; } }` | 24 个状态（**嵌套在 `nested.states`**，不在 `body`） |
+| 包级 | `state failureModes[*] nonunique;` | 官方第 456 行的命名空间层状态用法 |
+
+### 5.6 官方模型的覆盖核对
+
+拿官方 1580 行模型做「AST 元素 vs 画布节点」逐 kind 核对（临时探针，已删）：
+
+- **有名字的元素几乎全部上画布**（partUsage 98/98、actionUsage 27/27、
+  eventOccurrence 14/14、requirementUsage 13/13、metadataUsage 11/11、
+  variantUsage 5/5、stateDef 17/17 …）；
+- 剩下的差值都是**有意不画**的：属性（208，走数量徽标）、端口（84，走边框徽标）、
+  无名约束块（8）、语句（transition / subject / bind）与端点（interfaceEnd）。
+
+### 5.7 回归
+
+- 新增 `poc-v2/tests/canvasCoverage.test.ts`（**17 条**）：体成员上画布、
+  stableKey 带 owner 路径、嵌套定义、属性只做徽标、端口机制不变、
+  官方新增 kind（metadata / variant / individual+timeslice+snapshot /
+  event / message / action / occurrence / analysis+objective）都画得出来，
+  以及「藏在深处」的六种位置。
+- 根 vitest **610/610**、frontend vitest **816/816**、Go 全绿、typecheck clean。
+
+## 二之六、第五轮 b：画布等价性的 e2e 收口（抓到 1 个真 bug + 3 个夹具坑）
+
+第五轮把「体成员」画上画布之后，画布上的节点数量、位置、密度全变了 ——
+于是 e2e 里几个**原本绿**的用例红了起来。逐条查下去，发现其中一条红的是
+**产品坏了**，另外几条红的是**夹具跟新画布对不上**。
+
+### 6.1 🔴 真 bug：「聚焦元素」把整个模型挤出视口
+
+**现象**（m17 的 A5 用例）：画布变成 `transform: translate(298px, 204px) scale(2)`，
+4 个节点只露出 1 个，`Wheel` 节点被挤到视口外 → 从它的边框带拖不出连线
+（`connect-preview` 根本没出现）。
+
+**根因**：`DiagramCanvas` 里三处「聚焦」都用了
+`instance.fitView({ nodes: [目标节点], duration: 500, padding: 0.5 })`。
+RF 的 `fitView` 对**单个**节点会把它放到视口中央，并**放到能放的最大缩放**
+（`maxZoom` 默认 2）。一张 169×60 的卡片在 876×630 的画布里 → 直接 2 倍 →
+其余节点全部被挤出视口。
+
+换个说法：用户点一下工程树里的元素，画布就「只剩那一个卡片」。
+
+**修法**：新增 `focusNodeInView(inst, nodeId, viewW, viewH)`，把语义改成：
+
+> **聚焦 = 居中 + 高亮，不改缩放。**
+> 节点已经在视野里 → 完全不动视口（用户的视角归用户管）；
+> 节点在视野外 → `setCenter(目标中心, { zoom: 当前缩放 })`。
+
+三处调用点（`applyPendingSelect` / `focusNode` / `focusNodeByName`）统一改用它。
+
+**顺带修**：`focusNodeByName` 用的是 `useImperativeHandle(ref, …, [])` 闭包里
+**首帧那份 nodes**（通常是空数组）→ 永远 `return false`。改成读 RF 实时 store
+（`instance.getNodes()`）。
+
+### 6.2 夹具坑①：按名字取节点必须按**节点类型**消歧
+
+Playwright 的 `filter({ hasText })` 是**大小写不敏感**的子串匹配。画布上同时存在：
+
+| 文本 | 节点类型 | 来源 |
+|---|---|---|
+| `«part def» Engine` | `sysmlPartDef` | `part def Engine;` |
+| `«part» : Engine` / `engine` | `sysmlPartUsage` | `part engine : Engine;`（体成员） |
+
+两者都含 "engine"，`.first()` 取到哪个纯看 DOM 顺序 → 用例红在跟它要验的东西
+无关的地方（本轮 A4 就这么红的）。改用节点类型 class 过滤：
+
+```ts
+page.locator('.react-flow__node-sysmlPartDef').filter({ hasText: 'Engine' })
+```
+
+### 6.3 夹具坑②：空白点不能写死比例坐标
+
+原来 `blankPoint()` 固定取 pane 的 (28%, 82%)。新增画布节点后那块位置被节点占了
+→ 按下去变成「拖某个节点」而不是「拖空白」→ 平移用例红在无关的地方。
+
+改成：扫一圈网格，用 `elementFromPoint` **自校验**（命中的元素不在任何
+`.react-flow__node` / `.react-flow__controls` / `.react-flow__minimap` /
+`.react-flow__panel` 里才算数），命中不了就抛错 —— 让用例红在真正的意图上。
+
+另外：**平移之后必须重新取一次空白点** —— 内容挪了，原来那块屏幕坐标可能
+已经压在某个节点上。
+
+### 6.4 夹具坑③：RF 的 `autoPanOnSelection`（产品特性，别当 bug 修）
+
+React Flow 默认开启 `autoPanOnSelection`：**框选矩形拖到画布边缘 40px 以内，
+画布会自动平移**（`@xyflow/system` 的 `calcAutoPan`：越靠近边缘速度越快，
+每帧最多 15px）。
+
+本轮实测：空白点选在 88% 高度处，拖 80px 正好越过下边缘 → 触发自动平移 →
+「不按空格拖空白不产生平移」那条用例红在一个**产品特性**上（平移量 336px）。
+
+**结论**：这是正常交互（框选到边缘自动滚动画布，Figma 也这样），改产品不合适；
+改夹具 —— 空白点必须离边缘留出「拖拽距离 + 40px」的余量。
+
+### 6.5 顺带：m16-p5 的时间预算
+
+m16-p5 整组用例吃全局 30s 预算，实测单条 26~40s（要开画布、等 ELK、
+拖节点、刷新再回读布局）→ 全量连跑随机红。给该 describe 加
+`test.setTimeout(90_000)`（与 m17 一致）。
+
+### 6.6 验证
+
+- m17（11 条）+ m18（8 条）**19/19 全绿**；
+- 全量 e2e 见本轮提交记录。
+
+
+
 

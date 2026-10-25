@@ -34,6 +34,7 @@ import type {
   CommentBlock,
   TraceLink,
   Allocation,
+  GenericUsage,
 } from '../ast/model';
 import type { Edge, Node } from '@xyflow/react';
 import { elkLayout } from './layoutEngine';
@@ -145,17 +146,33 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // §7.12 分配语句。改造前没有这个桶 —— 分配语句被 collectMembers 的 switch
   // 静默丢掉，于是「分配」模式画线后画布上什么都不会出现。
   const allocations: Q<Allocation>[] = [];
+  // M19 需求①：官方新增的那批元素（metadata / variant / individual / analysis …）
+  const genericUsages: Q<GenericUsage>[] = [];
+  const buckets: Buckets = {
+    partDefs,
+    portDefs,
+    structureDefs,
+    partUsages,
+    referenceUsages,
+    connections,
+    stateMachines,
+    activities,
+    requirements,
+    constraintBlocks,
+    allocations,
+    genericUsages,
+  };
 
   for (const pkg of model.packages) {
-    collectMembers(pkg, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(pkg, buckets);
   }
   // M15 §7.26：view / viewpoint 都是 Namespace，body 内的 owned 成员也要上图
   // （否则打开一个只含 view 定义的视图，画布会是空的）
   for (const v of model.views ?? []) {
-    collectMembers(v, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(v, buckets);
   }
   for (const vp of model.viewpoints ?? []) {
-    collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
+    collectMembers(vp, buckets);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
   //
@@ -185,6 +202,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   dedupeById(requirements);
   dedupeById(constraintBlocks);
   dedupeById(allocations);
+  dedupeById(genericUsages);
 
   // M17：稳定键分配器，一次 pipeline 重建一张图的键
   const keys = new StableKeys();
@@ -203,6 +221,8 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     nameToQName.set(pd.name, qname);
     nodes.push(makePartDefNode(id, pd, keys.alloc(elementKeyBase('partDef', qname))));
     partToPortIds.set(id, collectPortNodes(nodes, pd.body, id, qname, keys));
+    // M19 需求②：定义体里的成员也要在画布上看得见（见 collectBodyMembers）
+    collectBodyMembers(nodes, pd.body, qname, keys);
   }
   for (const { node: pu, qname } of partUsages) {
     const id = `${pu.kind === 'itemUsage' ? 'iu' : 'pu'}:${pu.id}`;
@@ -214,6 +234,7 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
         : makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))),
     );
     partToPortIds.set(id, collectPortNodes(nodes, pu.body, id, qname, keys));
+    collectBodyMembers(nodes, pu.body, qname, keys);
   }
   // M17 S7.2：reference usage —— 无 body，不建端口子节点
   for (const { node: ru, qname } of referenceUsages) {
@@ -229,6 +250,29 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     const id = `sd:${sd.id}`;
     nodes.push(makeStructureDefNode(id, sd, keys.alloc(elementKeyBase(sd.kind, qname))));
     partToPortIds.set(id, collectPortNodes(nodes, sd.body, id, qname, keys));
+    collectBodyMembers(nodes, sd.body, qname, keys);
+  }
+  // M19 需求①：官方新增的那批元素（metadata / variant / individual / analysis …）
+  for (const { node: g, qname } of genericUsages) {
+    // 包级 state usage → 状态卡片（与状态机里的 state 同一款）
+    if (g.kind === 'stateDef') {
+      nodes.push(
+        makeStateNode(
+          `state:${g.id}`,
+          g.name ?? '<anon>',
+          false,
+          false,
+          keys.alloc(elementKeyBase('stateDef', qname)),
+        ),
+      );
+      continue;
+    }
+    const id = `usage:${g.id}`;
+    nodes.push(makeGenericUsageNode(id, g, keys.alloc(elementKeyBase(g.kind, qname))));
+    // 通用节点也可能有体（`individual a { timeslice … { … } }` / `use case u { join j; }`）
+    collectBodyMembers(nodes, g.body, qname, keys);
+    // exhibit state 的状态在 `states` 字段（不在 body）
+    collectExhibitStates(nodes, g, qname, keys);
   }
 
   // 3b. 节点构造（M17 S8：状态机成为一等容器节点）
@@ -343,6 +387,8 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     const id = `req:${req.id}`;
     reqNameToId.set(req.name, id);
     nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text, keys.alloc(elementKeyBase('req', qname))));
+    // 需求体里的成员（requirement usage / objective / verify / require …）
+    collectBodyMembers(nodes, req.body, qname, keys);
   }
 
   // 3e. 节点构造（M5 约束块）
@@ -734,6 +780,262 @@ function collectPortNodes(
   return portIds;
 }
 
+// ─── M19 需求②：定义体成员 → 画布子节点 ─────────────────────────────
+
+/**
+ * 把**定义体 / 用法体**里的成员画成画布上的元素。
+ *
+ * ## 为什么必须是这个函数（需求②「文本 ↔ 可视化等价」）
+ *
+ * 改造前画布只画**命名空间层**的元素（package / view 的成员）+ 端口：
+ *
+ *     part def Vehicle {
+ *       part engine : Engine;     ← 画布上**看不见**
+ *       attribute mass : Real;    ← 看不见（只在节点上显示数量徽标）
+ *       port powerOut : Power;    ← 看得见（端口徽标）
+ *     }
+ *
+ * 后果很直接：官方参考模型（`ptc/25-04-31.sysml`，1580 行）里绝大部分
+ * 元素都写在**体**里（`action generateTorque;` / `@Safety{…}` /
+ * `variant part …` / `individual …` / `event occurrence …`），
+ * 解析器已经能整篇解析，但**画布几乎是空的** —— 文本与可视化严重不等价。
+ *
+ * ## 画在哪儿：顶层，不是 owner 的子节点
+ *
+ * ⚠️ 试过「挂成 owner 的子节点」，**不行**：
+ *   - 零件定义在画布上是一张**卡片**（200×80），端口是骑在边框上的徽标；
+ *     把 200×80 的体成员塞进去 → 子卡片整个盖住父卡片；
+ *   - ELK 会把 owner 的子节点（徽标 + 图元）一起参与布局，端口的相对坐标
+ *     跟着变 → 「两个端口纵向排开」这条既有不变量被打破
+ *     （回归见 tests/layoutEngine.test.ts 第 7 条）。
+ *
+ * 所以体成员与命名空间成员**一样摆在顶层**（画布是「结构视图」，本来就不画
+ * 嵌套；层级由**树**表达 —— 需求③）。但它们的 **stableKey 带 owner 路径**
+ * （`partUsage:P::Vehicle::engine`），身份仍然唯一、可反查回 owner。
+ *
+ * 唯一保留「父子」的是**容器型**成员：状态机 / 活动里的 state / action
+ * （它们本来就是「容器里的徽标」，M17 S8 的既有设计）。
+ *
+ * ## 画哪些、不画哪些
+ *
+ * 画：结构性的成员（part/port/structure def、part/item/reference usage、
+ *     状态机、活动、需求、约束块）以及官方新增的那批用法元素。
+ * 不画：
+ *   - `portUsage` —— 端口已有专门的徽标机制（骑在 owner 边框上）
+ *   - `attributeUsage` —— 属性以**数量徽标**呈现（`attrCount`），画成节点
+ *     会把画布塞满小方块
+ *   - `connection` / `allocation` —— 它们是**边**，不是节点
+ *   - `doc` / `import` / `alias` / 注释 —— 不是元素
+ *   - `controlFlow` / `successionAsUsage` —— 同样是语句（画成边更合适）
+ */
+function collectBodyMembers(
+  out: Node[],
+  body: readonly any[] | undefined,
+  ownerQName: string,
+  keys: StableKeys,
+): void {
+  for (const m of body ?? []) {
+    const kind = m.kind as string;
+
+    // 端口 / 语句本身不画，但它们的**体**里可能有元素 ——
+    // 官方写法里就有：`port redefines setSpeedPort { event occurrence x; }`
+    //                `then action a { action b; }`（succession 的体）
+    //                `satisfy R by X { requirement …; }`
+    //
+    // ⚠️ 这段必须在「跳过列表」**之前** —— 端口/语句在列表里，
+    //    先 continue 就永远走不到这里。
+    if (kind === 'portUsage' || kind === 'successionAsUsage' || kind === 'satisfy') {
+      collectBodyMembers(out, m.body, joinQName([ownerQName], m.name), keys);
+      continue;
+    }
+
+    // 端口 / 属性 / 语句 / 非元素 —— 见上面的说明
+    if (
+      kind === 'portUsage' ||
+      kind === 'attributeUsage' ||
+      kind === 'connection' ||
+      kind === 'allocation' ||
+      kind === 'controlFlow' ||
+      kind === 'successionAsUsage' ||
+      kind === 'doc' ||
+      kind === 'import' ||
+      kind === 'alias' ||
+      kind === 'comment' ||
+      kind === 'enumDef'
+    ) {
+      continue;
+    }
+    // 限定名带上 owner 路径 → stableKey 唯一，且能反查回 owner
+    const qname = joinQName([ownerQName], m.name);
+
+
+    switch (kind) {
+      case 'partUsage':
+      case 'itemUsage': {
+        const id = `${kind === 'itemUsage' ? 'iu' : 'pu'}:${m.id}`;
+        out.push(
+          kind === 'itemUsage'
+            ? makeItemUsageNode(id, m, keys.alloc(elementKeyBase('itemUsage', qname)))
+            : makePartUsageNode(id, m, keys.alloc(elementKeyBase('partUsage', qname))),
+        );
+        // 用法体里还能再套一层（`part a { part b { … } }`）
+        collectBodyMembers(out, m.body, qname, keys);
+        break;
+      }
+      case 'referenceUsage': {
+        const id = `ru:${m.id}`;
+        out.push(makeReferenceUsageNode(id, m, keys.alloc(elementKeyBase('referenceUsage', qname))));
+        break;
+      }
+      case 'partDef': {
+        const id = `pd:${m.id}`;
+        out.push(makePartDefNode(id, m, keys.alloc(elementKeyBase('partDef', qname))));
+        collectBodyMembers(out, m.body, qname, keys);
+        break;
+      }
+      case 'portDef': {
+        const id = `portdef:${m.id}`;
+        out.push(makePortDefNode(id, m, keys.alloc(elementKeyBase('portDef', qname))));
+        collectBodyMembers(out, m.body, qname, keys);
+        break;
+      }
+      case 'stateMachine': {
+        const id = `sm:${m.id}`;
+        out.push(makeStateMachineNode(id, m, keys.alloc(elementKeyBase('stateMachine', qname))));
+        // 状态机里的 state 仍然是它的**真子节点**（容器语义，M17 S8 既有设计）
+        for (const s of m.states ?? []) {
+          out.push(
+            makeStateNode(
+              `state:${s.id}`,
+              s.name,
+              !!s.isInitial,
+              !!s.isFinal,
+              keys.alloc(elementKeyBase('state', joinQName([qname], s.name))),
+              id,
+            ),
+          );
+        }
+        break;
+      }
+      case 'activity': {
+        const id = `act:${m.id}`;
+        out.push(makeActivityNode(id, m, keys.alloc(elementKeyBase('activity', qname))));
+        for (const a of m.actions ?? []) {
+          out.push(
+            makeActionNode(
+              `action:${a.id}`,
+              a.name,
+              false,
+              false,
+              keys.alloc(elementKeyBase('actionUsage', joinQName([qname], a.name))),
+              id,
+            ),
+          );
+        }
+        break;
+      }
+      case 'requirement': {
+        const id = `req:${m.id}`;
+        out.push(
+          makeRequirementNode(id, m.name, m.reqId, m.text, keys.alloc(elementKeyBase('requirement', qname))),
+        );
+        // 需求体里的成员（subject / objective / verify / requirement usage …）
+        collectBodyMembers(out, m.body, qname, keys);
+        break;
+      }
+      case 'constraintBlock': {
+        const id = `cb:${m.id}`;
+        out.push(
+          makeConstraintBlockNode(id, m.name, m.constraint, keys.alloc(elementKeyBase('constraintBlock', qname))),
+        );
+        break;
+      }
+      case 'exhibitStateUsage': {
+        const id = `usage:${m.id}`;
+        out.push(makeGenericUsageNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
+        // 官方 exhibit state 的状态在 `states` 字段
+        collectExhibitStates(out, m, qname, keys);
+        break;
+      }
+      default: {
+        // structureDef 的 11 个同构 kind
+        if (STRUCTURE_DEF_KINDS.has(kind)) {
+          const id = `sd:${m.id}`;
+          out.push(makeStructureDefNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
+          collectBodyMembers(out, m.body, qname, keys);
+          break;
+        }
+        // M19 需求①：官方新增的那批用法元素 → 通用节点
+        if (GENERIC_USAGE_KINDS.has(kind)) {
+          const id = `usage:${m.id}`;
+          out.push(makeGenericUsageNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
+          // 通用节点也可能有体（`individual a { timeslice … { … } }`）
+          collectBodyMembers(out, m.body, qname, keys);
+        }
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * 官方 `exhibit state X { state y { … } }` 里的状态。
+ *
+ * ⚠️ exhibit state 的状态在 AST 的 `states` 字段里（**不在** `body`），
+ *    所以 `collectBodyMembers` 走不到 —— 官方参考模型里 8 个 exhibit state
+ *    带 25 个状态，不单独处理的话画布上**一个状态都看不到**。
+ *
+ * 状态与状态机里的状态同构（`isInitial` / `isFinal` 标记），
+ * 但 exhibit state 本身是一张**卡片**（不是容器），所以状态摆顶层。
+ */
+function collectExhibitStates(
+  out: Node[],
+  owner: any,
+  ownerQName: string,
+  keys: StableKeys,
+): void {
+  for (const st of owner.states ?? []) {
+    const qname = joinQName([ownerQName], st.name);
+    out.push(
+      makeStateNode(
+        `state:${st.id}`,
+        st.name,
+        !!st.isInitial,
+        !!st.isFinal,
+        keys.alloc(elementKeyBase('stateDef', qname)),
+        // exhibit state 不是容器 → 状态不挂它下面（顶层摆放）
+      ),
+    );
+    // 嵌套状态（`state y { state z; }`）—— ⚠️ 官方 AST 里嵌在 `nested.states`
+    //    （不是 `st.states`），漏了这一层 → 16 个嵌套状态在画布上消失
+    collectExhibitStates(out, st.nested ?? {}, qname, keys);
+  }
+}
+
+/**
+ * M19 需求①：官方新增元素的**通用节点**。
+ *
+ * 这些元素（metadata / variant / individual / analysis / event / message /
+ * join / fork / objective …）语义各异，但画布上只需要表达两件事：
+ * 「它叫什么」+「它是什么 kind」。所以做成一张带 kind 前缀的卡片，
+ * kind 原样带在 `data.kind` 上（属性窗 / 树 / 校验器都能按 kind 识别）。
+ */
+function makeGenericUsageNode(id: string, g: GenericUsage, stableKey: string): Node {
+  const label = g.name || g.typeRef || `<${g.kind}>`;
+  return {
+    id,
+    type: 'sysmlUsage',
+    position: { x: 0, y: 0 },
+    data: {
+      label,
+      kind: g.kind,
+      typeRef: g.typeRef,
+      location: g.location,
+      stableKey,
+    },
+  };
+}
+
 function makePortNode(id: string, p: PortUsage, parentId: string, stableKey: string): Node {
   return {
     id,
@@ -915,20 +1217,107 @@ function dedupeById<T extends { id?: string }>(bucket: Q<T>[]): void {
  *
  * 参数只用到 `.members` —— package 与 view（M15 §7.26，view 也是 Namespace）
  * 都满足，所以按结构取而不是按 `Package` 取。
+ *
+ * ⚠️ M19：桶改成**对象**传（原来 13 个位置参数）。原因很实际：再往里加一种
+ *    元素（官方模型这轮补了 40+ 种）就得改函数签名 + 4 个调用点 + 递归调用，
+ *    漏一处就是「某类元素静默消失」。对象形式加桶只改一处。
  */
+interface Buckets {
+  partDefs: Q<PartDefinition>[];
+  portDefs: Q<PortDefinition>[];
+  structureDefs: Q<StructureDefinition>[];
+  partUsages: Q<PartUsage>[];
+  referenceUsages: Q<ReferenceUsage>[];
+  connections: Q<Connection>[];
+  stateMachines: Q<StateMachine>[];
+  activities: Q<Activity>[];
+  requirements: Q<Requirement>[];
+  constraintBlocks: Q<ConstraintBlock>[];
+  allocations: Q<Allocation>[];
+  /**
+   * M19 需求①：官方参考模型补齐后新增的那批元素。
+   *
+   * 它们各自语义不同（metadata / variant / individual / analysis / event …），
+   * 但在画布上的**呈现方式**一致（一张带 kind 标签的用法卡片），
+   * 所以共用一个桶 + 一个节点类型 `sysmlUsage`。
+   */
+  genericUsages: Q<GenericUsage>[];
+}
+
+/**
+ * StructureDefinition 的 11 个 kind（itemDef / attributeDef / interfaceDef /
+ * occurrenceDef / connectionDef / actionDefinition / stateDefinition /
+ * calcDefinition / useCaseDef / analysisCaseDef / verificationCaseDef）。
+ *
+ * 它们结构完全同构（特化 + body），统一收编。
+ */
+const STRUCTURE_DEF_KINDS = new Set<string>([
+  'itemDef',
+  'attributeDef',
+  'interfaceDef',
+  'occurrenceDef',
+  'connectionDef',
+  'actionDefinition',
+  'stateDefinition',
+  'calcDefinition',
+  'useCaseDef',
+  'analysisCaseDef',
+  'verificationCaseDef',
+]);
+
+/**
+ * 官方新增 kind 的白名单 —— 这些 kind 走 `sysmlUsage` 通用节点。
+ *
+ * ⚠️ 刻意**不**用「未识别的 kind 一律当通用节点」：那会把 `doc` / `import`
+ *    / `alias` 这类**不是元素**的语句也画成节点，画布上多出一堆噪音。
+ *    白名单 = 「确实是官方元素、且当前没有专用节点类型」的那一批。
+ */
+const GENERIC_USAGE_KINDS = new Set<string>([
+  'actionUsage',
+  'sendActionUsage',
+  'acceptActionUsage',
+  'performUsage',
+  'exhibitStateUsage',
+  'metadataUsage',
+  'metadataDef',
+  'variantUsage',
+  'variantAttributeUsage',
+  'variantDef',
+  'variationDef',
+  'individualUsage',
+  'timesliceUsage',
+  'snapshotDef',
+  'analysisUsage',
+  'analysisDef',
+  'verificationUsage',
+  'verificationDef',
+  'objective',
+  'verify',
+  'eventOccurrence',
+  'messageUsage',
+  'joinUsage',
+  'forkUsage',
+  'returnValue',
+  'dependencyUsage',
+  'requireStatement',
+  'allocationUsage',
+  'concernDef',
+  'assumptionDef',
+  'calcUsage',
+  'occurrenceUsage',
+  'interfaceUsage',
+  'requirementUsage',
+  'actorUsage',
+  'useCaseUsage',
+  'includeUseCase',
+  'individualDef',
+  'allocationDef',
+  'variantAttribute',
+]);
+
 function collectMembers(
   ns: { name?: string; members: any[] },
-  partDefs: Q<PartDefinition>[],
-  portDefs: Q<PortDefinition>[],
-  structureDefs: Q<StructureDefinition>[],
-  partUsages: Q<PartUsage>[],
-  referenceUsages: Q<ReferenceUsage>[],
-  connections: Q<Connection>[],
-  stateMachines?: Q<StateMachine>[],
-  activities?: Q<Activity>[],
-  requirements?: Q<Requirement>[],
-  constraintBlocks?: Q<ConstraintBlock>[],
-  allocations?: Q<Allocation>[],
+  b: Buckets,
   path: string[] = []
 ): void {
   // M17：path 是本 namespace 的限定名前缀，每下潜一层包就追加一段。
@@ -938,10 +1327,10 @@ function collectMembers(
     const qname = joinQName(nextPath, m.name);
     switch (m.kind) {
       case 'partDef':
-        partDefs.push({ node: m, qname });
+        b.partDefs.push({ node: m, qname });
         break;
       case 'portDef':
-        portDefs.push({ node: m, qname });
+        b.portDefs.push({ node: m, qname });
         break;
       case 'itemDef':
       case 'attributeDef':
@@ -954,41 +1343,57 @@ function collectMembers(
       case 'useCaseDef':
       case 'analysisCaseDef':
       case 'verificationCaseDef':
-        structureDefs.push({ node: m, qname });
+        b.structureDefs.push({ node: m, qname });
         break;
       case 'partUsage':
       // M17 S7.1：item usage 与 part usage 是孪生兄弟，共用同一个桶，
       // 建节点时按 kind 分流出 sysmlItemUsage 节点类型。
       case 'itemUsage':
-        partUsages.push({ node: m, qname });
+        b.partUsages.push({ node: m, qname });
         break;
       case 'referenceUsage':
-        referenceUsages.push({ node: m, qname });
+        b.referenceUsages.push({ node: m, qname });
         break;
       case 'package':
-        collectMembers(m, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations, nextPath);
+        collectMembers(m, b, nextPath);
         break;
       case 'connection':
-        connections.push({ node: m, qname });
+        b.connections.push({ node: m, qname });
         break;
       case 'allocation':
-        allocations?.push({ node: m, qname });
+        b.allocations.push({ node: m, qname });
         break;
       case 'stateMachine':
-        stateMachines?.push({ node: m, qname });
+        b.stateMachines.push({ node: m, qname });
+        break;
+      case 'stateDef':
+        // 包级的 state usage（官方 `state failureModes[*] nonunique;`
+        // 见 ptc/25-04-31 第 456 行）—— 命名空间层的「状态用法」，
+        // 画成状态节点（与状态机里的 state 同款卡片）。
+        b.genericUsages.push({ node: m, qname });
         break;
       case 'activity':
-        activities?.push({ node: m, qname });
+        b.activities.push({ node: m, qname });
         break;
       case 'requirement':
-        requirements.push({ node: m, qname });
+        b.requirements.push({ node: m, qname });
         break;
       case 'constraintBlock':
-        constraintBlocks?.push({ node: m, qname });
+        b.constraintBlocks.push({ node: m, qname });
         break;
       case 'enumDef':
       case 'comment':
         // 扩展语法：暂不参与图形渲染
+        break;
+      default:
+        // M19 需求①：官方参考模型补齐后新增的那批元素（metadata / variant /
+        // individual / analysis / event / message / join …）。
+        //
+        // ⚠️ 走白名单而不是「未识别即通用节点」：doc / import / alias 这类
+        //    **不是元素**的语句不能变成画布节点（否则画布上多出一堆噪音）。
+        if (GENERIC_USAGE_KINDS.has(m.kind)) {
+          b.genericUsages.push({ node: m, qname });
+        }
         break;
     }
   }
@@ -1048,13 +1453,15 @@ function makeStateNode(
   isInitial: boolean,
   isFinal: boolean,
   stableKey: string,
-  parentId: string
+  // parentId 可省：状态机里的 state 是容器的真子节点，
+  // 而 exhibit state 里的 state 摆在**顶层**（exhibit state 是卡片不是容器）
+  parentId?: string
 ): Node {
   return {
     id,
     type: 'sysmlState',
     position: { x: 0, y: 0 },
-    parentId,
+    ...(parentId ? { parentId } : {}),
     data: {
       label: name,
       kind: 'stateDef',
@@ -1071,13 +1478,13 @@ function makeActionNode(
   isInitial: boolean,
   isFinal: boolean,
   stableKey: string,
-  parentId: string
+  parentId?: string
 ): Node {
   return {
     id,
     type: 'sysmlAction',
     position: { x: 0, y: 0 },
-    parentId,
+    ...(parentId ? { parentId } : {}),
     data: {
       label: name,
       kind: 'actionDef',

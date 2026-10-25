@@ -88,6 +88,43 @@ export type NamespaceMember =
   | FrameConcernMember
   | CommentBlock;
 
+/**
+ * M19 需求①：官方参考模型补齐后新增的那批元素（通用形状）。
+ *
+ * 为什么不逐个写接口：这一批元素（`actionUsage` / `sendActionUsage` /
+ * `acceptActionUsage` / `metadataUsage` / `variantUsage` / `individualUsage` /
+ * `timesliceUsage` / `analysisUsage` / `verificationUsage` / `objective` /
+ * `eventOccurrence` / `messageUsage` / `joinUsage` / `forkUsage` /
+ * `returnValue` / `dependencyUsage` / `requireStatement` / …）在**语义上**
+ * 都是「有名字、可选类型、可能有体」的 usage，只是各自还有专属字段。
+ *
+ * 这里给一个**最小公共形状**，让 AST 契约不再「少一半 kind」；
+ * 专属字段（`via` / `payload` / `about` / `bound` …）在需要时再按 kind 收窄。
+ *
+ * ⚠️ **刻意没有把它加进 `NamespaceMember` / `PartBodyMember` 联合**：
+ *    那两个联合是 `transform/serializer.ts`（AST → 文本写回）的判别依据，
+ *    一旦放宽，序列化器里所有 `switch (m.kind)` 的类型收窄全部失效
+ *    （TS 直接报「不能把 X | GenericUsage 传给只接受 X 的函数」）。
+ *    新 kind 目前的写回路径是**原文编辑**（AST offset 编辑），不走序列化器；
+ *    等真要支持「AST → 文本」时，再一并把序列化器补上。
+ *
+ * ⚠️ 用 `kind: string`（而不是字面量联合）是有意的：新增官方构造时
+ *    不必先改这里才能解析 —— 语法的权威定义在 `parser/sysml.pegjs`。
+ */
+export interface GenericUsage extends SysMLNode {
+  kind: string;
+  name?: string;
+  typeRef?: string;
+  redefines?: string;
+  defaultValue?: string;
+  /** `direction: in/out/inout`（`in item x:T;`） */
+  direction?: Direction;
+  /** 子成员（usage 体 / 定义体） */
+  body?: GenericUsage[];
+  /** 额外字段（send/accept 的 via 与 payload、metadata 的 about、…） */
+  [key: string]: unknown;
+}
+
 /** `import Foo::*;` 或 `import Bar;`（官方 MemberPrefix 可见性可选，如 `public import`） */
 export interface ImportStatement extends SysMLNode {
   kind: 'import';

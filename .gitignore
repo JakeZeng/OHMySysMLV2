@@ -35,6 +35,9 @@ playwright-report/
 test-results/
 .vitest-cache/
 
+# AI 助手 / 工具的本地工作目录（不入库）
+.claude/
+
 # TypeScript build info
 *.tsbuildinfo
 .tsbuild/

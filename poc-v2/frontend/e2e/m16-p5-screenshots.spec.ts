@@ -347,6 +347,13 @@ test.describe.serial('M16 P5 截图归档', () => {
   // 包建模工具栏按钮较多，1280 宽下会挤成两行、末尾几个按钮被裁掉点不到
   // （toggle-mode-text 就是这么变成 "intercepts pointer events" 的）
   test.use({ viewport: { width: 1680, height: 900 } });
+
+  // 这组用例每条都要开画布、等 ELK 布局、拖节点、刷新再回读布局 ——
+  // 实测单条 26~40s，全局默认 30s 预算在机器稍忙时就会超（随机红）。
+  // 统一放宽，别让时间预算把真红盖掉。
+  test.beforeEach(() => {
+    test.setTimeout(90_000);
+  });
   async function ensureSeed(request: APIRequestContext): Promise<{ auth: Auth; s: Seed }> {
     if (!shared) {
       const auth = await bootstrap(request, 'm16p5');
