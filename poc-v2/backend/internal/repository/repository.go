@@ -441,6 +441,36 @@ CREATE TABLE IF NOT EXISTS entity_layouts (
 		// 忽略
 	}
 
+	// M18 增量：首次安装引导（setup wizard）状态 + 应用设置存储。
+	// Schema source of truth: migrations/008_setup.up.sql。
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			key        TEXT PRIMARY KEY,
+			value      TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 app_settings 表失败: %w", err)
+	}
+	if _, err := r.db.Exec(
+		`CREATE TABLE IF NOT EXISTS setup_state (
+			id             INTEGER PRIMARY KEY CHECK (id = 1),
+			initialized    INTEGER NOT NULL DEFAULT 0,
+			initialized_at TIMESTAMP,
+			completed_by   TEXT NOT NULL DEFAULT '',
+			version        TEXT NOT NULL DEFAULT ''
+		)`,
+	); err != nil {
+		return fmt.Errorf("创建 setup_state 表失败: %w", err)
+	}
+	// 单行状态：id=1
+	if _, err := r.db.Exec(
+		`INSERT OR IGNORE INTO setup_state (id, initialized, completed_by, version)
+		 VALUES (1, 0, '', '')`,
+	); err != nil {
+		return fmt.Errorf("初始化 setup_state 行失败: %w", err)
+	}
+
 	return nil
 }
 

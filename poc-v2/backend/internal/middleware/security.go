@@ -265,8 +265,10 @@ func CORS(cfg CORSConfig) gin.HandlerFunc {
 			return
 		}
 
-		// Origin 白名单
-		if !origins[origin] {
+		// 同源请求直接放行（M18 安装包模式：前端与 API 同源，端口由用户决定，
+		// 白名单无法穷举）。跨源请求仍走白名单。
+		allowed := origins[origin] || sameOrigin(origin, c.Request.Host)
+		if !allowed {
 			// 不在白名单 → 拒绝
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "origin not allowed",
@@ -289,6 +291,37 @@ func CORS(cfg CORSConfig) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// sameOrigin 判断 Origin 是否与请求 Host 同源。
+//
+// 忽略协议差异（http/https 同源判定中协议仍算不同，这里放宽到协议无关），
+// 并把 localhost 与 127.0.0.1 视为等价。
+func sameOrigin(origin, host string) bool {
+	o := strings.TrimSpace(origin)
+	if o == "" || host == "" {
+		return false
+	}
+	// 去掉 scheme
+	if i := strings.Index(o, "://"); i >= 0 {
+		o = o[i+3:]
+	}
+	o = strings.ToLower(strings.TrimSuffix(o, "/"))
+	h := strings.ToLower(host)
+
+	normalize := func(s string) string {
+		s = strings.TrimSuffix(s, ":80")
+		s = strings.TrimSuffix(s, ":443")
+		if strings.HasPrefix(s, "localhost:") {
+			s = "127.0.0.1:" + strings.TrimPrefix(s, "localhost:")
+		} else if s == "localhost" {
+			s = "127.0.0.1"
+		} else if strings.HasPrefix(s, "127.0.0.1:") {
+			s = "127.0.0.1:" + strings.TrimPrefix(s, "127.0.0.1:")
+		}
+		return s
+	}
+	return normalize(o) == normalize(h)
 }
 
 // RateLimiter 简易 IP 限流器（OWASP A04 修复）。

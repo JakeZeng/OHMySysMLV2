@@ -9,6 +9,8 @@ package handler
 
 import (
 	"context"
+	"os"
+	"sync"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,7 +26,9 @@ import (
 //
 // 同时保留对 M2 Client 的兼容（已迁移到 Provider interface，见 c1 handler 迁移）。
 type AIHandler struct {
-	chain ai.Provider // 主入口是 FallbackChain（实现 Provider 接口）
+	mu       sync.RWMutex
+	chain    ai.Provider // 主入口是 FallbackChain（实现 Provider 接口）
+	settings map[string]string
 }
 
 // NewAIHandler 创建带 fallback chain 的 handler。
@@ -32,11 +36,34 @@ type AIHandler struct {
 // 优先从环境变量加载多供应商配置，构造 fallback chain：
 //   1. AI_PROVIDER 指定的主供应商（默认 deepseek）
 //   2. 其他可用的供应商（按 env 中是否提供 API key 决定）
+// M18：支持运行期重载配置——首次安装向导写入的 AI 配置存放在 app_settings 表，
+// 写入后调用 Reload() 立即生效，无需重启进程。
 func NewAIHandler() *AIHandler {
-	return &AIHandler{
-		chain: buildFallbackChain(),
-	}
+	h := &AIHandler{}
+	h.Reload(nil)
+	return h
 }
+
+// Reload 依据「环境变量 + 安装向导写入的设置」重建 fallback chain。
+//
+// 优先级：环境变量 > 向导设置（app_settings 表）> 默认值。
+// 传入 nil 表示只用环境变量。
+func (h *AIHandler) Reload(settings map[string]string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.settings = settings
+	h.chain = buildFallbackChain(settings)
+}
+
+// currentChain 返回当前生效的 provider chain（并发安全）。
+func (h *AIHandler) currentChain() ai.Provider {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.chain
+}
+
+// Chain 暴露当前 chain（供测试与健康检查使用）。
+func (h *AIHandler) Chain() ai.Provider { return h.currentChain() }
 
 // NewAIHandlerWithChain 注入自定义 chain（用于测试）。
 func NewAIHandlerWithChain(chain ai.Provider) *AIHandler {
@@ -46,14 +73,26 @@ func NewAIHandlerWithChain(chain ai.Provider) *AIHandler {
 // buildFallbackChain 构造 fallback chain。
 // 按"成本优先"顺序：deepseek → openai → anthropic。
 // 任一供应商缺 API key 则跳过。
-func buildFallbackChain() ai.Provider {
+func buildFallbackChain(settings map[string]string) ai.Provider {
 	providers := []ai.Provider{}
+
+	// 取值顺序：环境变量优先，其次向导设置（app_settings 表）。
+	lookup := func(envKey, settingKey, fallback string) string {
+		if v := os.Getenv(envKey); v != "" {
+			return v
+		}
+		if v := settings[settingKey]; v != "" {
+			return v
+		}
+		return fallback
+	}
 
 	// 1. DeepSeek（成本最低，默认主供应商）
 	if ds, err := ai.NewProvider(ai.Config{
 		Provider: "deepseek",
-		APIKey:   getenv("AI_API_KEY", ""),
-		Model:    getenv("AI_MODEL", "deepseek-chat"),
+		APIKey:   lookup("AI_API_KEY", "ai_api_key", ""),
+		BaseURL:  lookup("AI_BASE_URL", "ai_base_url", ""),
+		Model:    lookup("AI_MODEL", "ai_model", "deepseek-chat"),
 	}); err == nil {
 		providers = append(providers, ds)
 	}
@@ -61,8 +100,9 @@ func buildFallbackChain() ai.Provider {
 	// 2. OpenAI（兜底）
 	if oa, err := ai.NewProvider(ai.Config{
 		Provider: "openai",
-		APIKey:   getenv("AI_API_KEY", ""),
-		Model:    getenv("AI_MODEL", "gpt-4o-mini"),
+		APIKey:   lookup("AI_API_KEY", "ai_api_key", ""),
+		BaseURL:  lookup("AI_BASE_URL", "ai_base_url", ""),
+		Model:    lookup("AI_MODEL", "ai_model", "gpt-4o-mini"),
 	}); err == nil {
 		providers = append(providers, oa)
 	}
@@ -70,8 +110,8 @@ func buildFallbackChain() ai.Provider {
 	// 3. Anthropic（备选）
 	if ant, err := ai.NewProvider(ai.Config{
 		Provider: "anthropic",
-		APIKey:   getenv("ANTHROPIC_API_KEY", ""),
-		Model:    "claude-3-5-sonnet-20241022",
+		APIKey:   lookup("ANTHROPIC_API_KEY", "anthropic_api_key", ""),
+		Model:    lookup("ANTHROPIC_MODEL", "anthropic_model", "claude-3-5-sonnet-20241022"),
 	}); err == nil {
 		providers = append(providers, ant)
 	}
@@ -99,7 +139,7 @@ type aiGenerateReq struct {
 
 // CheckSyntax M2 兼容：保留 /ai/check 接口。
 func (h *AIHandler) CheckSyntax(c *gin.Context) {
-	if h.chain == nil {
+	if h.currentChain() == nil {
 		serverError(c, "AI 未配置", fmt.Errorf("no provider configured"))
 		return
 	}
@@ -111,7 +151,7 @@ func (h *AIHandler) CheckSyntax(c *gin.Context) {
 	}
 
 	messages := buildMessages(req.Content)
-	resp, err := h.chain.Chat(c.Request.Context(), messages)
+	resp, err := h.currentChain().Chat(c.Request.Context(), messages)
 	if err != nil {
 		serverError(c, "AI 语法检查失败", err)
 		return
@@ -129,7 +169,7 @@ func (h *AIHandler) CheckSyntax(c *gin.Context) {
 
 // CheckSyntaxStream M2 兼容：保留 /ai/check/stream。
 func (h *AIHandler) CheckSyntaxStream(c *gin.Context) {
-	if h.chain == nil {
+	if h.currentChain() == nil {
 		serverError(c, "AI 未配置", fmt.Errorf("no provider configured"))
 		return
 	}
@@ -141,7 +181,7 @@ func (h *AIHandler) CheckSyntaxStream(c *gin.Context) {
 	}
 
 	messages := buildMessages(req.Content)
-	streamAI(c, h.chain, messages, func(content string) any {
+	streamAI(c, h.currentChain(), messages, func(content string) any {
 		return gin.H{"type": "chunk", "content": content}
 	}, func(full string) any {
 		issues := parseAIIssues(full)
@@ -151,7 +191,7 @@ func (h *AIHandler) CheckSyntaxStream(c *gin.Context) {
 
 // Generate M3 新增：自然语言 → SysML v2 代码生成（非流式）。
 func (h *AIHandler) Generate(c *gin.Context) {
-	if h.chain == nil {
+	if h.currentChain() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "AI 未配置：请设置 AI_API_KEY / ANTHROPIC_API_KEY",
 		})
@@ -168,7 +208,7 @@ func (h *AIHandler) Generate(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	resp, err := h.chain.Chat(ctx, messages)
+	resp, err := h.currentChain().Chat(ctx, messages)
 	if err != nil {
 		serverError(c, "AI 生成失败", err)
 		return
@@ -191,7 +231,7 @@ func (h *AIHandler) Generate(c *gin.Context) {
 
 // GenerateStream M3 新增：流式生成。
 func (h *AIHandler) GenerateStream(c *gin.Context) {
-	if h.chain == nil {
+	if h.currentChain() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "AI 未配置：请设置 AI_API_KEY / ANTHROPIC_API_KEY",
 		})
@@ -205,7 +245,7 @@ func (h *AIHandler) GenerateStream(c *gin.Context) {
 	}
 
 	messages := buildGenerateMessages(req)
-	streamAI(c, h.chain, messages,
+	streamAI(c, h.currentChain(), messages,
 		func(content string) any {
 			return gin.H{"type": "chunk", "content": content}
 		},

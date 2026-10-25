@@ -110,6 +110,7 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
   - `m16-p5-screenshots` 的 `openProject` 展开包后只 `sleep 800ms`，但包内元素是懒加载的（`usePackageElements`），连跑时元素行还没到就被断言「找不到」。改成轮询元素行出现（上限 8s，**且超时不算失败** —— 有些包只有视图没有元素；上限必须远小于 30s 用例预算，否则会把预算吃光）。
 - **Next**: any new work is post-M16; see `poc-v2/docs/m16-summary.md` for the latest architecture + open items. e2e 覆盖矩阵与本轮修复见上面的「e2e 全量覆盖」段。
 - **M18 工程树两条硬需求（2026-10-07）**：见文末「M18 工程树」段。
+- **M18.4（2026-10-25）多系统安装包发布 + 首次安装引导配置**：`poc-v2/scripts/package-release.mjs` 交叉编译产出 windows/linux/darwin × amd64/arm64 安装包（Windows zip、Unix tar.gz + `SHA256SUMS.txt`）；后端新增 `WEB_DIR` 静态托管（`r.NoRoute` + SPA 回退）与 `-ldflags` 版本注入（`GET /version`）；新增 `/api/v1/setup/{status,admin,ai,complete}` + `setup_state`/`app_settings` 表，前端三步向导页 `/setup` + `SetupGate` 门禁，AI 配置经 `AIHandler.Reload` 即时生效；老安装自动视为已完成（不会重走向导），`SETUP_DISABLED=1` 可关闭引导。见 `poc-v2/docs/m18-summary.md`。
 - Tech review (`tech_review_report.md`) scored 4.4/10 — historical artifact from the pre-M1 design phase; read it before scoping new work
 - Go is the locked backend language; DB is SQLite for MVP, PostgreSQL 16 + JSONB planned for production
 - Toolchain note: Go 用**系统安装**的（`go` 直接在 PATH 上，1.27.1）。仓库里曾提到 `poc-v2/backend/.tools/go/bin/go.exe` —— 那个路径**不存在**，别再照着它配 PATH。

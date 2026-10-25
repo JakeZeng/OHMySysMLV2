@@ -8,8 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +23,12 @@ import (
 	"github.com/sysmlv2/mbse-backend/internal/metamodel"
 	"github.com/sysmlv2/mbse-backend/internal/middleware"
 	"github.com/sysmlv2/mbse-backend/internal/repository"
+)
+
+// Build 元信息（发布脚本通过 -ldflags "-X main.version=..." 注入）。
+var (
+	version   = "dev"
+	buildTime = "unknown"
 )
 
 func main() {
@@ -58,6 +67,16 @@ func main() {
 	// 初始化 AI handler（M3 W1：Provider interface + fallback chain）
 	aiH := handler.NewAIHandler()
 
+	// M18：加载安装向导写入的设置（app_settings 表），保证重启后 AI 配置仍然生效。
+	if savedSettings, err := repo.AllSettings(context.Background()); err == nil && len(savedSettings) > 0 {
+		aiH.Reload(savedSettings)
+	}
+
+	// M18：首次安装引导 handler（SETUP_DISABLED=1 可关闭）。
+	setupDisabled := os.Getenv("SETUP_DISABLED") == "1"
+	setupH := handler.NewSetupHandler(repo, aiH, version, setupDisabled)
+
+
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -70,7 +89,16 @@ func main() {
 	//   - CSRF token（OWASP A01）
 	//   - IP 限流（OWASP A04）
 	r.Use(middleware.BodySizeLimit(1 << 20))
-	r.Use(middleware.CORS(middleware.DefaultCORSConfig()))
+	corsCfg := middleware.DefaultCORSConfig()
+	// 生产/安装包环境可用 CORS_ALLOWED_ORIGINS 追加跨源白名单（逗号分隔）
+	if extra := os.Getenv("CORS_ALLOWED_ORIGINS"); extra != "" {
+		for _, o := range strings.Split(extra, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				corsCfg.AllowedOrigins = append(corsCfg.AllowedOrigins, o)
+			}
+		}
+	}
+	r.Use(middleware.CORS(corsCfg))
 
 	// 限流器：默认 60 req/min/IP；可通过环境变量调整。
 	//   RATE_LIMIT_DISABLE=1  完全关闭（性能压测时用）
@@ -81,9 +109,9 @@ func main() {
 			rateLimitRPM = n
 		}
 	}
+	var rateLimiter *middleware.RateLimiter
 	if os.Getenv("RATE_LIMIT_DISABLE") != "1" {
-		rateLimiter := middleware.NewRateLimiter(rateLimitRPM, time.Minute)
-		r.Use(middleware.RateLimit(rateLimiter))
+		rateLimiter = middleware.NewRateLimiter(rateLimitRPM, time.Minute)
 		log.Printf("  · Rate limit: %d req/min/IP（关闭：RATE_LIMIT_DISABLE=1）", rateLimitRPM)
 	} else {
 		log.Printf("  · Rate limit DISABLED (RATE_LIMIT_DISABLE=1)")
@@ -103,6 +131,14 @@ func main() {
 	// 健康检查
 	r.GET("/health", h.Health)
 
+	// M18：版本信息（安装向导与安装包脚本读取）
+	r.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{
+			"version":   version,
+			"buildTime": buildTime,
+		}})
+	})
+
 	// OpenAPI 3.1 规范 — M6 验收项。
 	// 嵌入在二进制中（embed.FS），无需额外部署文件。
 	r.GET("/openapi.yaml", h.GetOpenAPIYAML)
@@ -110,12 +146,22 @@ func main() {
 
 	// API v1
 	v1 := r.Group("/api/v1")
+	// M18：限流只作用于 API 路由；安装包模式下的前端静态资源不受限。
+	if rateLimiter != nil {
+		v1.Use(middleware.RateLimit(rateLimiter))
+	}
 	{
 		// Auth（公开路由：CSRF 已在 SkipPaths 中跳过）
 		v1.POST("/auth/register", h.Register)
 		v1.POST("/auth/login", h.Login)
 		// M4.5 增量：/auth/me — 当前登录用户信息（含 isAdmin）
 		v1.GET("/auth/me", middleware.AuthRequired(), h.Me)
+
+		// M18：首次安装引导（公开接口；仅在「需要引导」时可写，完成后返回 409）
+		v1.GET("/setup/status", setupH.Status)
+		v1.POST("/setup/admin", setupH.CreateAdmin)
+		v1.POST("/setup/ai", setupH.SaveAIConfig)
+		v1.POST("/setup/complete", setupH.Complete)
 
 		// 受保护路由（需要 JWT 认证）
 		projects := v1.Group("/projects")
@@ -405,6 +451,18 @@ func main() {
 		}
 	}
 
+	// M18：前端静态资源（安装包模式：后端直接托管 web/ 目录，SPA 路由回退 index.html）
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		webDir = "./web"
+	}
+	if st, statErr := os.Stat(webDir); statErr == nil && st.IsDir() {
+		log.Printf("  · 前端静态资源: %s", webDir)
+		r.NoRoute(handler.NewStaticHandler(webDir))
+	} else {
+		log.Printf("  · 前端静态资源: 未找到 %s（开发模式请用 Vite dev server）", webDir)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           r,
@@ -418,6 +476,25 @@ func main() {
 		}
 		if aiH != nil {
 			log.Printf("  · AI: fallback chain 已配置")
+		}
+		log.Printf("  · 版本: %s (build %s)", version, buildTime)
+
+		// M18：首次安装提示 + 自动打开浏览器
+		appURL := "http://localhost:" + port
+		needsSetup := false
+		if state, err := repo.GetSetupState(context.Background()); err == nil && !state.Initialized && !setupDisabled {
+			users, uerr := repo.CountUsers(context.Background())
+			marker, merr := repo.GetSetting(context.Background(), "setup_admin_created")
+			needsSetup = uerr == nil && users == 0 && merr == nil && marker == ""
+		}
+		if needsSetup {
+			appURL = appURL + "/setup"
+			log.Println("  · 首次安装引导: 打开 " + appURL + " 完成初始化配置")
+		} else {
+			log.Println("  · 访问地址: " + appURL)
+		}
+		if os.Getenv("OPEN_BROWSER") == "1" {
+			go openBrowser(appURL)
 		}
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("HTTP 服务异常退出: %v", err)
@@ -436,6 +513,22 @@ func main() {
 		log.Printf("HTTP 服务关闭失败: %v", err)
 	}
 	log.Println("服务已退出")
+}
+
+// openBrowser 打开默认浏览器（安装包首启动用）。
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		log.Printf("打开浏览器失败（请手动访问 %s）: %v", url, err)
+	}
 }
 
 func requestLogger() gin.HandlerFunc {

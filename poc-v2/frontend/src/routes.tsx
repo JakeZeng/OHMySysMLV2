@@ -9,11 +9,13 @@ import * as React from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppLayout } from './components/layout/AppLayout';
 import { RequireAuth } from './components/auth/RequireAuth';
+import { SetupGate } from './components/auth/SetupGate';
 import { LegacyModelRedirect } from './components/layout/LegacyModelRedirect';
 
 // 关键页面（首屏必需）— 同步加载
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import { SetupWizard } from './pages/Setup';
 import { DashboardPage } from './pages/DashboardPage';
 import { NotFound } from './pages/NotFound';
 
@@ -84,8 +86,23 @@ const LazyRoute = ({ Component }: { Component: React.LazyExoticComponent<React.C
 );
 
 export const router = createBrowserRouter([
-  { path: '/login', element: <Login /> },
-  { path: '/register', element: <Register /> },
+  { path: '/setup', element: <SetupWizard /> },
+  {
+    path: '/login',
+    element: (
+      <SetupGate>
+        <Login />
+      </SetupGate>
+    ),
+  },
+  {
+    path: '/register',
+    element: (
+      <SetupGate>
+        <Register />
+      </SetupGate>
+    ),
+  },
   {
     path: '/shared/:token',
     element: (
@@ -97,9 +114,11 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: (
-      <RequireAuth>
-        <AppLayout />
-      </RequireAuth>
+      <SetupGate>
+        <RequireAuth>
+          <AppLayout />
+        </RequireAuth>
+      </SetupGate>
     ),
     children: [
       { index: true, element: <DashboardPage /> },
