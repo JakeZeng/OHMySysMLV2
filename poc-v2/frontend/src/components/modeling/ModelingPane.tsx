@@ -39,6 +39,8 @@ import type { PipelineResult } from '../../lib/pipeline';
 import type { ValidationScope } from '@validator/validator';
 import { PalettePanel } from '../diagram/PalettePanel';
 import { CollabStrip } from '../collab/CollabStrip';
+import { CollabDrawer } from '../collab/CollabDrawer';
+import { makeScope, type ScopeKind } from '../../lib/collab/types';
 import { ConflictModal } from '../modals/ConflictModal';
 import { formatStats, type FormatOutcome } from '../../lib/sysmlFormat';
 
@@ -169,6 +171,13 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
   // ── M13：从 modelStore 取 entityKind/Id 派生 scope ──
   const entityKind = useModelStore((s) => s.entityKind);
   const entityId = useModelStore((s) => s.entityId);
+  // M19.x：协作面板（评论 / 在线用户）的 scope —— 与 CollabStrip 用的是
+  // 同一个 scope（makeScope(kind, id)），后端按 scope 鉴权与广播。
+  const collabScope =
+    entityKind && entityId ? makeScope(entityKind as ScopeKind, entityId) : null;
+  const collabPanel = useUIStore((s) => s.collabPanel);
+  const toggleCollabPanel = useUIStore((s) => s.toggleCollabPanel);
+  const setCollabPanel = useUIStore((s) => s.setCollabPanel);
   const mineContent = useModelStore((s) => s.content);
   const conflict = useCollabStore((s) => s.conflict);
   const resolveConflict = useModelStore((s) => s.resolveConflict);
@@ -419,6 +428,8 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
             canEdit
           />
         }
+        activeCollabPanel={collabPanel}
+        onToggleCollabPanel={toggleCollabPanel}
       />
 
       {/* M13：版本冲突合并对话框 */}
@@ -438,7 +449,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
         {/* Palette 工具箱：仅可视化模式显示（文本模式由编辑器 + 右侧属性面板承担） */}
         {modelingMode !== 'text' && <PalettePanel />}
 
@@ -535,6 +546,17 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
               onJumpToGraphNode={handleJumpTo}
             />
           </div>
+        )}
+
+        {/* M19.x：协作面板浮层（评论 / 在线用户）。
+            绝对定位 → 不挤压画布（挤压会让 React Flow 重新量尺寸，
+            影响既有 e2e 的坐标断言）。 */}
+        {collabPanel && collabScope && (
+          <CollabDrawer
+            scope={collabScope}
+            panel={collabPanel}
+            onClose={() => setCollabPanel(null)}
+          />
         )}
       </div>
     </div>

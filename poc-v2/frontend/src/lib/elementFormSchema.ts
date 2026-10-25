@@ -244,6 +244,29 @@ export const USAGE_SCHEMA: FormSchema = {
   ],
 };
 
+/**
+ * M19 第七轮：**特性**（端口内特性 / action 参数）的表单。
+ *
+ * 官方 SysML v2 里它们是 Feature —— 有名字、有类型、有方向，
+ * 但**不是**独立的命名空间成员（不能加子属性，也不能被 connect 直接引用）。
+ * 所以表单只给这三项：名字 / 类型 / 方向。
+ */
+export const FEATURE_SCHEMA: FormSchema = {
+  nodeType: 'sysmlAttributeUsage',
+  title: 'Feature（端口内特性 / action 参数）',
+  sections: [
+    {
+      key: 'basic',
+      label: '基础信息',
+      fields: [
+        ...BASIC_IDENTITY,
+        { key: 'typeRef', label: '类型', widget: 'text', required: false, placeholder: 'Type' },
+        { key: 'direction', label: '方向', widget: 'text', required: false, placeholder: 'in / out / inout' },
+      ],
+    },
+  ],
+};
+
 export const ACTION_SCHEMA: FormSchema = {
   nodeType: 'sysmlAction',
   title: 'Action（动作）',
@@ -403,6 +426,8 @@ export const SCHEMAS: Record<string, FormSchema> = {
   sysmlAction: ACTION_SCHEMA,
   // M19 需求①：官方新增元素的通用表单（只有名字 + 类型）
   sysmlUsage: USAGE_SCHEMA,
+  // M19 第七轮：特性节点（端口内特性 / action 参数）
+  sysmlAttributeUsage: FEATURE_SCHEMA,
   sysmlRequirement: REQUIREMENT_SCHEMA,
   sysmlConstraint: CONSTRAINT_SCHEMA,
   sysmlGhost: GHOST_SCHEMA,

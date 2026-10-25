@@ -283,6 +283,16 @@ export interface PortUsage extends SysMLNode {
   typeRef?: string;            // `port foo : Power`
   redefines?: string;          // `port :>> powerPort;` 中为 "powerPort"
   direction?: Direction;
+  /**
+   * M19 第七轮：端口**体**（官方 §7.5.7 PortUsage 的 usage body）。
+   *
+   * ⚠️ 解析器一直都在产出这个字段（`sysml.pegjs` 的 `PortUsage` 规则里
+   *    `body: body || []`），但 AST 接口**从来没声明过它** ——
+   *    契约不诚实：端口里写的特性（`port x { attribute torque : Torque; }`）
+   *    在类型层面「不存在」，下游想遍历端口成员只能靠 `as any` 硬转。
+   *    这一轮把契约补齐，端口内特性才能被正规地建模（画布 + 端点解析）。
+   */
+  body?: PortBodyMember[];
 }
 
 /** `attribute mass : Real;` */
@@ -293,6 +303,15 @@ export interface AttributeUsage extends SysMLNode {
   defaultValue?: string;
   /** 官方 §7.5.4：`nonunique` / `unique` 修饰 */
   isUnique?: boolean;
+  /**
+   * M19 第七轮：方向修饰（`in` / `out` / `inout`）。
+   *
+   * 官方里方向修饰同时用在两种场合：
+   *   - **端口内特性**：`port def P { in fuel : Fuel; }`
+   *   - **action 参数**：`action a { in mass : Real; out verdict; }`
+   * 解析器一直把它放在 `direction` 字段（`dirAttr()` 产出），AST 同样漏了声明。
+   */
+  direction?: Direction;
 }
 
 // ─── Connection ─────────────────────────────────────────────────────────

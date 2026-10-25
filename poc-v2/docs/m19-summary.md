@@ -867,6 +867,158 @@ QualifiedNamePart
   `FlowUsage`，且**不得**出现 `controlFlow`。
 - 根 vitest **616/616**（30 文件）、frontend **816/816**、Go 全绿、typecheck clean。
 
+## 二之八、第七轮：特性建模 + 后端 expose 归一 + 协作面板入口
+
+上一轮把「端点是特性的流画不出边」记成了**能力边界**。本轮把它顶掉。
+
+### 8.1 特性建模：端口内特性 / action 参数
+
+官方 SysML v2 里，**端口内特性**与 **action 参数**都是 **Feature**：
+
+```sysml
+port def DrivePwrPort {
+  attribute torque : Torque;     // ← 端口内特性
+}
+action def Weigh {
+  in  massMeasured : Mass;       // ← action 参数
+  out verdict : Boolean;
+}
+```
+
+它们由端口 / 动作**拥有**，不是命名空间成员，但**关系端点会指向它们**：
+
+| 官方行 | 语句 | 端点形态 |
+|---|---|---|
+| 316 | `flow p1.torque to p2.torque;` | interface 端点 + 端口内特性 |
+| 321 | `flow of Fuel from fuelOutPort.fuel to fuelInPort.fuel;` | 端口 + 端口内特性 |
+| 737 | `flow generateToAmplify from generateTorque.engineTorque to amplifyTorque.engineTorque;` | 动作 + action 参数 |
+| 759 | `flow of IgnitionCmd from trigger1.ignitionCmd to startEngine.ignitionCmd;` | 动作 + 载荷特性 |
+| 1234 | `flow from weighVehicle.massMeasured to evaluatePassFail.massMeasured;` | 动作 + action 参数 |
+
+改造前属性一律走**数量徽标** → 这类端点**永远解析不到** → 关系画不出来。
+
+### 8.2 AST 契约补齐（之前不诚实）
+
+- `ast/model.ts` 的 `PortUsage` **没有 `body` 字段**，而解析器
+  （`sysml.pegjs` 的 `PortUsage` 规则）一直在产出 `body: body || []`
+  → 端口里写的特性在**类型层面不存在**，下游只能 `as any` 硬转。
+- `AttributeUsage` 没有 `direction`（`in` / `out` / `inout`），而解析器的
+  `dirAttr()` 一直在产出。
+
+本轮两个字段都补上。
+
+### 8.3 画布与索引
+
+- 新节点类型 **`sysmlAttributeUsage`**：靛蓝窄卡（120px vs 结构元素 200px），
+  标题行标方向（`→` / `←` / `↔`），`data.featureOf` = 宿主限定名。
+- `transform/modelToFlow.ts`：
+  - `FEATURE_OWNER_KINDS` = { portDef, portUsage, actionDefinition,
+    actionUsage, sendActionUsage, acceptActionUsage, performUsage }；
+  - `registerFeature` / `lookupFeature`（**含类型继承**，最多 4 层）；
+  - `BuildIndex.nodeFeatures`；
+  - `resolveEndpointNode` 的逐段下钻增加「特性」一档
+    （成员 → 端口 → 特性）。
+
+### 8.4 画哪些、不画哪些（有意的范围决定）
+
+| 宿主的特性 | 画布 | 理由 |
+|---|---|---|
+| 端口内特性（port def / port usage） | ✅ 特性节点 | 关系的端点（官方 321 / 316 行） |
+| action 参数（action def / action usage / send / accept / perform） | ✅ 特性节点 | 关系的端点（官方 737 / 759 / 1234 行） |
+| part def / part usage 体里的普通属性 | ❌ 只走**数量徽标** | 官方模型里 part 侧属性 60+ 个，全画会把画布塞满；且大多不是关系端点 |
+
+这条规则由 `tests/featureVisibility.test.ts` 的单测钉死（part 侧属性**不得**
+出现在画布上，但 `attrCount` 徽标必须在）。
+
+### 8.5 顺带修的三处「断链」
+
+1. **端口徽标的类型没进索引** → `collectPortNodes` 现在记 `nodeTypeRef`，
+   端口的特性才能从**类型的定义**继承（官方第 315~316 行）。
+2. **`then action X { … }`（官方第 1230 行）** 解析后只有 `target` + `body`，
+   动作本身没有 AST 节点 → 本轮**合成一个动作节点**，并把它的参数当
+   action 参数画（否则第 1234 行的流端点解析不到）。
+3. **声明表不认端口体与动作用法** → `transform/textEdit.ts` 的
+   `collectBody` 不递归 `portUsage.body`、也不收 `actionUsage` 系 →
+   端口内特性 / action 参数**在画布上改名会静默失败**。本轮补上
+   （`ACTION_USAGE_KINDS`）。
+
+### 8.6 官方模型的关系条数：36 → 45
+
+> ⚠️ 第六轮文档里写的「28 条」是**当时中途的数字**，没回写 —— 按第六轮
+> 交付时的代码实测同一份官方模型是 **36 条边 / 572 个节点**。
+> 本轮实测：**45 条边 / 632 个节点**（新增 46 个特性节点 + 10 个
+> interface 端点 + 1 个合成的动作节点）。
+
+| | 第六轮（实测） | 第七轮 |
+|---|---|---|
+| 能画成边的关系 | 36 | **45** |
+| 画布节点 | 572 | 632（含 46 个特性节点） |
+
+剩下 **24 条**画不出，原因逐条如下（**不是 bug**，是官方写法本身的信息量）：
+
+| 原因 | 条数 | 例子 |
+|---|---|---|
+| 官方只给了**一半端点**（`then X;` / `first X;` 没有另一端） | 21 | `then fork fork1;`、`first start;` |
+| 端点是 **part 侧属性**（本轮范围外） | 1 | `allocate vehicleMassRequirement to PartsTree::vehicle_b.mass;` |
+| 端点指向**不存在的元素** | 1 | `join3 -> done`（官方模型里没有 `done`） |
+| 端点是**多层路径**，解析期被截成两段 | 1 | `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;`（中段 `leftHalfAxle` 在**连接端点的解析**里就丢了） |
+
+> 最后一条是**解析层的独立问题**（连接端点只保留首段 + 末段），
+> 与特性建模无关，需要单独一轮修 `EndpointRef` 的形状。
+
+### 8.7 后端 expose 作用域归一
+
+后端此前有**两套** expose 作用域实现：
+
+| 实现 | 文件 | 做法 |
+|---|---|---|
+| A | `internal/parser/viewBody.go` | 正则抽 expose 子句 + 按**包链** resolve |
+| B | `internal/parser/viewBody_filter.go` | **逐行词法扫描**工程包内容建索引 + expr 求值 filter |
+
+两套对同一段文本会给出不同结论 → 树上「⚠ 未解析」徽章与画布上明明有元素，
+自相矛盾。而权威实现是**前端的 TS PEG**（`views/scope.ts`）。
+
+本轮**删除 B**（含它的测试），后端只剩**一套**（A）。handler 的契约变成：
+
+- 客户端送了 `exposedElements` → **原样存储**（浏览器路径，永远走这条）；
+- 客户端没送（老客户端 / 脚本调用）→ 用后端唯一那套的解析结果。
+
+⚠️ 两处**有意接受**的差异（都只影响兜底路径）：
+
+1. 后端**不展开通配暴露**（`expose P::X::**`）—— 展开要遍历包内容，
+   那正是被删掉的词法扫描器干的活；前端会展开并把结果一起送上来。
+2. **filter 不参与作用域计算** —— 前端本来就不求值 filter，两端现在一致；
+   filter 文本仍如实存进 `FilterQualifiedNames` 供 UI 回显。
+
+`internal/expr`（Go 侧表达式引擎，TS 镜像，共享 conformance fixture）
+**保留**，包注释里写明它不再参与 expose 作用域。
+
+### 8.8 协作面板接 UI（两个孤儿组件）
+
+`CommentsPanel`（M9 模型评论）与 `PresenceIndicator`（M13 在线用户）此前
+**从未被任何页面 import** —— 后端 API 齐全、前端组件齐全，用户却既看不到评论、
+也不知道谁在线。
+
+- 新增 `services/commentsApi.ts` / `services/presenceApi.ts`：
+  走 **scope 版本**接口（后端 M13 已把评论 / 在线从「模型」泛化成
+  `package:` / `view:` / `model:` scope；老路由 `/models/:id/comments`
+  匹配不到 M12 之后的实体）；
+- 新增 `components/collab/CollabDrawer.tsx`：**绝对定位浮层**（不挤压画布 ——
+  挤压会让 React Flow 重新量尺寸，影响既有 e2e 的坐标断言）；
+- 工具栏加「在线 / 评论」两个入口，状态放 `uiStore.collabPanel`。
+
+### 8.9 回归
+
+- `poc-v2/tests/featureVisibility.test.ts`（**11 条**）：特性节点上画布、
+  part 侧属性**不**上画布、`owner.feature` 端点解析、跨类型继承、
+  载荷特性、特性改名能改到文本、官方模型关系 ≥ 40、特性节点 ≥ 40。
+- `poc-v2/backend/internal/handler/viewScope_test.go`（**2 条**）：
+  兜底路径用后端唯一解析结果；客户端送了就以客户端为准。
+- `poc-v2/frontend/e2e/m19-collab-panels.spec.ts`（**5 条**）：
+  入口存在、抽屉 scope 指向当前包、**发表评论后用 API 复核后端真的存下来了**、
+  切到在线面板、关闭/重开。
+
+
 
 
 

@@ -1046,15 +1046,15 @@ type createViewReq struct {
 	ViewDefinitionID string `json:"viewDefinitionId,omitempty"`
 	// M19：客户端算好的 expose 作用域（**权威值**）。
 	//
-	// 为什么需要它：暴露元素的解析此前只有 Go 侧一套正则实现
-	// （parser/viewBody_filter.go 的 scanPackageMembers 是逐行扫描，
-	// 只认包文本顶层的 `X def Name`）—— 子包里的元素、part def body 里的
-	// 成员都解析不到。前端用的是 TS 侧的 PEG 解析器（同一套官方语法），
-	// 两者对同一段文本会给出不同结论 → 树上徽章「⚠ 未解析」与画布上明明
-	// 有元素，自相矛盾。
+	// 为什么需要它：expose 作用域的解析此前在 Go 侧有**两套**实现
+	//（parser/viewBody.go 的正则 + parser/viewBody_filter.go 的逐行扫描），
+	// 两套对同一段文本会给出不同结论 → 树上徽章「⚠ 未解析」与画布上明明
+	// 有元素，自相矛盾。而前端用的是 TS 侧的 PEG 解析器（同一套官方语法）。
 	//
+	// M19 第七轮：**后端只保留一套解析实现**（viewBody.go），
+	// 词法扫描那套（viewBody_filter.go）已删除。
 	// 客户端带上已解析好的清单 → **解析只在 TS 侧做一次**，后端只做存储。
-	// 字段缺省时后端仍按自己的解析器算（老客户端兼容）。
+	// 字段缺省时后端用自己唯一的那套解析结果（老客户端 / 脚本调用兼容）。
 	ExposedElements          []model.ExposedElement `json:"exposedElements,omitempty"`
 	ExposedElementsUnresolved []model.ExposedElement `json:"exposedElementsUnresolved,omitempty"`
 }
@@ -1181,34 +1181,34 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	parseContent := parser.StandardLibrary + "\n" + req.Content
 	pkgRefs = h.packageRefsForResolve(c, projectID)
 	parsed = parser.ParseViewBodyWithPackages(parseContent, pkgRefs)
-	// M19：客户端带了已解析好的作用域时**直接采用**，不再跑后端那套 expose 解析。
+	// M19：客户端带了已解析好的作用域时**直接采用**。
 	//
 	// 理由：expose 作用域的**权威实现是前端 TS PEG 解析器**（views/scope.ts）。
-	// 后端这套（viewBody_filter.go 的词法扫描 + expr 求值）只是**兜底**，
-	// 两套实现对同一段文本给出不同结论时，树上会出现「⚠ 未解析」徽章、
-	// 而画布上明明有元素 —— 自相矛盾。
+	// M19 第七轮起，后端**只剩一套**解析实现（parser/viewBody.go 的
+	// 正则 + 包链 resolve），原先那套逐行词法扫描（viewBody_filter.go）
+	// 已删除 —— 两套实现对同一段文本给出不同结论时，树上会出现
+	// 「⚠ 未解析」徽章、而画布上明明有元素，自相矛盾。
 	//
-	// 之前虽然最终值也会被 req 覆盖，但 ComputeExposed 仍然跑了一遍：
-	// 既浪费，又在**中间态**留下与前端不一致的结论。
-	// 现在：客户端给了 → 只用客户端的；没给（老客户端 / 脚本调用）→ 才用后端兜底。
+	// 现在：客户端给了 → 只用客户端的（权威）；
+	// 没给（老客户端 / 脚本调用）→ 用后端**唯一**的解析结果。
 	if req.ExposedElements != nil {
 		v.ExposedElements = req.ExposedElements
 		v.ExposedElementsUnresolved = req.ExposedElementsUnresolved
 	} else {
-		filtered := parser.ComputeExposed(parsed, pkgRefs)
-		if len(filtered) > 0 {
-			v.ExposedElements = make([]model.ExposedElement, 0, len(filtered))
-			for _, fe := range filtered {
-				v.ExposedElements = append(v.ExposedElements, fe.ExposedElement)
-			}
-		} else {
-			// ComputeExposed 产出为空时保留解析器给出的原始 resolved 列表
-			//（改造前就是这个行为：只有 filtered 非空才覆盖）。
-			v.ExposedElements = parsed.ExposedElements
-		}
+		// 兜底：后端唯一的解析结果。
+		//
+		// ⚠️ 与前端的两处已知差异（**有意接受**，因为浏览器路径永远走上面的
+		//    「客户端权威」分支，兜底只服务老客户端 / 脚本调用）：
+		//   1. 通配暴露（`expose P::X::**`）后端**不展开** —— 展开需要遍历
+		//      工程包内容，那正是被删掉的词法扫描器干的事；前端（权威）会展开
+		//      并把展开结果一起送上来。
+		//   2. `filter` 子句后端**不求值** —— 前端也不求值（`views/scope.ts`
+		//      只解析 expose 路径），两端结论一致；filter 文本仍如实存进
+		//      FilterQualifiedNames，供 UI 回显与后续实现。
+		v.ExposedElements = parsed.ExposedElements
 		v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
 	}
-	// FilterQualifiedNames 是 filter 全文，已被 ComputeExposed 使用过；保持原值
+	// FilterQualifiedNames 是 filter 全文（如实回显用）；作用域计算不依赖它
 	v.FilterQualifiedNames = parsed.FilterQualifiedNames
 	v.InnerElements = parsed.InnerElements
 	v.ViewpointQualifiedName = parsed.SatisfiesQualifiedName

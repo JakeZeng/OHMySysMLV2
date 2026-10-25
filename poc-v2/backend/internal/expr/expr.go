@@ -11,6 +11,15 @@
 //   istype T (all?)   direct type vs 类型链命中
 //   hastype T (all?)   self 拥有类型化到 T 的特征
 //   all T    工程内 typeRef 链命中 T 的全部 usage
+//
+// M19 第七轮：expose 作用域**不再**由本引擎参与 —— 后端原先用它做
+// view 的 filter 求值（parser/viewBody_filter.go，已删除），而前端
+// （权威实现 views/scope.ts）根本不求值 filter，两端会给出不同结论。
+// 现在两端一致：**filter 不参与作用域计算**。
+//
+// 本包保留：它是 TS 侧 poc-v2/expr 的 Go 镜像，共享同一份 conformance
+// fixture（tests/fixtures/expr-conformance.json），双端一致性是这个包的
+// 存在理由（validator 侧 TS 引擎在用）。任何字段/语义修改必须两端同步。
 package expr
 
 import (

@@ -18,9 +18,11 @@ import {
   Sparkles,
   Layers,
   Wand2,
+  MessageSquare,
+  Users,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { useUIStore, type ModelingMode } from '../../stores/uiStore';
+import { useUIStore, type ModelingMode, type CollabPanelKind } from '../../stores/uiStore';
 import type { PipelineResult } from '../../lib/pipeline';
 import { ViewSwitcher } from './ViewSwitcher';
 
@@ -43,6 +45,13 @@ export interface ModelingToolbarProps {
   onFormatDocument?: () => void;
   /** M13：协同条插槽（Presences + LockBadge） */
   collabStrip?: React.ReactNode;
+  /**
+   * M19.x：协作面板当前展开的是哪个（'comments' | 'presence' | null）。
+   * 只用于按钮高亮；面板本体由 ModelingPane 渲染。
+   */
+  activeCollabPanel?: CollabPanelKind | null;
+  /** M19.x：打开 / 收起协作面板（评论 / 在线用户） */
+  onToggleCollabPanel?: (panel: CollabPanelKind) => void;
 }
 
 export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
@@ -62,6 +71,8 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
   onOpenAIGenerate,
   onFormatDocument,
   collabStrip,
+  activeCollabPanel = null,
+  onToggleCollabPanel,
 }) => {
   const modelingMode = useUIStore((s) => s.modelingMode);
   const setModelingMode = useUIStore((s) => s.setModelingMode);
@@ -206,6 +217,44 @@ export const ModelingToolbar: React.FC<ModelingToolbarProps> = ({
 
       {/* M13：协同条（在线用户 + 锁状态） */}
       {collabStrip}
+
+      {/* M19.x：协作面板入口（评论 / 在线用户）。
+          这两个组件此前是「孤儿组件」—— 后端 API 齐全、前端组件齐全，
+          但没有任何页面 import 它们，用户根本看不到评论、也不知道谁在线。 */}
+      {onToggleCollabPanel && (
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onToggleCollabPanel('presence')}
+            aria-pressed={activeCollabPanel === 'presence'}
+            data-testid="open-presence-panel"
+            title="查看当前模型下在线的用户"
+            className={
+              activeCollabPanel === 'presence'
+                ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                : undefined
+            }
+          >
+            <Users className="h-3.5 w-3.5" /> 在线
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onToggleCollabPanel('comments')}
+            aria-pressed={activeCollabPanel === 'comments'}
+            data-testid="open-comments-panel"
+            title="查看 / 发表模型评论"
+            className={
+              activeCollabPanel === 'comments'
+                ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                : undefined
+            }
+          >
+            <MessageSquare className="h-3.5 w-3.5" /> 评论
+          </Button>
+        </>
+      )}
 
       {/* 错误计数徽章 */}
       {loading ? (

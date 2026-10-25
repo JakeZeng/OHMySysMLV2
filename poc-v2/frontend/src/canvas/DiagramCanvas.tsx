@@ -539,6 +539,55 @@ const UsageNode: React.FC<NodeProps> = ({ data, selected }) => {
 const MemoUsageNode = React.memo(UsageNode);
 
 /**
+ * M19 第七轮：**特性节点**（端口内特性 / action 参数）。
+ *
+ * 官方 SysML v2 里端口内特性与 action 参数都是 **Feature** ——
+ * 由端口 / 动作拥有，关系端点会指向它们
+ * （`flow of Fuel from fuelOutPort.fuel to fuelInPort.fuel;`）。
+ *
+ * 视觉刻意与结构元素区分：
+ *   - 卡片更**窄**（120px vs 200px），一眼能看出它是「细粒度的特征」；
+ *   - 标题行标 **方向**（in / out / inout）—— 端口与动作语义里最关键的信息；
+ *   - 用**靛蓝**系而不是结构元素的蓝/绿，避免和 part / port 混淆。
+ */
+const FeatureNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const d = data as BaseNodeData & {
+    kind?: string;
+    typeRef?: string;
+    direction?: string;
+    featureOf?: string;
+  };
+  const dirGlyph =
+    d.direction === 'in' ? '→' : d.direction === 'out' ? '←' : d.direction === 'inout' ? '↔' : '';
+  return (
+    <div
+      style={{
+        position: 'relative',
+        background: selected ? '#e6e6ff' : '#f0f0ff',
+        border: `2px solid ${selected ? '#2f54eb' : '#85a5ff'}`,
+        borderRadius: '4px',
+        padding: '4px 8px',
+        minWidth: '120px',
+        fontFamily: 'monospace',
+        fontSize: '11px',
+      }}
+    >
+      <AnchorStrips />
+      <Handle type="target" position={Position.Left} style={{ ...LEGACY_HANDLE_HIDE, background: '#2f54eb', width: 8, height: 8 }} />
+      <div style={{ fontSize: '9px', color: '#2f54eb', textTransform: 'uppercase' }}>
+        {`«feature»${dirGlyph ? ` ${dirGlyph}` : ''}`}
+      </div>
+      <div style={{ fontWeight: 600, color: '#1d39c4' }}>{d.label}</div>
+      {d.typeRef ? (
+        <div style={{ fontSize: '10px', color: '#597ef7' }}>{String(d.typeRef)}</div>
+      ) : null}
+      <Handle type="source" position={Position.Right} style={{ ...LEGACY_HANDLE_HIDE, background: '#2f54eb', width: 8, height: 8 }} />
+    </div>
+  );
+};
+const MemoFeatureNode = React.memo(FeatureNode);
+
+/**
  * M17 S8：状态机 / 活动成为**一等容器节点**。
  *
  * 此前矩阵里 `stateMachine` / `activity` 两行已经编码成 ContainerKind，
@@ -830,6 +879,8 @@ const nodeTypes = {
   sysmlConstraint: MemoConstraintBlockNode,
   // M19 需求①：官方新增元素的通用节点（metadata / variant / individual / analysis …）
   sysmlUsage: MemoUsageNode,
+  // M19 第七轮：特性节点（端口内特性 / action 参数）
+  sysmlAttributeUsage: MemoFeatureNode,
   sysmlGhost: MemoGhostNode,
 };
 

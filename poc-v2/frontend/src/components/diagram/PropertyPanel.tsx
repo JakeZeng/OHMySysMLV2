@@ -50,6 +50,8 @@ const KIND_LABEL: Record<string, string> = {
   // M19 需求①：官方新增元素的通用节点 —— 具体 kind 画在节点卡片上，
   // 这里给一个中性名，避免属性窗顶部只显示「Usage」看不出是什么。
   sysmlUsage: 'Usage',
+  // M19 第七轮：特性节点（端口内特性 / action 参数）
+  sysmlAttributeUsage: 'Feature',
 };
 
 const KIND_COLOR: Record<string, string> = {
@@ -62,6 +64,8 @@ const KIND_COLOR: Record<string, string> = {
   sysmlRequirement: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
   sysmlConstraint: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
   sysmlUsage: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200',
+  // M19 第七轮：特性节点 —— 靛蓝，与结构元素（蓝/橙/绿）区分
+  sysmlAttributeUsage: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200',
 };
 
 export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onClear }) => {

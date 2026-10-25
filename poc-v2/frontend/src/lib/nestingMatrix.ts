@@ -226,6 +226,11 @@ const CONTAINER_OF_NODE_TYPE_DATA: Readonly<Record<string, ContainerKind | null>
   sysmlRequirement: null,
   sysmlConstraint: 'constraintBlock',
   sysmlGhost: null,
+  // M19：通用用法节点与特性节点（端口内特性 / action 参数）
+  // 都**不是容器** —— 官方 SysML v2 里它们是 Feature / Usage，
+  // 不能往里再放成员。显式写出来是为了让「键集合 == nodeTypes」这条约定成立。
+  sysmlUsage: null,
+  sysmlAttributeUsage: null,
 };
 
 export const CONTAINER_OF_NODE_TYPE: Readonly<Record<string, ContainerKind | null>> =

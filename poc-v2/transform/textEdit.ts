@@ -117,6 +117,21 @@ const STRUCTURE_DEF_KINDS = new Set<string>([
   'verificationCaseDef',
 ]);
 
+/**
+ * M19 第七轮：动作用法的 kind 集合。
+ *
+ * 官方 §7.11：普通动作用法 / SendActionUsage / AcceptActionUsage /
+ * PerformActionUsage。它们的**参数**（`in mass : Real;`）在画布上是
+ * 「特性节点」，点它改名必须能在声明表里找到 —— 所以这些 usage 本身
+ * 也要作为可编辑声明收进来（连同它们的体）。
+ */
+const ACTION_USAGE_KINDS = new Set<string>([
+  'actionUsage',
+  'sendActionUsage',
+  'acceptActionUsage',
+  'performUsage',
+]);
+
 /** 声明位置上、名字 token 之前可能出现的关键字（`findIdentifierOffset` 用）。 */
 const DECL_KEYWORDS =
   'part|port|def|in|out|inout|item|ref|attribute|state|machine|action|' +
@@ -271,6 +286,16 @@ function collectMember(m: any, out: EditableDecl[]): void {
         pushNamed(out, 'stateMachine', m);
         for (const s of m.states ?? []) pushNamed(out, 'stateDef', s);
         break;
+      // M19 第七轮：包级动作用法（官方第 727 行
+      // `action providePower:ProvidePower { in item fuelCmd; }`）
+      // —— 它和它的**参数**都要能被改名 / 删除。
+      case 'actionUsage':
+      case 'sendActionUsage':
+      case 'acceptActionUsage':
+      case 'performUsage':
+        pushNamed(out, 'actionDef', m);
+        collectBody(m.body, out, '');
+        break;
       case 'activity':
         pushNamed(out, 'activity', m);
         for (const a of m.actions ?? []) pushNamed(out, 'actionDef', a);
@@ -332,6 +357,11 @@ function collectBody(
         name: m.name ?? '<anon>',
         location: m.location,
       });
+      // M19 第七轮：端口**体**里的特性也是可编辑声明 ——
+      // `port x { attribute torque : Torque; }` 的 torque 在画布上是
+      // 一个「特性节点」，点它改名必须能找到声明。
+      // 改造前这里**不递归** → 端口内特性在声明表里根本不存在。
+      collectBody((m as PortUsage).body as any, out, _pkgName);
     } else if (m.kind === 'attributeUsage') {
       out.push({
         kind: 'attribute',
@@ -360,6 +390,10 @@ function collectBody(
     } else if (m.kind === 'portDef') {
       out.push({ kind: 'portDef', id: m.id, name: m.name, location: m.location });
       collectBody(m.body, out, _pkgName);
+    } else if (ACTION_USAGE_KINDS.has(m.kind)) {
+      // M19 第七轮：动作用法及其**参数**（action 参数在画布上是特性节点）
+      out.push({ kind: 'actionDef', id: m.id, name: m.name, location: m.location });
+      collectBody((m as any).body, out, _pkgName);
     }
   }
 }
