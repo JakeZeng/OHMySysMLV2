@@ -307,4 +307,46 @@ describe('Serializer', () => {
     const text = serialize(result.model);
     expect(text).toContain('abstract part def Vehicle');
   });
+
+  // ─── M19 B：filter 往返保真 ──────────────────────────────────────
+  //
+  // 内联 filter（`expose P::X [@Safety];`）必须**原样回到它那条 expose 行**。
+  // 写成两条独立子句的话，语义从「只筛这一条」变成「筛整个 view」。
+
+  it('7. 内联 filter 写回时留在原来的 expose 行上', () => {
+    const result = parse(`view V {
+  expose P::A [@Safety];
+  expose P::B;
+}`);
+    expect(result.ok).toBe(true);
+    const text = serialize(result.model);
+    expect(text).toContain('expose P::A [@Safety];');
+    expect(text).toContain('expose P::B;');
+    // 不该多出一条独立的 `filter @Safety;`
+    expect(text).not.toContain('filter @Safety;');
+  });
+
+  it('8. view 级 filter 写回为独立 filter 子句', () => {
+    const result = parse(`view V {
+  filter @Safety;
+  expose P::A;
+}`);
+    expect(result.ok).toBe(true);
+    const text = serialize(result.model);
+    expect(text).toContain('filter @Safety;');
+    expect(text).toContain('expose P::A;');
+  });
+
+  it('9. 内联 filter 经 JSON 往返后不丢', () => {
+    const result = parse(`view V {
+  expose P::A [@Safety];
+}`);
+    expect(result.ok).toBe(true);
+    const exported = exportToJson(result.model);
+    const imported = importFromJson(JSON.stringify(exported));
+    expect(imported.ok).toBe(true);
+    const view = imported.model.views?.[0];
+    expect(view?.revealClauses?.[0]?.inline).toBe('@Safety');
+    expect(view?.filters).toEqual([]);
+  });
 });

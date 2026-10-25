@@ -177,7 +177,58 @@ describe('M19 第七轮：特性作为关系端点', () => {
   });
 });
 
-// ─── 3. 特性节点可以改名（声明表要能定位到它）──────────────────────────
+// ─── 3. 多层端点路径（能力钉住）──────────────────────────────────────
+
+describe('M19 第七轮：多层端点路径', () => {
+  it('三段 connect（官方第 636 行形态）画成边', () => {
+    // 官方第 636 行：
+    //   connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;
+    //
+    // ⚠️ 曾误以为「解析期把中段丢了」—— 实测**不成立**：
+    // 解析器对 `a.b.c.d` 保留完整路径（partName = 除末段外的整条路径），
+    // 端点解析逐段下钻能走到第三段。这条用例把这个能力钉住。
+    const g = graph(`
+      package P {
+        part def Vehicle {
+          part rearAxle {
+            part leftHalfAxle {
+              port leftAxleToDiffPort : AxlePort;
+            }
+          }
+          part differential {
+            port leftDiffPort : DiffPort;
+          }
+          connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;
+        }
+      }
+    `);
+    expect(g.edges.length, '三段 connect 应当画成边').toBe(1);
+  });
+
+  it('三段 connect 在 part usage 里也能画成边（官方第 636 行的真实宿主形态）', () => {
+    const g = graph(`
+      package P {
+        part def Vehicle { }
+        part vehicle_b : Vehicle {
+          part rearAxleAssembly : AxleAssembly {
+            part rearAxle {
+              part leftHalfAxle {
+                port leftAxleToDiffPort : AxlePort;
+              }
+            }
+            part differential {
+              port leftDiffPort : DiffPort;
+            }
+            connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;
+          }
+        }
+      }
+    `);
+    expect(g.edges.length, '嵌套 usage 里的三段 connect 也要画成边').toBe(1);
+  });
+});
+
+// ─── 4. 特性节点可以改名（声明表要能定位到它）──────────────────────────
 
 describe('M19 第七轮：特性节点的编辑', () => {
   it('端口内特性改名会改到文本', () => {
@@ -208,7 +259,7 @@ describe('M19 第七轮：特性节点的编辑', () => {
   });
 });
 
-// ─── 4. 官方模型：关系条数提升（能力回归锁）────────────────────────────
+// ─── 5. 官方模型：关系条数提升（能力回归锁）────────────────────────────
 
 describe('M19 第七轮：官方模型的关系条数', () => {
   it('官方参考模型的关系从 28 条提升到 40 条以上', () => {

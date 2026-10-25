@@ -43,6 +43,7 @@ import { CollabDrawer } from '../collab/CollabDrawer';
 import { makeScope, type ScopeKind } from '../../lib/collab/types';
 import { ConflictModal } from '../modals/ConflictModal';
 import { formatStats, type FormatOutcome } from '../../lib/sysmlFormat';
+import { collectStateMachines } from '../../lib/simMachines';
 
 /**
  * ModelingPane 与具体实体解耦的接口。
@@ -199,7 +200,19 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
   );
 
   // ── 仿真自动加载（M10 行为） ──
-  const stateMachines = useModelStore((s) => s.pipeline.model.stateMachines);
+  //
+  // ⚠️ M19 第八轮：状态机要取自**投影后的模型**（`graphModel`）。
+  //
+  // 改造前只看 `pipeline.model.stateMachines` —— 那是**视图会话的文本模型**，
+  // 视图 content 里通常只有 view 定义 + expose 子句、**没有**状态机 →
+  // 条件恒为 false → 仿真面板在视图里**永远挂不出来**（AGENTS.md 记了很久的
+  // 已知缺口）。而视图里 expose 进来的状态机，恰恰在**投影模型**里
+  // （挂在合成包下，不在平铺列表里）→ 必须按包成员口径去找。
+  const graphModel = useModelStore((s) => s.pipeline.graphModel ?? s.pipeline.model);
+  const stateMachines = React.useMemo(
+    () => collectStateMachines(graphModel),
+    [graphModel],
+  );
   const simMachine = useSimulationStore((s) => s.machine);
   const simLoad = useSimulationStore((s) => s.load);
   const simUnload = useSimulationStore((s) => s.unload);

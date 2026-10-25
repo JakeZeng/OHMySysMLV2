@@ -557,7 +557,9 @@ describe('Parser - §7.26 标准写法', () => {
     const r2 = parse('view V { expose M::A [@SysML::PartUsage]; }');
     expect(r2.ok).toBe(true);
     expect(r2.model.views[0].reveals).toEqual(['M::A']);
-    expect(r2.model.views[0].filters).toEqual(['@SysML::PartUsage']);
+    // M19 B：内联 filter 只属于**这一条 expose**，不进 view 级 `filters`
+    expect(r2.model.views[0].filters).toEqual([]);
+    expect(r2.model.views[0].revealClauses?.[0]?.inline).toBe('@SysML::PartUsage');
   });
 
   it('35. filter 算子 @ / istype / hastype 与取反', () => {
@@ -703,7 +705,13 @@ alias FS for FreeStanding;`);
     expect(r.model.views[0].reveals).toEqual([
       'P::X', 'P::X::**', 'P::*', 'P::*::**', 'P::Y',
     ]);
-    expect(r.model.views[0].filters).toEqual(['@Safety']);
+    // M19 B：内联 filter 挂在**那一条 expose** 上（revealClauses[i].inline），
+    // 不进 view 级 `filters` —— 两者作用域不同（一条 vs 整个 view）。
+    expect(r.model.views[0].filters).toEqual([]);
+    const clauses = r.model.views[0].revealClauses ?? [];
+    expect(clauses).toHaveLength(5);
+    expect(clauses[4]?.inline).toBe('@Safety');
+    expect(clauses[0]?.inline).toBeUndefined();
     // 官方：expose 必须以 QualifiedName 开头
     expect(parse('view V { expose **; }').ok).toBe(false);
     expect(parse('view V { expose *::*; }').ok).toBe(false);

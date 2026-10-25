@@ -3,7 +3,19 @@
 // POST /api/v1/import/papyrus — 导入 Papyrus/SysML v1 XML
 // POST /api/v1/import/capella — 导入 Capella JSON
 //
-// 导入流程：上传文件 → 解析 → 转换为 SysML v2 文本 → 创建 Model。
+// 导入流程：上传文件 → 解析 → 转换为 SysML v2 文本 → **创建 Package**。
+//
+// ⚠️ M19 E-2：产物从「model」改成「package」。
+//
+// 改造前这里建的是 `models` 表的一行 —— 但 M12 之后 model 概念已被
+// 「Package 一等公民 + View 一等公民」取代（`models` → `packages` + `views`）。
+// 于是导入的模型在树上**根本挂不出来**：树面板只吃 `packages` 表，
+// `models` 表里的东西用户看不到、点不开 —— 导入完等于「什么都没发生」。
+// 现在改建 `packages` 表的一行，导入完立刻能在工程树里看到并打开编辑。
+//
+// 命名沿用旧约定：**上传文件名去掉后缀**当包名（不改用户的既有预期）。
+//
+// 权限：与 CreatePackageInProject 一致 —— 必须对目标工程有 **写**权限。
 
 package handler
 
@@ -65,6 +77,62 @@ type CapellaElement struct {
 	ID   string `json:"id"`
 }
 
+// ─── 导入产物落库 ─────────────────────────────────────────────────────
+
+// createImportedPackage 把转换好的 SysML v2 文本存成一个**顶级 Package**。
+//
+// 同名去重：packages 表对 (project_id, parent, name) 有唯一索引。
+// 重复导入同一个文件不应该 409 失败 —— 自动加后缀更符合直觉。
+func (h *Handler) createImportedPackage(
+	c *gin.Context,
+	projectID string,
+	name string,
+	content string,
+) (*model.Package, error) {
+	unique := h.uniquePackageName(c, projectID, name)
+
+	now := time.Now().UTC()
+	p := &model.Package{
+		ID:        uuid.NewString(),
+		ProjectID: projectID,
+		Name:      unique,
+		Content:   content,
+		Version:   1,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := h.repo.CreatePackage(c, p); err != nil {
+		return nil, err
+	}
+	writeAudit(c, h.repo, model.AuditActionCreate, model.AuditTargetPackage, p.ID,
+		`{"name":"`+escapeJSON(p.Name)+`","project":"`+p.ProjectID+`"}`)
+	return p, nil
+}
+
+// uniquePackageName 给导入的包名去重：同名则追加 _2 / _3 …
+func (h *Handler) uniquePackageName(c *gin.Context, projectID string, name string) string {
+	summaries, err := h.repo.ListPackagesByProject(c, projectID)
+	if err != nil {
+		return name
+	}
+	taken := map[string]bool{}
+	for _, s := range summaries {
+		if s.ParentPackageID == "" {
+			taken[s.Name] = true
+		}
+	}
+	if !taken[name] {
+		return name
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s_%d", name, i)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+	return name
+}
+
 // ─── ImportPapyrus 导入 Papyrus XML ───────────────────────────────
 
 func (h *Handler) ImportPapyrus(c *gin.Context) {
@@ -72,6 +140,13 @@ func (h *Handler) ImportPapyrus(c *gin.Context) {
 	if projectID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 projectId"})
 		return
+	}
+
+	// 权限：必须对目标工程有写权限。
+	// ⚠️ 改造前这个 handler **完全没有权限校验** —— 任何登录用户都能往
+	// 别人的工程里塞包。M19 E-2 顺手补上（与 CreatePackageInProject 一致）。
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
+		return // hasProjectAccess 已写过响应
 	}
 
 	file, header, err := c.Request.FormFile("file")
@@ -106,25 +181,21 @@ func (h *Handler) ImportPapyrus(c *gin.Context) {
 
 	sysmlText := convertPapyrusToSysMLv2(papyrus)
 
-	now := time.Now().UTC()
-	m := &model.Model{
-		ID:        uuid.NewString(),
-		Name:      strings.TrimSuffix(header.Filename, ".xml"),
-		Content:   sysmlText,
-		ProjectID: projectID,
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := h.repo.CreateModel(c, m); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建模型失败"})
+	// M19 E-2：产物是 **package**（不是 M12 之前的 model）。
+	pkg, err := h.createImportedPackage(c, projectID,
+		strings.TrimSuffix(header.Filename, ".xml"), sysmlText)
+	if err != nil {
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "同名包已存在"})
+			return
+		}
+		serverError(c, "创建包失败", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"model":   m,
+			"package": pkg,
 			"source":  "papyrus",
 			"message": fmt.Sprintf("已从 Papyrus 导入 %d 个包", len(papyrus.Packages)),
 		},
@@ -137,6 +208,11 @@ func (h *Handler) ImportCapella(c *gin.Context) {
 	projectID := c.PostForm("projectId")
 	if projectID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 projectId"})
+		return
+	}
+
+	// 权限：同 ImportPapyrus，必须对目标工程有写权限。
+	if ok, _, err := hasProjectAccess(c, h.repo, projectID, PermWrite); err != nil || !ok {
 		return
 	}
 
@@ -161,25 +237,21 @@ func (h *Handler) ImportCapella(c *gin.Context) {
 
 	sysmlText := convertCapellaToSysMLv2(capella)
 
-	now := time.Now().UTC()
-	m := &model.Model{
-		ID:        uuid.NewString(),
-		Name:      strings.TrimSuffix(header.Filename, ".json"),
-		Content:   sysmlText,
-		ProjectID: projectID,
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := h.repo.CreateModel(c, m); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建模型失败"})
+	// M19 E-2：产物是 **package**（不是 M12 之前的 model）。
+	pkg, err := h.createImportedPackage(c, projectID,
+		strings.TrimSuffix(header.Filename, ".json"), sysmlText)
+	if err != nil {
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "同名包已存在"})
+			return
+		}
+		serverError(c, "创建包失败", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"model":   m,
+			"package": pkg,
 			"source":  "capella",
 			"message": fmt.Sprintf("已从 Capella 导入 %d 个元素", len(capella.Elements)),
 		},

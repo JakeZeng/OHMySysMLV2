@@ -5,21 +5,76 @@
  *   useCollabStream(scope);  // scope 变化自动重连
  *
  * 行为：
- *   - 打开 EventSource 到 /api/v1/events/stream?scope=...
+ *   - 打开 **fetch 流**到 /api/v1/events/stream?scope=...
  *   - 解析 event: + data: → 分派到 collabStore
  *   - 自动重连（最多 5 次，指数退避）
  *   - scope 变化 → 关闭旧连接、打开新连接
+ *
+ * ## ⚠️ 为什么不用 EventSource（M19 第八轮修的真 bug）
+ *
+ * 原实现用 `new EventSource(url, { withCredentials: true })`。
+ * **EventSource 不支持自定义请求头** —— 带不上 `Authorization: Bearer <jwt>`，
+ * 而后端的 `middleware.AuthRequired()` 只认这个头（`internal/middleware/jwt.go:120`）
+ * → `/api/v1/events/stream` **永远返回 401**。
+ *
+ * 后果（不是「某个功能坏了」，是**整条协同通道从来没通过**）：
+ *   - 评论新增 / 解决 / 删除的实时推送（`comment_added`）—— 收不到
+ *   - presence 快照推送（`presence`）—— 收不到
+ *   - 锁变更推送（`lock_changed` / `lock_released`）—— 收不到
+ *   - 内容更新推送（`content_updated`）—— 收不到
+ *
+ * 实测（e2e 抓出）：页面里 EventSource 反复重连，每次都是 401。
+ *
+ * 改成 `fetch` + `ReadableStream` 手动读 SSE 帧（与 `services/aiApi.ts` 的
+ * 流式读取同款），**token 放在请求头里，不进 URL**（进 URL 会落到
+ * access log / Referer / 浏览器历史里）。
  */
 
 import * as React from 'react';
 import { getApi } from '../services/api';
 import { useCollabStore } from '../stores/collabStore';
 import type {
-  CollabEvent,
   CollabEventType,
   LockResponse,
   UserPresence,
 } from '../lib/collab/types';
+
+/** authStore 存 token 的 localStorage key */
+const TOKEN_STORAGE_KEY = 'sysmlv2.token';
+
+/**
+ * 解析一段 SSE 文本 → 事件列表。
+ *
+ * SSE 帧格式（后端 `writeSSE`）：
+ *
+ *     event: comment_added
+ *     data: {"scope":"package:x","comment":{…}}
+ *
+ * 以空行分隔；`: keepalive` 是注释行（后端 15s 一次保活），要忽略。
+ *
+ * 导出成纯函数是为了能单测（帧边界常在 chunk 中间，不能按 chunk 解析）。
+ */
+export function parseSseFrames(buffer: string): { frames: Array<{ type: string; data: string }>; rest: string } {
+  const frames: Array<{ type: string; data: string }> = [];
+  // 兼容 \n\n 与 \r\n\r\n 两种分隔
+  const parts = buffer.split(/\r?\n\r?\n/);
+  const rest = parts.pop() ?? '';
+  for (const part of parts) {
+    let type = 'message';
+    const dataLines: string[] = [];
+    for (const line of part.split(/\r?\n/)) {
+      if (!line || line.startsWith(':')) continue; // 注释 / 保活
+      if (line.startsWith('event:')) {
+        type = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    if (dataLines.length === 0) continue;
+    frames.push({ type, data: dataLines.join('\n') });
+  }
+  return { frames, rest };
+}
 
 interface UseCollabStreamOptions {
   /** 重连最大次数；默认 5 */
@@ -53,10 +108,13 @@ export function useCollabStream(
     }
     setActiveScope(scope);
 
-    // 用 EventSource（fetch 不支持 SSE）。
-    // 注意：getApi() 的 baseURL 是 '/api/v1'，EventSource 用相对路径。
-    const url = `/api/v1/events/stream?scope=${encodeURIComponent(scope)}`;
-    let es: EventSource | null = null;
+    // 用 **fetch + ReadableStream** 读 SSE（EventSource 带不了 Authorization 头 → 401）。
+    // 注意：getApi() 的 baseURL 是 '/api/v1'，这里要拼绝对路径。
+    const api = getApi();
+    const baseURL = (api.defaults?.baseURL ?? '').replace(/\/+$/, '');
+    const url = `${baseURL}/events/stream?scope=${encodeURIComponent(scope)}`;
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    let controller: AbortController | null = null;
     let reconnectAttempt = 0;
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,55 +175,56 @@ export function useCollabStream(
 
     function connect() {
       if (cancelled) return;
-      es = new EventSource(url, { withCredentials: true });
+      controller = new AbortController();
 
-      es.onopen = () => {
-        reconnectAttempt = 0;
-        setConnected(true);
-        setLastError(null);
-      };
+      fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        signal: controller.signal,
+      })
+        .then(async (resp) => {
+          if (!resp.ok) {
+            throw new Error(`SSE ${resp.status}`);
+          }
+          reconnectAttempt = 0;
+          setConnected(true);
+          setLastError(null);
 
-      // 通用事件类型监听
-      const eventNames: CollabEventType[] = [
-        'hello',
-        'presence',
-        'lock_changed',
-        'lock_released',
-        'content_updated',
-        'comment_added',
-        'comment_resolved',
-        'comment_removed',
-      ];
-      for (const name of eventNames) {
-        es.addEventListener(name, (ev: MessageEvent) => {
-          dispatch(name, ev.data);
+          const reader = resp.body?.getReader();
+          if (!reader) throw new Error('无法读取 SSE 流');
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const { frames, rest } = parseSseFrames(buffer);
+            buffer = rest;
+            for (const f of frames) {
+              dispatch(f.type, f.data);
+            }
+          }
+          // 流正常结束（后端重启等）→ 走重连
+          throw new Error('SSE 流已结束');
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setConnected(false);
+          if (reconnectAttempt >= optsRef.current.maxReconnect) {
+            setLastError('SSE 连接已断开（已重试上限）');
+            return;
+          }
+          const delay =
+            optsRef.current.reconnectDelay * Math.pow(2, reconnectAttempt);
+          reconnectAttempt++;
+          setLastError(`SSE 断开，${delay}ms 后重试…（${String(err)}）`);
+          reconnectTimer = setTimeout(connect, delay);
         });
-      }
-
-      // 服务器默认 event: <type> data: <json> 已经按类型分派；
-      // 但 EventSource 的 'message' 事件兜底处理
-      es.onmessage = (ev) => {
-        // 没有 event: 行时走这里
-        const m = JSON.parse(String(ev.data)) as CollabEvent;
-        handleEvent(m.type, m.data as { [k: string]: unknown });
-      };
-
-      es.onerror = () => {
-        // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSED
-        if (cancelled) return;
-        setConnected(false);
-        if (reconnectAttempt >= optsRef.current.maxReconnect) {
-          setLastError('SSE 连接已断开（已重试上限）');
-          return;
-        }
-        const delay =
-          optsRef.current.reconnectDelay * Math.pow(2, reconnectAttempt);
-        reconnectAttempt++;
-        setLastError(`SSE 断开，${delay}ms 后重试…`);
-        es?.close();
-        es = null;
-        reconnectTimer = setTimeout(connect, delay);
-      };
     }
 
     connect();
@@ -173,9 +232,9 @@ export function useCollabStream(
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (es) {
-        es.close();
-        es = null;
+      if (controller) {
+        controller.abort();
+        controller = null;
       }
       setConnected(false);
     };

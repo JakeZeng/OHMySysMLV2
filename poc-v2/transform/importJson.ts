@@ -13,7 +13,7 @@
  *   5. 所有节点必须有 `location`（line/column/offset）
  */
 
-import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefinition, PortDefinition, PartUsage, PortUsage, AttributeUsage, Connection, ImportStatement, SysMLView, SysMLViewpoint } from '../ast/model';
+import type { SysMLModel, SourceLocation, Package, NamespaceMember, PartDefinition, PortDefinition, PartUsage, PortUsage, AttributeUsage, Connection, ImportStatement, SysMLView, SysMLViewpoint, ExposeClause } from '../ast/model';
 import { serialize } from './serializer';
 
 function emptyModel(): SysMLModel {
@@ -483,6 +483,29 @@ function validateView(raw: unknown, path: string, errors: ImportError[]): SysMLV
     ? (obj.filters as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
 
+  // M19 B：revealClauses（逐条 expose 子句 + 内联 filter）必须能导入 ——
+  // 否则 JSON 往返后 `expose P::X [@Safety];` 的内联条件就没了。
+  const revealClauses: ExposeClause[] = [];
+  if (Array.isArray(obj.revealClauses)) {
+    for (let i = 0; i < obj.revealClauses.length; i++) {
+      const c = obj.revealClauses[i] as Record<string, unknown> | null;
+      if (!c || typeof c.path !== 'string') {
+        errors.push({ path: `${path}.revealClauses[${i}].path`, message: 'path 必须是非空字符串' });
+        continue;
+      }
+      const form = c.form;
+      revealClauses.push({
+        path: c.path,
+        form:
+          form === 'member' || form === 'memberRecursive' || form === 'namespace' || form === 'namespaceRecursive'
+            ? form
+            : 'member',
+        inline: typeof c.inline === 'string' ? c.inline : undefined,
+        location: validateLocation(c.location, `${path}.revealClauses[${i}].location`, errors),
+      });
+    }
+  }
+
   const members: NamespaceMember[] = [];
   if (Array.isArray(obj.members)) {
     for (let i = 0; i < obj.members.length; i++) {
@@ -501,6 +524,7 @@ function validateView(raw: unknown, path: string, errors: ImportError[]): SysMLV
     satisfies: typeof obj.satisfies === 'string' ? obj.satisfies : undefined,
     reveals,
     filters,
+    revealClauses: revealClauses.length > 0 ? revealClauses : undefined,
     renderKind: typeof obj.renderKind === 'string' ? obj.renderKind : undefined,
     renderingRef: typeof obj.renderingRef === 'string' ? obj.renderingRef : undefined,
     multipleRenders: !!obj.multipleRenders,

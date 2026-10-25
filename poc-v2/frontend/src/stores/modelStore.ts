@@ -40,10 +40,10 @@ import { layoutApi, type LayoutEntityKind } from '../services/layoutApi';
 import {
   buildProjectModel,
   resolveProjectScope,
+  resolveProjectScopeWithFilters,
   projectScopeIntoModel,
   buildHierarchy,
   buildScopeIndex,
-  resolveExposeAll,
   resolveExposePath,
   removeExposeClauses,
   clausesCovering,
@@ -112,15 +112,24 @@ function buildValidation(
 
   if (scopeProject) {
     validation.resolveExpose = (m: SysMLModel) => {
-      const reveals = m.views?.[0]?.reveals ?? [];
+      const view = m.views?.[0];
+      const reveals = view?.reveals ?? [];
       if (reveals.length === 0) return { resolved: [], unresolved: [] };
-      const r = resolveProjectScope(scopeProject, reveals);
+      // M19 B：校验器看到的 expose 解析结果必须与画布一致（含 filter）
+      const clauses = view?.revealClauses ?? [];
+      const r = resolveProjectScopeWithFilters(
+        scopeProject,
+        clauses.length > 0
+          ? clauses.map((c) => ({ path: c.path, inline: c.inline }))
+          : reveals.map((p) => ({ path: p })),
+        view?.filters ?? [],
+      );
       return {
         resolved: r.qualifiedNames,
         unresolved: r.unresolved.map((u) => ({
           path: u.path,
           reason: u.reason,
-          viewName: m.views?.[0]?.name,
+          viewName: view?.name,
         })),
       };
     };
@@ -525,6 +534,8 @@ interface ViewScope {
   unresolved: Array<{ path: string; reason: string }>;
   /** 逐条 expose 子句（含文本范围） */
   clauses: ExposeClause[];
+  /** M19 B：view 级 filter 条件（筛整个 view 的成员） */
+  viewFilters: string[];
 }
 
 /**
@@ -533,6 +544,12 @@ interface ViewScope {
  * 为什么必须按当前文本：作用域原先只在「打开视图」时算一次。用户在视图里
  * 增删 expose 子句后，画布的投影不会跟着变 —— 删掉的元素还在画布上，
  * 新加的元素不出现。这正是需求 2（文本 ↔ 可视化等价）的断点。
+ *
+ * M19 B：filter 真正生效 ——
+ *   - **内联 filter**（`expose P::X [@Safety];`）只筛**那一条** expose
+ *   - **view 级 filter**（body 里的 `filter @Safety;`）筛**整个 view**
+ * 之前 filter 只是被解析、被 validator 检查语法，却**从不参与作用域计算**
+ * → `expose P::**` 永远返回全部元素，filter 形同虚设。
  */
 function resolveViewScope(
   content: string,
@@ -541,17 +558,33 @@ function resolveViewScope(
   if (!project) return null;
   let reveals: string[] = [];
   let clauses: ExposeClause[] = [];
+  let viewFilters: string[] = [];
   try {
     const model = parse(content).model;
     const view = model.views?.[0];
     reveals = view?.reveals ?? [];
     clauses = view?.revealClauses ?? [];
+    viewFilters = view?.filters ?? [];
   } catch {
     return null; // 文本还没写完：保留上一次的投影
   }
-  if (reveals.length === 0) return { qualifiedNames: [], unresolved: [], clauses: [] };
-  const r = resolveExposeAll(scopeIndexOf(project), reveals);
-  return { qualifiedNames: r.qualifiedNames, unresolved: r.unresolved, clauses };
+  if (reveals.length === 0) {
+    return { qualifiedNames: [], unresolved: [], clauses, viewFilters };
+  }
+  // 有内联 filter 时按子句逐条解析（路径 + 内联条件），否则走整体解析
+  const r = resolveProjectScopeWithFilters(
+    project,
+    clauses.length > 0
+      ? clauses.map((c) => ({ path: c.path, inline: c.inline }))
+      : reveals.map((p) => ({ path: p })),
+    viewFilters,
+  );
+  return {
+    qualifiedNames: r.qualifiedNames,
+    unresolved: r.unresolved,
+    clauses,
+    viewFilters,
+  };
 }
 
 /**
@@ -567,15 +600,28 @@ function computeScopeForSave(content: string): {
   const { scopeProject } = useModelStore.getState();
   if (!scopeProject) return null;
   let reveals: string[] = [];
+  let clauses: ExposeClause[] = [];
+  let viewFilters: string[] = [];
   try {
     const model = parse(content).model;
-    reveals = model.views?.[0]?.reveals ?? [];
+    const view = model.views?.[0];
+    reveals = view?.reveals ?? [];
+    clauses = view?.revealClauses ?? [];
+    viewFilters = view?.filters ?? [];
   } catch {
     return null;
   }
   if (reveals.length === 0) return { resolved: [], unresolved: [] };
 
-  const scope = resolveProjectScope(scopeProject, reveals);
+  // M19 B：与画布用**同一套** filter 语义（内联筛单条 / view 级筛整体）——
+  // 否则保存到后端的 exposed 清单会和画布显示的不一致。
+  const scope = resolveProjectScopeWithFilters(
+    scopeProject,
+    clauses.length > 0
+      ? clauses.map((c) => ({ path: c.path, inline: c.inline }))
+      : reveals.map((p) => ({ path: p })),
+    viewFilters,
+  );
   const kindOf = (qname: string): string => {
     const m = scopeProject.index.get(qname);
     const kind = (m as { kind?: string } | undefined)?.kind;

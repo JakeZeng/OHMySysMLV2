@@ -28,7 +28,8 @@ import type {
 } from '../ast/model';
 import { parse } from '../parser/parser';
 import { buildHierarchy } from './hierarchy';
-import { buildScopeIndex, resolveExposeAll } from './scope';
+import { buildScopeIndex, resolveExposeAll, resolveExposePath } from './scope';
+import { buildFilterIndex, filterQualifiedNames } from './filter';
 
 // ─── 项目模型 ─────────────────────────────────────────────────────────────
 
@@ -225,6 +226,84 @@ export function resolveProjectScope(
   const roots = buildHierarchy(project.model);
   const idx = buildScopeIndex(roots);
   return resolveExposeAll(idx, reveals);
+}
+
+// ─── filter（M19 B）──────────────────────────────────────────────────────
+
+/**
+ * 一条 expose 子句（含它自己的内联 filter）。
+ *
+ * 与 AST 的 `ExposeClause` 同形（`inline` + `path`），但**不需要**位置信息 ——
+ * 作用域计算只关心「哪条路径 + 什么内联条件」。
+ */
+export interface ScopedExpose {
+  path: string;
+  /** 内联 filter（`expose P::X [@Safety];`）—— 只约束这一条 */
+  inline?: string;
+}
+
+/**
+ * 解析带 filter 的 expose 集合。
+ *
+ * 官方语义（§7.24.3 / §8.2.2.26）：
+ *   - **内联 filter** 只筛**它那一条** expose 引入的元素
+ *   - **view 级 filter**（body 里的独立 `filter X;`）筛**整个 view** 的成员集合
+ *     （即所有 expose 结果的并集），多条之间 AND
+ *
+ * 顺序很重要：**先按条内联筛，再按 view 级筛**。
+ * 反过来会出错 —— `expose A [@X]; expose B; filter @X;` 里 B 的元素
+ * 不该因为 A 的内联条件而被排除。
+ *
+ * @param project     项目模型（含 AST 成员与限定名索引）
+ * @param exposes     expose 子句（含内联 filter）
+ * @param viewFilters view 级 filter 条件
+ */
+export function resolveProjectScopeWithFilters(
+  project: ProjectModel,
+  exposes: readonly ScopedExpose[],
+  viewFilters: readonly string[] = [],
+): ScopeResult {
+  const roots = buildHierarchy(project.model);
+  const idx = buildScopeIndex(roots);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const unresolved: Array<{ path: string; reason: string }> = [];
+
+  // filter 求值用的元素表（含 metadata 注解 —— `filter @Safety` 靠它）
+  const filterIndex =
+    exposes.some((e) => e.inline) || viewFilters.length > 0
+      ? buildFilterIndex(project.index)
+      : null;
+
+  for (const ex of exposes) {
+    const r = resolveExposePath(idx, ex.path);
+    if (r.unresolved) {
+      unresolved.push({ path: ex.path, reason: r.reason ?? '未解析' });
+      continue;
+    }
+    let names = r.qualifiedNames;
+    // 内联 filter：只筛这一条
+    if (ex.inline && filterIndex) {
+      names = filterQualifiedNames(names, [ex.inline], filterIndex);
+    }
+    for (const q of names) {
+      if (seen.has(q)) continue;
+      seen.add(q);
+      out.push(q);
+    }
+  }
+
+  // view 级 filter：筛整个 view 的成员集合
+  if (viewFilters.length > 0 && filterIndex) {
+    const kept = new Set(filterQualifiedNames(out, viewFilters, filterIndex));
+    return {
+      qualifiedNames: out.filter((q) => kept.has(q)),
+      unresolved,
+    };
+  }
+
+  return { qualifiedNames: out, unresolved };
 }
 
 // ─── 投影 ─────────────────────────────────────────────────────────────────

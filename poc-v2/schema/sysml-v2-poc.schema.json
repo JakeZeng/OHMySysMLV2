@@ -238,7 +238,27 @@
         "filters": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "filter 子句列表(Q17-B:文本原样保留给 expr 引擎解析)"
+          "description": "view 级 filter 子句列表(Q17-B:文本原样保留给 expr 引擎解析)。M19 B:expose 内联 filter 不在这里 —— 它在 revealClauses[i].inline(只约束那一条 expose)"
+        },
+        "revealClauses": {
+          "type": "array",
+          "description": "M19:逐条 expose 子句(含内联 filter 与文本位置)。与 reveals 一一对应(同序)",
+          "items": {
+            "type": "object",
+            "required": ["path", "form", "location"],
+            "properties": {
+              "path": { "type": "string" },
+              "form": {
+                "type": "string",
+                "enum": ["member", "memberRecursive", "namespace", "namespaceRecursive"]
+              },
+              "inline": {
+                "type": "string",
+                "description": "该条 expose 的内联 filter(如 @SysML::PartUsage)"
+              },
+              "location": { "$ref": "#/definitions/SourceLocation" }
+            }
+          }
         },
         "renderKind": { "type": "string" },
         "renderingRef": { "type": "string" },

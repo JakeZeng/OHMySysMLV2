@@ -958,13 +958,15 @@ action def Weigh {
 
 | 原因 | 条数 | 例子 |
 |---|---|---|
-| 官方只给了**一半端点**（`then X;` / `first X;` 没有另一端） | 21 | `then fork fork1;`、`first start;` |
-| 端点是 **part 侧属性**（本轮范围外） | 1 | `allocate vehicleMassRequirement to PartsTree::vehicle_b.mass;` |
-| 端点指向**不存在的元素** | 1 | `join3 -> done`（官方模型里没有 `done`） |
-| 端点是**多层路径**，解析期被截成两段 | 1 | `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;`（中段 `leftHalfAxle` 在**连接端点的解析**里就丢了） |
+| 官方只给了**一半端点**（`then X;` / `first X;` 没有另一端） | 22 | `then fork fork1;`、`first start;`、`first wait;` |
+| 端点是 **part 侧属性**（本轮范围外） | 1 | `allocate vehicleMassRequirement to PartsTree::vehicle_b.mass;`（`mass` 是 part def 体里的普通属性，按 §8.4 的范围决定仍走数量徽标） |
+| 端点指向**不存在的元素** | 1 | 第 1442 行 `join3 -> done` —— 官方模型里根本没有 `done` 这个元素（全文只出现在这一行） |
 
-> 最后一条是**解析层的独立问题**（连接端点只保留首段 + 末段），
-> 与特性建模无关，需要单独一轮修 `EndpointRef` 的形状。
+> ⚠️ **更正上一版文档的一处错误归因**：曾把其中 1 条记成「端点是多层路径、
+> 解析期被截成两段」。实测**不成立** —— 解析器对 `a.b.c.d` 是保留完整路径的
+> （`partName` = 除末段外的整条路径），官方第 636 / 637 / 640 / 642 行那四条
+> **三段 connect 全部正常画成了边**。本轮已补回归单测钉住这个能力
+> （`tests/featureVisibility.test.ts` 的「多层端点」用例）。
 
 ### 8.7 后端 expose 作用域归一
 
@@ -1018,8 +1020,226 @@ action def Weigh {
   入口存在、抽屉 scope 指向当前包、**发表评论后用 API 复核后端真的存下来了**、
   切到在线面板、关闭/重开。
 
+## 二之九、第八轮：filter 语义落地 + 协作 e2e 补齐 + 两条小账
 
+本轮的四项需求里，**A 项（多层端点路径）的前提被实测推翻**，另外三项都
+落到了「产品真的坏了」的地方 —— 本轮共抓到 **3 个真 bug**。
 
+### 9.1 🔴 真 bug ①：SSE 协同通道从来没通过（M13 整条链路是死的）
 
+`frontend/src/hooks/useCollabStream.ts` 用的是浏览器原生 `EventSource`：
 
+```ts
+new EventSource(url, { withCredentials: true })
+```
 
+但 **EventSource 带不上 `Authorization` 头**（浏览器 API 限制，只能带 cookie），
+而后端 `middleware.AuthRequired()` 只认该头：
+
+```go
+// backend/internal/middleware/jwt.go:120
+token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+```
+
+→ `GET /api/v1/events/stream` **一直 401**。
+
+这意味着 M13 的整条实时通道 —— `comment_added` / `presence` /
+`lock_changed` / `content_updated` 推送 —— **从来没工作过**。用户手动刷新页面
+才能看到别人的评论。
+
+**修法**：传输层从 `EventSource` 换成 **fetch + ReadableStream**：
+
+- 带 `Authorization: Bearer <localStorage['sysmlv2.token']>`；
+- **token 不进 URL**（避免 access log / Referer / 浏览器历史泄露）；
+- 新增导出纯函数 `parseSseFrames(buffer)`：解析 `event:` / `data:` 帧，
+  忽略 `: keepalive` 注释行（后端每 15s 发一次）；
+- 保留指数退避重连 + `AbortController` 清理。
+
+实测修复后 SSE 响应 **200**。
+
+### 9.2 🔴 真 bug ②：元模型浏览器缺 `Part`
+
+页面副标题写着「Block、Part、Port、Action 等」，但
+`backend/internal/metamodel/mock.go` 的 28 个定义里**没有 Part** ——
+用户按副标题去找必然扑空。
+
+本轮补 `SysML::Part`（挂在 `SysML::Classifier` 下）+ 单测钉住
+（`Get` / `Kind` / `Search` 三条断言）。
+
+### 9.3 🔴 真 bug ③：M6 导入 handler 建的是 `model` 而不是 `package`
+
+M12 之后工程树只吃 `packages` 表 —— 导入产物建在 `models` 表里，
+**在树上根本挂不出来**（导入完等于什么都没发生）。
+
+本轮改建 `packages` 表一行：
+
+- 响应字段 `model` → `package`（前端 `ImportPage` 本来就兼容
+  `result.package ?? result.model`）；
+- 包名沿用旧约定：**上传文件名去掉后缀**；
+- 同名包自动加 `_2` 后缀（而不是 409 失败）；
+- **补写权限校验** —— 改造前这个 handler **完全没有权限检查**，
+  任何登录用户都能往别人的私有工程里塞包。现在 404/403 拒绝
+  （Go 单测钉住）。
+
+### 9.4 filter 语义落地（官方 §7.24.3 / §8.2.2.26）
+
+改造前 filter 是个**空壳**，有三个独立的断点：
+
+| 断点 | 后果 |
+|---|---|
+| AST 把「expose 内联 filter」和「view 级 filter」混进同一个 `filters` 数组 | 作用域丢失 —— 分不清「筛这一条」还是「筛整个 view」 |
+| `views/scope.ts` 解析 expose 时**完全不看** filter | `expose P::**` 永远返回全部成员 |
+| `ExprIndex` **从不收集元素的 metadata 注解** | `filter @Safety` 这种注解分类测试**永远不可能命中** |
+
+结果：`expose P::**; filter @Safety;` 把包里**全部**元素画到画布上，
+filter 写了等于没写。
+
+#### 9.4.1 AST 契约拆分
+
+```ts
+interface SysMLView {
+  /** view 级 filter（body 里的独立 `filter X;`）—— 筛整个 view 的 membership */
+  filters: string[];
+  revealClauses?: ExposeClause[];  // 每条 expose 自带 inline（只筛那一条）
+}
+```
+
+解析器不再把内联 filter 塞进 `filters`。
+
+#### 9.4.2 注解从哪来（官方第 685 / 686 行）
+
+```sysml
+part bumper {@Safety{isMandatory = true;}}
+```
+
+注解 `@Safety` 是**该元素 body 里的一个 `metadataUsage` 成员** —— 所以
+「元素 X 带 @Safety 注解」= 「X 的 body 里有 name==='Safety' 的 metadataUsage」。
+另有 `about` 形态（官方第 892 / 1121 行）：
+
+```sysml
+@Rationale about engineTradeOffAnalysis::vehicle_b_engine4cyl { … }
+```
+
+注解属于**被指向**的元素，不属于它出现的命名空间。新模块
+`poc-v2/views/filter.ts` 的 `collectAnnotations` 两种都支持。
+
+#### 9.4.3 求值语义
+
+- 多条 filter 之间 **AND**（官方 §7.24.3：filter 逐条限定 membership）；
+- **解析失败的 filter 不生效**（不清空视图）—— 语法错误由 validator 报 W305，
+  作用域计算不该因此把整个视图清掉；
+- 内联 filter 与 view 级 filter **分别**作用。
+
+#### 9.4.4 接线（顺序很重要）
+
+`views/projection.ts` 新增：
+
+```ts
+resolveProjectScopeWithFilters(project, exposes, viewFilters)
+```
+
+**先按条内联筛，再按 view 级筛**。反过来会错：
+
+```sysml
+expose A [@X];
+expose B;
+filter @X;      // ← B 的元素不该被 A 的内联条件排除
+```
+
+前端 `modelStore` 的三处统一走这一套，保证**画布 / 落库 / 校验**三者一致：
+
+1. 画布投影（`runPipeline` 的 transform）；
+2. 保存时送上的 `exposedElements`（`computeScopeForSave`）；
+3. 校验器的 expose 解析（`buildValidation.resolveExpose`）。
+
+#### 9.4.5 往返保真
+
+`transform/serializer.ts` 写回时把内联 filter **放回原来那条 expose 行**：
+
+```sysml
+expose P::A [@Safety];   ← 不是拆成两条独立子句
+```
+
+否则语义从「只筛这一条」变成「筛整个 view」。
+`transform/importJson.ts` + `schema/sysml-v2-poc.schema.json` 补
+`revealClauses`（含 `inline`）。
+
+#### 9.4.6 能力边界（明确记录）
+
+**包级 filter 未实现** —— 官方第 1524 行：
+
+```sysml
+package SafetyGroup {
+    public import vehicle_b::**;
+    filter @Safety;
+}
+```
+
+那要求先解析包的 `import` 成员，本产品没有这层语义。
+后端 `viewBody.go` 的 `FilterQualifiedNames` 仍只作 UI 回显，
+**不参与作用域计算**（客户端权威，与 expose 一致）。
+
+### 9.5 协作 e2e 补齐
+
+新增 `poc-v2/frontend/e2e/m19-collab-multiuser.spec.ts`（**3 条**）：
+
+1. 多用户 presence（第二个用户在线 → 第一个用户的「在线」面板能看到对方）；
+2. 评论 SSE 实时刷新（**A 不刷新页面**也自动出现评论）；
+3. 编辑锁徽章（第二个用户看到「正在编辑」）。
+
+夹具要点：
+
+- **两个浏览器上下文**（不同 localStorage token）；
+- **每用例独立包**（隔离锁 / 评论 / presence scope —— 锁按包粒度、
+  TTL 60s，页面关闭不一定发 release，跨用例会互相污染）；
+- public 工程对「已登录非成员」仍 404 → 必须走 M4 正式路径
+  （建团队 → 加成员 → 授权工程）；
+- `teams.name` 有 **UNIQUE** 约束 → 团队名必须带唯一后缀
+  （否则 500 → teamId 空 → AddMember 404）。
+
+### 9.6 视图里的 FSM 仿真面板可达（M10 遗留缺口）
+
+M10 的仿真面板判定是 `enableSimulation && stateMachines.length > 0`，
+而 `stateMachines` 取自 `pipeline.model.stateMachines` —— **视图会话的文本模型**。
+视图 content 里只有 view 定义 + expose 子句、没有状态机 → 条件恒为 false
+→ 面板**永远挂不出来**。
+
+修法：数据源改为 `collectStateMachines(pipeline.graphModel ?? pipeline.model)`
+—— 视图会话的画布模型 = 视图模型 + 投影进来的源元素，状态机挂在合成包下、
+不在平铺列表里。新增 `poc-v2/frontend/src/lib/simMachines.ts` +
+`m19-view-simulation.spec.ts`（**2 条**）。
+
+### 9.7 A 项（多层端点路径）：前提被实测推翻
+
+用户的需求是「多层端点路径保真」。实测发现**多层端点本来就正常** ——
+官方第 636 / 637 / 640 / 642 行那四条**三段 connect 全部正常画成边**，
+解析器保留完整路径。
+
+→ A 项降级为「补回归单测钉住已有能力 + 修正文档错误归因」。
+第六轮文档里「多层端点解析期丢中段」的说法**不成立**，已在
+`AGENTS.md` 第七轮段与本文件 §8.6 修正。
+
+### 9.8 回归
+
+| 项 | 结果 |
+|---|---|
+| 根 vitest | **643 / 644**（唯一失败 = 已记录的 ELK 负载敏感 flaky，单跑 10/10 绿） |
+| frontend vitest | **850 / 850** |
+| Go | 全绿 |
+| frontend typecheck | clean |
+| e2e | **110 / 110**（14 spec，17.1 分钟） |
+
+新增/变更的测试：
+
+- `poc-v2/tests/viewFilter.test.ts`（**11 条**）：注解收集（宿主形态 /
+  限定名形态）、`@Safety` 命中、`not` 取反、多条 AND、解析失败不生效、
+  元类测试、内联 filter 只筛那一条、view 级 filter 筛整体、两者叠加。
+- `poc-v2/tests/importExport.test.ts` +3 条：内联 filter 写回留在原 expose 行、
+  view 级 filter 写成独立子句、JSON 往返不丢内联 filter。
+- `poc-v2/tests/featureVisibility.test.ts` +2 条（多层端点路径回归）。
+- `poc-v2/frontend/e2e/m19-view-filter.spec.ts`（**3 条**）。
+- `poc-v2/frontend/e2e/m19-view-simulation.spec.ts`（**2 条**）。
+- `poc-v2/frontend/e2e/m19-collab-multiuser.spec.ts`（**3 条**）。
+- `poc-v2/backend/internal/handler/importHandler_test.go`：改建 package +
+  权限拒绝两条新用例。
+- `poc-v2/backend/internal/metamodel/registry_test.go`：Part 存在性。

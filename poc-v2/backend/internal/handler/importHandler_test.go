@@ -141,7 +141,10 @@ func TestConvertCapellaEmptyModel(t *testing.T) {
 
 // ─── E2E: multipart upload 走完整链路 ────────────────────────────────────
 
-// TestImportPapyrusEndToEnd：multipart 上传 → handler 解析 → 创建 Model。
+// TestImportPapyrusEndToEnd：multipart 上传 → handler 解析 → 创建 Package。
+//
+// ⚠️ M19 E-2：产物是 **package**（`packages` 表），不是 M12 之前的 model。
+// 导入的东西必须能在工程树里看到并打开 —— 建 model 的话用户根本找不到。
 func TestImportPapyrusEndToEnd(t *testing.T) {
 	r, repo := setupTestRouter(t)
 	tok, _, _, _ := registerTwoUsers(t, r)
@@ -176,11 +179,11 @@ func TestImportPapyrusEndToEnd(t *testing.T) {
 	t.Logf("import response: %s", resp.Body.String())
 	var body2 struct {
 		Data struct {
-			Model struct {
+			Package struct {
 				ID      string `json:"id"`
 				Name    string `json:"name"`
 				Content string `json:"content"`
-			} `json:"model"`
+			} `json:"package"`
 			Source  string `json:"source"`
 			Message string `json:"message"`
 		} `json:"data"`
@@ -191,8 +194,8 @@ func TestImportPapyrusEndToEnd(t *testing.T) {
 	if body2.Data.Source != "papyrus" {
 		t.Errorf("source 应 papyrus，实际 %q", body2.Data.Source)
 	}
-	if body2.Data.Model.Name != "sample" {
-		t.Errorf("model.name 应 sample，实际 %q", body2.Data.Model.Name)
+	if body2.Data.Package.Name != "sample" {
+		t.Errorf("package.name 应 sample，实际 %q", body2.Data.Package.Name)
 	}
 	for _, want := range []string{
 		"package ImportedSysML",
@@ -201,18 +204,21 @@ func TestImportPapyrusEndToEnd(t *testing.T) {
 		"port dataOut : String",
 		"attribute serial",
 	} {
-		if !strings.Contains(body2.Data.Model.Content, want) {
-			t.Errorf("导入后 SysML v2 内容缺 %q：\n%s", want, body2.Data.Model.Content)
+		if !strings.Contains(body2.Data.Package.Content, want) {
+			t.Errorf("导入后 SysML v2 内容缺 %q：\n%s", want, body2.Data.Package.Content)
 		}
 	}
 
-	// 确认 Model 真的写入了数据库
-	stored, err := repo.GetModel(req.Context(), body2.Data.Model.ID)
+	// 确认 Package 真的写入了 packages 表（不是 models 表）
+	stored, err := repo.GetPackage(req.Context(), body2.Data.Package.ID)
 	if err != nil {
-		t.Fatalf("GetModel: %v", err)
+		t.Fatalf("GetPackage: %v", err)
 	}
-	if stored.Content != body2.Data.Model.Content {
+	if stored.Content != body2.Data.Package.Content {
 		t.Errorf("DB 内容与响应不一致")
+	}
+	if stored.ProjectID != projectID {
+		t.Errorf("包应挂在 project %s，实际 %s", projectID, stored.ProjectID)
 	}
 }
 
@@ -249,10 +255,10 @@ func TestImportCapellaEndToEnd(t *testing.T) {
 	}
 	var body2 struct {
 		Data struct {
-			Model struct {
+			Package struct {
 				Name    string `json:"name"`
 				Content string `json:"content"`
-			} `json:"model"`
+			} `json:"package"`
 			Source string `json:"source"`
 		} `json:"data"`
 	}
@@ -265,9 +271,93 @@ func TestImportCapellaEndToEnd(t *testing.T) {
 		"port ioBus : String",
 		"attribute cpuLoad",
 	} {
-		if !strings.Contains(body2.Data.Model.Content, want) {
-			t.Errorf("Capella 导入 SysML 内容缺 %q：\n%s", want, body2.Data.Model.Content)
+		if !strings.Contains(body2.Data.Package.Content, want) {
+			t.Errorf("Capella 导入 SysML 内容缺 %q：\n%s", want, body2.Data.Package.Content)
 		}
+	}
+}
+
+// TestImportCreatesPackageNotModel：M19 E-2 的核心断言 ——
+// 导入产物必须落在 `packages` 表（M12 之后工程树只认 packages），
+// 且**不能**再往 `models` 表塞一份（那是 M12 之前的遗留概念）。
+func TestImportCreatesPackageNotModel(t *testing.T) {
+	r, repo := setupTestRouter(t)
+	tok, _, _, _ := registerTwoUsers(t, r)
+	projectID := createProject(t, r, tok, "ImportPkgProj", "private")
+
+	capellaJSON := `{"name":"Probe","elements":[{"type":"Component","id":"_e1","name":"Board"}]}`
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = w.WriteField("projectId", projectID)
+	fw, _ := w.CreateFormFile("file", "probe.json")
+	_, _ = io.WriteString(fw, capellaJSON)
+	_ = w.Close()
+
+	req := authedRequest("POST", "/api/v1/import/capella", tok, nil)
+	req.Body = io.NopCloser(body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.ContentLength = int64(body.Len())
+
+	resp := doRequest(r, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	// packages 表里要有这个包
+	pkgs, err := repo.ListPackagesByProject(req.Context(), projectID)
+	if err != nil {
+		t.Fatalf("ListPackagesByProject: %v", err)
+	}
+	found := false
+	for _, p := range pkgs {
+		if p.Name == "probe" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("packages 表里应有名为 probe 的包，实际只有 %d 个包", len(pkgs))
+	}
+
+	// models 表里**不该**有
+	models, err := repo.ListModelsByProject(req.Context(), projectID)
+	if err != nil {
+		t.Fatalf("ListModelsByProject: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("models 表不该有导入产物，实际有 %d 个", len(models))
+	}
+}
+
+// TestImportRejectsUnauthorizedProject：导入必须校验目标工程的**写**权限。
+// ⚠️ 改造前这个 handler 完全没有权限校验 —— 任何登录用户都能往别人的工程里塞包。
+func TestImportRejectsUnauthorizedProject(t *testing.T) {
+	r, _ := setupTestRouter(t)
+	ownerTok, _, _, _ := registerTwoUsers(t, r)
+	// 第三个用户（不是工程成员）
+	otherResp := registerUser(t, r, "carol", "carol@example.com", "pass-1234")
+	otherTok := authToken(t, otherResp)
+	projectID := createProject(t, r, ownerTok, "PrivateImportProj", "private")
+
+	capellaJSON := `{"name":"Probe","elements":[{"type":"Component","id":"_e1","name":"Board"}]}`
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = w.WriteField("projectId", projectID)
+	fw, _ := w.CreateFormFile("file", "probe.json")
+	_, _ = io.WriteString(fw, capellaJSON)
+	_ = w.Close()
+
+	req := authedRequest("POST", "/api/v1/import/capella", otherTok, nil)
+	req.Body = io.NopCloser(body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.ContentLength = int64(body.Len())
+
+	resp := doRequest(r, req)
+	if resp.Code == http.StatusOK {
+		t.Fatalf("非成员导入他人私有工程应被拒，实际 200：%s", resp.Body.String())
+	}
+	if resp.Code != http.StatusNotFound && resp.Code != http.StatusForbidden {
+		t.Errorf("状态码应 404/403，实际 %d", resp.Code)
 	}
 }
 

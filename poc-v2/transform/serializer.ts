@@ -468,12 +468,29 @@ function serializeView(v: SysMLView, indent: number, out: string[]): void {
   out.push(`${head} {`);
 
   // body 子句
+  //
+  // ⚠️ M19 B：view 级 filter 与 **expose 内联 filter** 是两回事。
+  //   - `v.filters` 现在只含 view 级 filter（body 里的独立 `filter X;`）
+  //   - 内联 filter 在 `revealClauses[i].inline`（只约束那一条 expose）
+  // 写回文本时必须把内联 filter 放回它原来的 expose 行 ——
+  // 否则 `expose P::X [@Safety];` 会被写成两条独立子句，语义从
+  // 「只筛这一条」变成「筛整个 view」。
   for (const f of v.filters ?? []) {
     out.push(`${pad}  filter ${f};`);
   }
-  for (const r of v.reveals ?? []) {
-    // 不带引号:reveal 字符串就是 qualified path
-    out.push(`${pad}  expose ${r};`);
+  // revealClauses 与 reveals 一一对应（同序）；有 clauses 时按 clauses 写，
+  // 才能带上内联 filter；没有 clauses（老 JSON）退回 reveals。
+  const clauses = v.revealClauses ?? [];
+  if (clauses.length > 0) {
+    for (const c of clauses) {
+      const inline = c.inline ? ` [${c.inline}]` : '';
+      out.push(`${pad}  expose ${c.path}${inline};`);
+    }
+  } else {
+    for (const r of v.reveals ?? []) {
+      // 不带引号:reveal 字符串就是 qualified path
+      out.push(`${pad}  expose ${r};`);
+    }
   }
   if (v.renderingRef) {
     out.push(`${pad}  render ${v.renderingRef};`);

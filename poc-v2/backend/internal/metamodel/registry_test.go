@@ -155,7 +155,46 @@ func TestClassifyByName(t *testing.T) {
 	}
 }
 
-// --- 测试 6: All() 返回所有元素 ---
+// --- 测试 7: M19 E-1 —— Part 必须能在浏览器里查到 ---
+//
+// 页面副标题写着「Block、Part、Port、Action 等」，但 mock schema 里只有
+// Block / Port，**没有 Part** —— 用户按副标题去找「Part」会扑空。
+// 这里钉住：Part 存在，且挂在 Classifier 下（能被按 kind 过滤出来）。
+
+func TestNewMockRegistry_HasPart(t *testing.T) {
+	reg, err := NewMockRegistry()
+	if err != nil {
+		t.Fatalf("NewMockRegistry failed: %v", err)
+	}
+
+	e, ok := reg.Get("SysML::Part")
+	if !ok {
+		t.Fatal("Get(\"SysML::Part\") failed: 元模型缺少 Part")
+	}
+	if e.Name != "Part" {
+		t.Errorf("Name = %q, want %q", e.Name, "Part")
+	}
+	if e.SuperType != "SysML::Classifier" {
+		t.Errorf("SuperType = %q, want %q", e.SuperType, "SysML::Classifier")
+	}
+	if e.Kind != KindClassifier {
+		t.Errorf("Kind = %v, want %v", e.Kind, KindClassifier)
+	}
+
+	// 搜索也要能命中（浏览器默认走模糊搜索）
+	hit := false
+	for _, r := range reg.Search("Part") {
+		if r.QualifiedName == "SysML::Part" {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		t.Error("Search(\"Part\") should include SysML::Part")
+	}
+}
+
+// --- 测试 8: All() 返回所有元素 ---
 
 func TestRegistry_All(t *testing.T) {
 	reg, _ := NewMockRegistry()

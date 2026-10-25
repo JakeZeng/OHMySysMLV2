@@ -566,7 +566,13 @@ export interface ExposeClause {
   path: string;
   /** 官方四种粒度 */
   form: 'member' | 'memberRecursive' | 'namespace' | 'namespaceRecursive';
-  /** 内联 filter（`[@SysML::PartUsage]`） */
+  /**
+   * M19 B：**这条 expose 自己的内联 filter**（`expose P::X [@SysML::PartUsage];`）。
+   *
+   * ⚠️ 官方 §8.2.2.26：内联 filter 只约束**这一条 expose** 引入的元素；
+   *    view body 里的独立 `filter` 子句约束**整个 view** 的 membership。
+   *    两者作用域不同，**不能**混在一个数组里（那是 M19 B 之前的 bug）。
+   */
   inline?: string;
   /** 子句在源文本中的位置 */
   location: SourceLocation & { endOffset: number };
@@ -611,7 +617,17 @@ export interface SysMLView {
    * 位置由 PEG 解析器给出（`ExposeStatement` 规则），消费方只按偏移删。
    */
   revealClauses?: ExposeClause[];
-  /** filter 条件列表，标准形式含算子与取反，如 `not @SysML::ConnectionUsage` */
+  /**
+   * M19 B：**view 级** filter 子句列表（body 里的独立 `filter X;` 语句）。
+   *
+   * 官方 §7.24.3：filter 是**命名空间成员级**的声明 —— 它筛选的是**该 namespace
+   * 的 membership**（即这个 view 通过 expose / import 引入的成员集合）。
+   *
+   * ⚠️ 与 expose 内联 filter（`ExposeClause.inline`）**不是一回事**：
+   *    - view 级 filter：筛整个 view 的成员集合（多条时 AND）
+   *    - 内联 filter：只筛**那一条** expose 引入的元素
+   *    M19 B 之前两者被塞进同一个数组 → 作用域丢失，内联 filter 被当成全局 filter。
+   */
   filters: string[];
   /** 路由到哪个 renderer */
   renderKind?: string;

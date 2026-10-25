@@ -61,11 +61,22 @@ export {
 export {
   buildProjectModel,
   resolveProjectScope,
+  resolveProjectScopeWithFilters,
   projectScopeIntoModel,
   type ProjectModel,
   type SourcePackage,
   type ScopeResult,
+  type ScopedExpose,
 } from './projection';
+export {
+  buildFilterIndex,
+  collectAnnotations,
+  evaluateFilters,
+  filterQualifiedNames,
+  unparsedFilters,
+  type FilterOutcome,
+  type MetadataAnnotation,
+} from './filter';
 export {
   removeExposeClauses,
   clausesCovering,

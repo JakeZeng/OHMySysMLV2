@@ -134,32 +134,51 @@ function toast(page: Page, text: string | RegExp): Locator {
   return page.getByText(text).first();
 }
 
-interface ImportedModel {
+interface ImportedPackage {
   id: string;
   name: string;
-  content: string;
+  content?: string;
 }
 
-/** 列出工程下的模型（M6 两个导入 handler 建的产物都是 model） */
-async function listModels(
+/**
+ * 列出工程下的**顶级包**。
+ *
+ * ⚠️ M19 E-2：M6 两个导入 handler 的产物现在是 **package**（`packages` 表），
+ * 不再是 M12 之前的 `models` 表 —— 建 model 的话导入的东西在工程树里根本
+ * 挂不出来（树只认 packages）。
+ */
+async function listPackages(
   request: APIRequestContext,
   auth: Auth & { projectId: string },
-): Promise<ImportedModel[]> {
-  const r = await request.get(`/api/v1/projects/${auth.projectId}/models`, {
+): Promise<ImportedPackage[]> {
+  const r = await request.get(`/api/v1/projects/${auth.projectId}/packages`, {
     headers: { Authorization: `Bearer ${auth.token}` },
   });
   const b = await r.json();
-  return (b?.data ?? b ?? []) as ImportedModel[];
+  return (b?.data ?? b ?? []) as ImportedPackage[];
 }
 
-/** 按名字找一个导入产物（Capella/Papyrus 都用上传文件名去掉后缀当模型名） */
-async function findModel(
+/** 按名字找一个导入产物（Capella/Papyrus 都用上传文件名去掉后缀当包名） */
+async function findPackage(
   request: APIRequestContext,
   auth: Auth & { projectId: string },
   stem: string,
-): Promise<ImportedModel | undefined> {
-  const models = await listModels(request, auth);
-  return models.find((m) => m.name.startsWith(stem));
+): Promise<ImportedPackage | undefined> {
+  const pkgs = await listPackages(request, auth);
+  return pkgs.find((p) => p.name.startsWith(stem));
+}
+
+/** 取包的完整内容（列表接口只给摘要，不含 content） */
+async function getPackageContent(
+  request: APIRequestContext,
+  auth: Auth & { projectId: string },
+  id: string,
+): Promise<string> {
+  const r = await request.get(`/api/v1/packages/${id}`, {
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  const b = await r.json();
+  return (b?.data?.content ?? '') as string;
 }
 
 test.describe('M6 集成 / M7 插件与文档 / M8 订阅', () => {
@@ -255,7 +274,7 @@ test.describe('M6 集成 / M7 插件与文档 / M8 订阅', () => {
 
   // ─── 3. 外部模型导入 ───────────────────────────────────────
 
-  test('3. 导入：Capella JSON 与 Papyrus XML 各产出一个新模型', async ({ page, request }) => {
+  test('3. 导入：Capella JSON 与 Papyrus XML 各产出一个新包（工程树里能看到）', async ({ page, request }) => {
     const auth = await bootstrap(request, 'm6imp');
     await injectAuth(page, auth);
 
@@ -281,18 +300,19 @@ test.describe('M6 集成 / M7 插件与文档 / M8 订阅', () => {
     await expect(toast(page, '导入成功')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/已从 Capella 导入 3 个元素/)).toBeVisible();
 
-    // 导入产物真的落库了（注意：两个 handler 建的都是 **model**，不是 M12 之后的 package）
-    const capellaModel = await findModel(request, auth, 'capella');
-    expect(capellaModel).toBeTruthy();
+    // 导入产物真的落库了（M19 E-2：产物是 **package**，不是 M12 之前的 model）
+    const capellaPkg = await findPackage(request, auth, 'capella');
+    expect(capellaPkg).toBeTruthy();
     // 元素也被真的转换成了 SysML v2 文本，而不是空壳
-    expect(capellaModel!.content).toContain('package CapellaProbe');
-    expect(capellaModel!.content).toContain('part def ComputeBoard');
-    expect(capellaModel!.content).toContain('port ioBus : String');
-    expect(capellaModel!.content).toContain('attribute cpuLoad : String');
+    const capellaContent = await getPackageContent(request, auth, capellaPkg!.id);
+    expect(capellaContent).toContain('package CapellaProbe');
+    expect(capellaContent).toContain('part def ComputeBoard');
+    expect(capellaContent).toContain('port ioBus : String');
+    expect(capellaContent).toContain('attribute cpuLoad : String');
 
-    // Papyrus。模型名 = 上传文件名去掉后缀（importHandler.go 两处都是
+    // Papyrus。包名 = 上传文件名去掉后缀（importHandler.go 两处都是
     // `strings.TrimSuffix(header.Filename, ".xml" / ".json")`），所以文件名
-    // 直接决定 findModel 的查找键，别随手叫 model.xml。
+    // 直接决定 findPackage 的查找键，别随手叫 model.xml。
     await page.locator('input[type="file"][accept=".xml"]').setInputFiles({
       name: 'papyrus-sample.xml',
       mimeType: 'application/xml',
@@ -300,16 +320,17 @@ test.describe('M6 集成 / M7 插件与文档 / M8 订阅', () => {
     });
     await expect(toast(page, '导入成功')).toBeVisible({ timeout: 30_000 });
 
-    const papyrusModel = await findModel(request, auth, 'papyrus');
-    expect(papyrusModel).toBeTruthy();
-    expect(papyrusModel!.content).toContain('PapyrusImportedPkg');
-    expect(papyrusModel!.content).toContain('WheelClass');
+    const papyrusPkg = await findPackage(request, auth, 'papyrus');
+    expect(papyrusPkg).toBeTruthy();
+    const papyrusContent = await getPackageContent(request, auth, papyrusPkg!.id);
+    expect(papyrusContent).toContain('PapyrusImportedPkg');
+    expect(papyrusContent).toContain('WheelClass');
     // M6 修复点：port 用法必须带类型（裸 `port X;` 本解析器解析不过）
-    expect(papyrusModel!.content).toMatch(/port\s+SignalPort\s*:/);
+    expect(papyrusContent).toMatch(/port\s+SignalPort\s*:/);
 
-    // 两个模型都在工程下，且没有把已有的 VehicleModel 包弄坏
-    const models = await listModels(request, auth);
-    expect(models.length).toBeGreaterThanOrEqual(2);
+    // 两个包都在工程下，且没有把已有的 VehicleModel 包弄坏
+    const pkgs = await listPackages(request, auth);
+    expect(pkgs.length).toBeGreaterThanOrEqual(2);
   });
 
   // ─── 4. 插件系统 ───────────────────────────────────────────

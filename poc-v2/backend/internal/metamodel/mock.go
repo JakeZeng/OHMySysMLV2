@@ -40,6 +40,10 @@ const mockSchema = `{
       "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A classifier for items (physical entities distinct from blocks)"
     },
+    "SysML::Part": {
+      "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
+      "description": "A part usage — an occurrence of a classifier within a containing classifier. In SysML v2 the normative types are PartUsage / PartDefinition; Part is kept here as the browsing entry point for part-structured elements."
+    },
     "SysML::ActionDef": {
       "allOf": [{"$ref": "#/definitions/SysML::Classifier"}],
       "description": "A classifier for actions (behaviors)"

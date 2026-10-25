@@ -208,16 +208,14 @@ test.describe('M3 元模型 / M9 代码生成与通知 / M10 仿真', () => {
     await expect(browser).not.toContainText('加载失败');
 
     // 树里应有核心元素。
-    // ⚠️ 数据源（`GET /metamodel/elements`）当前是 28 个元素，里面**没有 Part**
-    // ——而页面副标题却写着「Block、Part、Port、Action 等」。所以这里只断言
-    // 数据里确实存在的那些，Part 的缺口单列在下方说明里。
-    for (const el of ['Block', 'Port', 'Attribute', 'ActionDef', 'ItemDef']) {
+    // M19 E-1：数据源（`GET /metamodel/elements`）原先 28 个元素里**没有 Part**
+    // ——而页面副标题却写着「Block、Part、Port、Action 等」，用户按副标题去找
+    // Part 会扑空。现在后端 mock schema 补了 SysML::Part，缺口闭合。
+    for (const el of ['Block', 'Part', 'Port', 'Attribute', 'ActionDef', 'ItemDef']) {
       await expect(treePanel.getByText(el, { exact: true }).first()).toBeVisible({
         timeout: 15_000,
       });
     }
-    // 已知缺口：页面宣传了 Part，数据里却没有
-    await expect(treePanel.getByText('Part', { exact: true })).toHaveCount(0);
 
     // 搜索过滤：搜不存在的词时树里搜不到东西（搜 Port 时 Part 仍在，子串匹配）
     const search = page.locator('input[placeholder="搜索元素（不区分大小写）"]');

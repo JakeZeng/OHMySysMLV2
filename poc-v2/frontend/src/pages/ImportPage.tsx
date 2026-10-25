@@ -15,6 +15,13 @@ import { getApi } from '../services/api';
 
 const api = getApi();
 
+/**
+ * 导入产物。
+ *
+ * ⚠️ M19 E-2：后端现在返回的是 **package**（`packages` 表），不是 M12 之前的
+ * model —— 建 model 的话导入的东西在工程树里挂不出来（树只认 packages）。
+ * `model` 字段保留只是兼容老后端。
+ */
 interface ImportResult {
   package?: { id: string; name: string };
   model?: { id: string; name: string };

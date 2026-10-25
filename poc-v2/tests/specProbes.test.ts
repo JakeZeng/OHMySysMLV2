@@ -107,7 +107,11 @@ describe('Spec probes - Pilot training / validation / ViewTest', () => {
 }`);
     expect(r.errors).toEqual([]);
     expect(r.model.views[0].reveals).toEqual(['vehicle::**', 'vehicle::**']);
-    expect(r.model.views[0].filters).toEqual(['@Safety', 'not (@Safety)']);
+    // M19 B：两条内联 filter 各属于各自的 expose 子句，不进 view 级 `filters`
+    expect(r.model.views[0].filters).toEqual([]);
+    const clauses = r.model.views[0].revealClauses ?? [];
+    expect(clauses[0]?.inline).toBe('@Safety');
+    expect(clauses[1]?.inline).toBe('not (@Safety)');
   });
 
   it('validation 11a：shorthand view（无 def 引用）带 satisfy/expose/render', () => {

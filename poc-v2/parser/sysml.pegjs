@@ -142,7 +142,13 @@
           inline: cl.inline,
           location: cl.location,
         });
-        if (cl.inline) filters.push(cl.inline);
+        // M19 B：内联 filter **不进** `filters`。
+        //
+        // 官方 §8.2.2.26：内联 filter 只约束**这一条 expose**；view body 里的
+        // 独立 `filter` 子句约束**整个 view**。两者作用域不同，
+        // 塞进同一个数组就分不清「筛这一条」还是「筛整个视图」——
+        // 那正是 M19 B 之前 filter 完全不起作用的原因。
+        // 内联 filter 记在 revealClauses[].inline 上。
       } else if (cl.kind === 'filter') {
         filters.push(cl.text);
       } else if (cl.kind === 'render') {
