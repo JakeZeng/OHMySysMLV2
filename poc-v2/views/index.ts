@@ -43,3 +43,33 @@ export {
   type Color,
   type CycleReport,
 } from './cycle';
+export {
+  buildHierarchy,
+  flattenHierarchy,
+  findByName,
+  qualifiedNameOf,
+  type HierarchyNode,
+  type BuildHierarchyOptions,
+} from './hierarchy';
+export {
+  buildScopeIndex,
+  resolveExposePath,
+  resolveExposeAll,
+  type ScopeIndex,
+  type ExposeResolution,
+} from './scope';
+export {
+  buildProjectModel,
+  resolveProjectScope,
+  projectScopeIntoModel,
+  type ProjectModel,
+  type SourcePackage,
+  type ScopeResult,
+} from './projection';
+export {
+  removeExposeClauses,
+  clausesCovering,
+  renameExposePaths,
+  type ExposeRemovalResult,
+  type ExposeRenameResult,
+} from './expose';

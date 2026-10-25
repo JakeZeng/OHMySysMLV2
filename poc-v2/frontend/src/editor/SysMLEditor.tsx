@@ -19,7 +19,7 @@ import type * as Monaco from 'monaco-editor';
 import './monacoLoader';
 import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
-import type { ValidationIssue } from '@validator/validator';
+import type { ValidationIssue, ValidationScope } from '@validator/validator';
 import type { ParseError } from '@ast/model';
 import { formatSysMLSafe, type FormatOutcome } from '../lib/sysmlFormat';
 
@@ -47,6 +47,13 @@ interface SysMLEditorProps {
    * 宿主据此弹 toast —— 否则 `Shift + Alt + F` 被拦下时用户只会觉得「键没反应」。
    */
   onFormatResult?: (outcome: FormatOutcome) => void;
+  /**
+   * M19：工程级作用域（跨 scope 引用的解析依据）。
+   *
+   * 编辑器自己跑一遍 parse + validate 来打 Monaco marker —— 不给作用域的话，
+   * `view V : BaseView`（BaseView 在另一个视图里）会被标成红色错误。
+   */
+  validationScope?: ValidationScope;
 }
 
 /** 暴露给父组件的操作接口 */
@@ -343,6 +350,7 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
   wordWrap = 'on',
   onCursorChange,
   onFormatResult,
+  validationScope,
 }, ref) => {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -409,12 +417,12 @@ const SysMLEditor = forwardRef<SysMLEditorHandle, SysMLEditorProps>(({
       parseErrors = parseResult.errors;
 
       // 即使 parse 失败，也尝试 validate 一下
-      const validation = validate(parseResult.model);
+      const validation = validate(parseResult.model, validationScope);
       validationIssues = validation.issues;
 
       onPipelineResult?.({ parseErrors, validationIssues });
     },
-    [onPipelineResult]
+    [onPipelineResult, validationScope]
   );
 
   // 把错误显示为 Monaco markers

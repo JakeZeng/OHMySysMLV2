@@ -120,6 +120,12 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
     text?: string;
     constraint?: string;
     direction?: string;
+    /**
+     * M19：该元素是**被 expose 投影进当前视图**的 —— 它归属源命名空间，
+     * 在视图里只读（改名/删除不会写回视图文本，要去源包里改）。
+     */
+    exposed?: boolean;
+    sourceQName?: string;
   };
 
   const nodeType = selectedNode.type ?? 'unknown';
@@ -188,6 +194,21 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 text-xs text-gray-700 dark:text-gray-200">
+        {/* M19：被 expose 投影进来的元素 —— 归属源包，视图里只读 */}
+        {data.exposed && (
+          <div
+            className="mb-2 rounded border border-teal-200 bg-teal-50 px-2 py-1.5 text-[10px] leading-relaxed text-teal-800 dark:border-teal-800 dark:bg-teal-900/30 dark:text-teal-200"
+            data-testid="prop-exposed-banner"
+            role="note"
+          >
+            <div className="font-semibold">该元素来自源包，在本视图中只读</div>
+            <div className="mt-0.5 font-mono opacity-80">
+              {data.sourceQName ?? '(来源未知)'}
+            </div>
+            <div className="mt-0.5">改名 / 删除请到源包中操作。</div>
+          </div>
+        )}
+
         {/* 类型徽章 */}
         <div className="flex items-center gap-2">
           <span
@@ -247,7 +268,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
               >
                 {data.label ?? '(unnamed)'}
               </span>
-              {isFromModel && (
+              {isFromModel && !data.exposed && (
                 <button
                   type="button"
                   onClick={() => setEditingName(true)}
@@ -350,8 +371,8 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ selectedNode, onCl
         )}
       </div>
 
-      {/* 操作按钮 */}
-      {isFromModel && (
+      {/* 操作按钮 —— M19：被 expose 投影进来的元素在视图里不可删（归属源包） */}
+      {isFromModel && !data.exposed && (
         <div className="border-t border-gray-200 p-2 dark:border-gray-700">
           <Button
             size="sm"

@@ -107,6 +107,67 @@ export interface ValidationResult {
   issues: ValidationIssue[];
 }
 
+// ─── 工程级作用域（M19）──────────────────────────────────────────────────
+
+/**
+ * 校验时可见的「工程级作用域」。
+ *
+ * ## 为什么需要它
+ *
+ * 校验器拿到的只是**当前 scope 的一段文本**（一个包 / 一个视图的内容）。
+ * 而 SysML v2 的命名空间是**工程级**的：
+ *
+ *   - `view V : BaseView` 里的 `BaseView` 可能声明在**另一个视图**里；
+ *   - `expose Pkg::Car` 里的 `Pkg` 一定在**另一个包**里（expose 的定义就是
+ *     「把别的命名空间里的元素纳入本视图的作用域」）。
+ *
+ * 改造前校验器看不到跨 scope 的引用，于是把「**当前 scope 看不到**」误判成
+ * 「**工程内不存在**」—— 视图会话里必然误报：
+ *
+ *   - E301_VIEW_USAGE_NO_DEF（view 引用的 ViewDefinition 在别的视图里）
+ *   - W303_EXPOSE_NOT_RESOLVED（expose 的源包在别的包里）
+ *
+ * 判定标准因此要从「当前 scope 里找不到」改成「**全工程里找不到**」。
+ * 本接口就是把「当前 scope 之外的名字」显式喂给校验器的通道。
+ */
+export interface ValidationScope {
+  /**
+   * 工程内所有 view 名（view def / view usage 都要）。
+   *
+   * 缺省 = 校验器不知道工程里还有哪些视图 → 跨 scope 的 view 引用只能按
+   * 「当前 scope 内找不到」处理。
+   */
+  viewNames?: readonly string[];
+  /** 工程内所有 viewpoint 名（`satisfy V` 的解析依据）。 */
+  viewpointNames?: readonly string[];
+  /**
+   * 工程内所有包名（任何层级）。
+   *
+   * 用于 W303 的**兜底**判定：expose 路径的首段必须是工程里的某个包。
+   * 缺省 = 没拿到工程级包清单 → **不报** W303 ——
+   * 「没加载到工程信息」不等于「工程内不存在」，这正是 M19 要消灭的误报。
+   */
+  packageNames?: readonly string[];
+  /**
+   * expose 路径的**权威**解析结果。
+   *
+   * 给了就不再由校验器自行解析 —— 解析的唯一实现是 `views/scope.ts`
+   * （§8.2.2.26 的四种粒度：`P::X` / `P::X::**` / `P::*` / `P::*::**`），
+   * 校验器自己再实现一遍就是「同一语义两处真相」。
+   */
+  exposeResolution?: {
+    /** 已解析的限定名 */
+    resolved?: readonly string[];
+    /**
+     * 未解析的 expose 路径（每条带原因）。
+     *
+     * `viewName` 指出这条路径出自哪个视图 —— 视图会话里通常只有一个视图，
+     * 但接口本身允许一段文本里有多个视图，不能靠「取第一个」蒙。
+     */
+    unresolved?: readonly { path: string; reason?: string; viewName?: string }[];
+  };
+}
+
 // ─── 符号表 ────────────────────────────────────────────────────────────
 
 interface TypeSymbol {
@@ -178,7 +239,10 @@ const BUILTIN_TYPES = new Set([
 
 // ─── 入口 ──────────────────────────────────────────────────────────────
 
-export function validate(model: SysMLModel): ValidationResult {
+export function validate(
+  model: SysMLModel,
+  projectScope?: ValidationScope,
+): ValidationResult {
   const issues: ValidationIssue[] = [];
   const scope: Scope = {
     packages: new Map(),
@@ -328,7 +392,7 @@ export function validate(model: SysMLModel): ValidationResult {
   // M15 §7.26：View / Viewpoint 语义校验。
   // 校验从 SysMLModel.views / viewpoints 字段出发（M16 P1：包内视图已被
   // flattenNestedMembers 提升进这两个数组，因此天然覆盖包内视图）。
-  validateViews(model, issues);
+  validateViews(model, issues, projectScope);
 
   // M17 切片 D（F2/Q15）：view 内 / global 查重（原则 2 单一入口贯穿）
   // 走 `@views` 里的 checkGlobalUnique / checkWithinViewUnique，
@@ -354,15 +418,26 @@ export function validate(model: SysMLModel): ValidationResult {
  *   - W304_RENDER_UNKNOWN         render X 中 X 不是已知 rendering kind 也不是引号引用
  *   - W305_FILTER_UNKNOWN_OP      filter 子句使用了未知算子（@ / not @ / istype / hastype 之外）
  */
-function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
+function validateViews(
+  model: SysMLModel,
+  issues: ValidationIssue[],
+  projectScope?: ValidationScope,
+): void {
   const allViewNames = new Set<string>();
   for (const v of model.views ?? []) allViewNames.add(v.name);
+
+  // M19：工程级作用域里的 view / viewpoint 名（当前 scope 之外的）。
+  // 「当前 scope 看不到」≠「工程内不存在」—— 只有两边都找不到才报。
+  const externalViewNames = new Set(projectScope?.viewNames ?? []);
+  const externalViewpointNames = new Set(projectScope?.viewpointNames ?? []);
 
   // 1) view usage 必须指向 view def（ViewDefinition）
   for (const v of model.views ?? []) {
     if (v.declKind === 'usage' && v.viewDefinitionRef) {
-      if (!allViewNames.has(v.viewDefinitionRef)) {
-        // view def 不在工程内：当作 warning 而非 error（POC 阶段跨文件引用未解析）
+      const known =
+        allViewNames.has(v.viewDefinitionRef) ||
+        externalViewNames.has(v.viewDefinitionRef);
+      if (!known) {
         issues.push({
           code: 'E301_VIEW_USAGE_NO_DEF',
           message: `view \`${v.name}\` 引用的 ViewDefinition \`${v.viewDefinitionRef}\` 在工程内不存在`,
@@ -380,7 +455,7 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
     if (!v.satisfies) continue;
     // V.satisfies 是 qualified name；只看末段（标准里 satisfy 指向同工程的 viewpoint）
     const last = v.satisfies.split('::').pop() ?? v.satisfies;
-    if (!allViewpointNames.has(last)) {
+    if (!allViewpointNames.has(last) && !externalViewpointNames.has(last)) {
       issues.push({
         code: 'E302_SATISFY_NOT_VIEWPOINT',
         message: `view \`${v.name}\` 的 \`satisfy\` 目标 \`${v.satisfies}\` 在工程内不是 viewpoint`,
@@ -390,24 +465,48 @@ function validateViews(model: SysMLModel, issues: ValidationIssue[]): void {
     }
   }
 
-  // 3) expose 未 resolved（M15：仅做了顶层 AST 字段；后端 viewBody 已做严格 resolve，前端 AST 路径暂以 reveals 列表为准）
-  const allPackageNames = new Set<string>();
-  for (const p of model.packages) allPackageNames.add(p.name);
-  for (const v of model.views ?? []) {
-    for (const path of v.reveals ?? []) {
-      const segments = path.split('::').filter(Boolean);
-      if (segments.length === 0) continue;
-      const first = segments[0];
-      // 至少顶级包要存在（递归 `**` 形式只校验命名空间链）
-      const isWildcard = segments[segments.length - 1] === '**';
-      const namespaceChain = isWildcard ? segments : segments.slice(0, -1);
-      if (namespaceChain.length > 0 && !allPackageNames.has(namespaceChain[0])) {
-        issues.push({
-          code: 'W303_EXPOSE_NOT_RESOLVED',
-          message: `view \`${v.name}\` 的 \`expose\` 路径 \`${path}\` 中顶级包 \`${namespaceChain[0]}\` 在工程内不存在`,
-          location: v.location,
-          severity: 'warning',
-        });
+  // 3) expose 未 resolved
+  //
+  // M19：**权威解析结果由调用方给**（views/scope.ts 是唯一实现）。
+  // 校验器自己那套「顶级包是否存在」的近似判定只作为**没有权威结果时**的兜底 ——
+  // 它看不见别的包，在视图会话里必然误报。
+  const exposeResolution = projectScope?.exposeResolution;
+  if (exposeResolution) {
+    const views = model.views ?? [];
+    for (const u of exposeResolution.unresolved ?? []) {
+      const owner =
+        views.find((v) => v.name === u.viewName) ??
+        (u.viewName ? undefined : views[0]);
+      issues.push({
+        code: 'W303_EXPOSE_NOT_RESOLVED',
+        message: `view \`${owner?.name ?? u.viewName ?? ''}\` 的 \`expose\` 路径 \`${u.path}\` 无法解析${u.reason ? `（${u.reason}）` : ''}`,
+        location: owner?.location,
+        severity: 'warning',
+      });
+    }
+  } else if (projectScope?.packageNames) {
+    // 兜底：只看顶级包是否在**工程内**存在。
+    // 判定集合 = 工程级包清单 ∪ 当前 scope 的包。
+    // ⚠️ 只有拿到工程级清单时才做这个判定 —— 否则「当前 scope 里没有」
+    // 会被误读成「工程内不存在」（视图会话里必然误报）。
+    const knownPackages = new Set<string>(projectScope.packageNames);
+    for (const p of model.packages) knownPackages.add(p.name);
+    for (const v of model.views ?? []) {
+      for (const path of v.reveals ?? []) {
+        const segments = path.split('::').filter(Boolean);
+        if (segments.length === 0) continue;
+        const first = segments[0];
+        // 至少顶级包要存在（递归 `**` 形式只校验命名空间链）
+        const isWildcard = segments[segments.length - 1] === '**';
+        const namespaceChain = isWildcard ? segments : segments.slice(0, -1);
+        if (namespaceChain.length > 0 && !knownPackages.has(namespaceChain[0])) {
+          issues.push({
+            code: 'W303_EXPOSE_NOT_RESOLVED',
+            message: `view \`${v.name}\` 的 \`expose\` 路径 \`${path}\` 中顶级包 \`${namespaceChain[0]}\` 在工程内不存在`,
+            location: v.location,
+            severity: 'warning',
+          });
+        }
       }
     }
   }

@@ -94,18 +94,21 @@ describe('连线语义：五类边各自带对字段', () => {
     const sem = edgeOfKind('transition');
     expect(sem.sourceState).toBe('Off');
     expect(sem.targetState).toBe('On');
-    // 限定名取 collectMembers 收集期拼出的 qname。注意 stateMachine 被解析器
-    // 平铺到了 model 顶层（见 parser 的 flattenNestedMembers），所以走的是
-    // 顶层那条路径 —— qname 就是短名，不带包前缀。这与 stableKey 里
-    // `conn:Ignition::Off->Ignition::On` 的形态一致，两处必须同步。
-    expect(sem.ownerQName).toBe('Ignition');
+    // 限定名 = 状态机在命名空间里的**完整限定名**。
+    //
+    // ⚠️ M19 变更：改造前解析器的 flattenNestedMembers 会把包内的状态机
+    // 从 `package Vehicle { … }` 的 members 里删掉，只留在顶层数组 —— 于是
+    // 限定名退化成短名 `Ignition`（丢了归属包）。M19 保留归属后，限定名
+    // 正确地变成 `Vehicle::Ignition`，与 stableKey 的形态一致。
+    expect(sem.ownerQName).toBe('Vehicle::Ignition');
   });
 
   it('flow：带源/目标动作 + 所属活动', () => {
     const sem = edgeOfKind('flow');
     expect(sem.sourceAction).toBe('Start');
     expect(sem.targetAction).toBe('Stop');
-    expect(sem.ownerQName).toBe('Drive');
+    // 同上：M19 后保留归属包前缀
+    expect(sem.ownerQName).toBe('Vehicle::Drive');
   });
 
   it('trace：带关系词与两端', () => {

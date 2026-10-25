@@ -474,8 +474,12 @@ describe('Parser - View (§7.26)', () => {
     expect(r.ok).toBe(true);
     expect(r.model.stateMachines).toHaveLength(1);
     expect(r.model.stateMachines[0].name).toBe('Order');
-    // 扁平化后不应在 view.members 里重复
-    expect(r.model.views[0].members).toHaveLength(0);
+    // ⚠️ M19：扁平化 = **多一份按 kind 取集合的索引**，**不再**把成员从
+    // `view.members` 里摘走。归属（ownership）保留 → 树面板才能把状态机
+    // 挂回 view 下面（= 树 == 文本层级），限定名也不再丢前缀。
+    expect(r.model.views[0].members).toHaveLength(1);
+    expect((r.model.views[0].members[0] as any).kind).toBe('stateMachine');
+    expect((r.model.views[0].members[0] as any)._hoisted).toBe(true);
   });
 
   it('27. 方言拒绝：`render as <kind>;` 枚举形式已移除（M16 P1）', () => {
@@ -904,8 +908,22 @@ alias FS for FreeStanding;`);
     expect(r.ok).toBe(true);
     const uc = r.model.packages[0].members.find((m) => m.kind === 'useCaseDef') as any;
     expect(uc.body.map((b: any) => b.kind)).toEqual(['partUsage']);
-    // 边界守卫：不能把 `use case defX;` 误吞成 def
-    expect(parse('package P { use case defX; }').ok).toBe(false);
+    // 边界守卫：不能把 `use case defX;` 误吞成 def。
+    //
+    // ⚠️ M19 修正：旧断言是「`use case defX;` 必须解析失败」，那是 `!"def"`
+    //    这个**前缀匹配**守卫的副作用 —— 它把 `defX`（普通标识符）也一起
+    //    拒了，连带 `action defX;` / `interface defX;` / `occurrence defX;`
+    //    全部解析失败。规范里 `def` 是保留字，但 `defX` 不是 ——
+    //    `use case defX;` 是合法的 **usage**（不是 definition）。
+    //    现在统一用 NotDefKeyword（`!("def" !IdentifierChar)`），
+    //    断言改为「不能被当成定义」。
+    const usage = parse('package P { use case defX; }');
+    expect(usage.ok).toBe(true);
+    expect((usage.model.packages[0].members[0] as any).kind).not.toBe('useCaseDef');
+    // 真正的定义形态不受影响
+    const def = parse('package P { use case def X; }');
+    expect(def.ok).toBe(true);
+    expect((def.model.packages[0].members[0] as any).kind).toBe('useCaseDef');
   });
 
   it('60. item usage：包级 / 特化 / body / 嵌套（M17 S7.1）', () => {
@@ -935,9 +953,18 @@ alias FS for FreeStanding;`);
     expect(parse('package P { viewpoint VP { item x : T; } }').ok).toBe(true);
     // PortBodyMember 只收 attribute / port → item usage 不该在那里
     expect(parse('package P { port def Q { item x : T; } }').ok).toBe(false);
-    // `item defX;` 里的 defX 是标识符 —— item usage 规则必须有 WS 才能接住
+    // `item defX;` 里的 defX 是标识符（不是 `def` 关键字）——
+    // ⚠️ M19 修正：旧断言是「必须解析失败」，那是「item usage 必须带类型」
+    //    的副作用。官方第 862 行有 `item marketSurvey;`（**无类型**的
+    //    item usage），所以类型已改成可选 → `item defX;` 现在是合法的
+    //    item **用法**（不是定义）。断言改为「不能被当成 itemDef」。
     const g = parse('package P { item defX; }');
-    expect(g.ok).toBe(false);
+    expect(g.ok).toBe(true);
+    expect((g.model.packages[0].members[0] as any).kind).toBe('itemUsage');
+    // 真正的定义形态不受影响
+    const gd = parse('package P { item def X; }');
+    expect(gd.ok).toBe(true);
+    expect((gd.model.packages[0].members[0] as any).kind).toBe('itemDef');
   });
 
   it('62. reference usage：`:` / `:>` 特化 / 重新声明（M17 S7.2）', () => {
@@ -1066,9 +1093,11 @@ alias FS for FreeStanding;`);
   }
 }`);
     expect(r.ok).toBe(true);
-    // ⚠️ 需求被**提升**到顶层 `model.requirements`（既有行为，成员带 `_hoisted`），
-    //    不留在 `packages[].members` 里 —— 和 stateMachine / activity 同理。
-    expect(r.model.packages[0].members).toHaveLength(0);
+    // ⚠️ M19：需求被**提升**到顶层 `model.requirements`（成员带 `_hoisted`），
+    //    但**归属保留**在 `packages[].members` 里 —— 提升只是多一份索引，
+    //    不代表元素脱离了命名空间（否则树里就挂不回包下面了）。
+    expect(r.model.packages[0].members).toHaveLength(1);
+    expect((r.model.packages[0].members[0] as any).kind).toBe('requirement');
     const req = r.model.requirements[0] as any;
     expect(req.reqId).toBe('REQ-1');
     expect((req.body ?? []).map((m: any) => m.kind)).toEqual([
@@ -1210,6 +1239,21 @@ alias FS for FreeStanding;`);
     const t = both.model.stateMachines[0].transitions[0] as any;
     expect(t.trigger).toBe('keyTurn');
     expect(t.guard).toBe('x > 1');
+  });
+
+  it('74. transition 的官方写法 `then` 与本项目历史写法 `to` 都接受', () => {
+    // 官方（OMG SysML v2 示例 ptc/25-04-31）写的是 `transition A then B;`
+    // （`transition initial then off;`），本项目历史内容用的是 `to`。
+    // **两个都要能解析** —— 官方写法要能读，存量内容也不能因此解析失败。
+    for (const kw of ['then', 'to']) {
+      const r = parse(
+        `package P { state machine S { state A; state B; transition A ${kw} B; } }`,
+      );
+      expect(r.ok, `transition A ${kw} B 解析失败`).toBe(true);
+      const t = r.model.stateMachines[0].transitions[0] as any;
+      expect(t.source).toBe('A');
+      expect(t.target).toBe('B');
+    }
   });
 });
 

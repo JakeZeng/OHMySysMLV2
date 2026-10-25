@@ -17,15 +17,18 @@ import { renameNode as editRename, deleteNode as editDelete, deleteConnection as
 import { modelToFlowLayouted } from '@transform/modelToFlow';
 import { packageApi } from '../services/packageApi';
 import { viewApi } from '../services/viewApi';
+import { viewpointApi } from '../services/viewpointApi';
 import { useLayoutStore, type NodePosition } from './layoutStore';
 import { useCollabStore } from './collabStore';
 import {
   EMPTY_PIPELINE,
   runPipeline as runPipelinePure,
   type PipelineResult,
+  type PipelineValidation,
 } from '../lib/pipeline';
 import { insertSnippetScoped, insertSnippetIntoElement, findNewNodeId, shortNameFromNodeId, kindFromNodeId } from '../lib/textOps';
 import { parse } from '@parser/parser';
+import type { SysMLModel } from '@ast/model';
 import { stableKeyOf, renameStableKey } from '@transform/stableKey';
 import type { Anchor } from '../lib/anchor';
 import type { EdgeAnchors } from '../lib/edgeAnchor';
@@ -34,12 +37,168 @@ import type { ExposedElement } from '../types/exposedElement';
 import type { ConflictDetails, MergeStrategy } from '../lib/collab/types';
 import { ApiError } from '../services/api';
 import { layoutApi, type LayoutEntityKind } from '../services/layoutApi';
+import {
+  buildProjectModel,
+  resolveProjectScope,
+  projectScopeIntoModel,
+  buildHierarchy,
+  buildScopeIndex,
+  resolveExposeAll,
+  resolveExposePath,
+  removeExposeClauses,
+  clausesCovering,
+  type ProjectModel,
+  type SourcePackage,
+  type ScopeIndex,
+} from '@views/index';
+import type { ExposeClause } from '@ast/model';
+import { packagePathOf, propagateRenameToViews } from '../lib/viewRenamePropagation';
+import type { ValidationScope } from '@validator/validator';
 
 /**
  * M17 S4：上一次 parse 成功的图。parse 失败时画布保留它（不清空）。
  * loadPackage/loadView/reset 时复位 —— 不跨实体残留。
  */
 let lastGoodGraph: { nodes: Node[]; edges: Edge[] } | null = null;
+
+/**
+ * M19：拉取工程级命名空间（校验器解析**跨 scope 引用**的依据）。
+ *
+ * SysML v2 的命名空间是工程级的：
+ *   - `view V : BaseView` 的 `BaseView` 是**另一个视图实体**
+ *   - `expose Pkg::Car` 的 `Pkg` 是**另一个包**
+ *
+ * 校验器只拿到当前 scope 的一段文本，看不到这些名字 → 跨 scope 引用会被
+ * 误判成「工程内不存在」（E301 / W303）。
+ *
+ * 三个请求都是 summary（不含正文），很轻。任何一个失败都退化成空清单 ——
+ * 清单缺项只会让校验器**少报**（不敢断言不存在），不会误报。
+ */
+async function loadProjectNamespace(
+  projectId: string,
+): Promise<ValidationScope | null> {
+  try {
+    const [packages, views, viewpoints] = await Promise.all([
+      packageApi.listByProject(projectId).catch(() => []),
+      viewApi.listByProject(projectId).catch(() => []),
+      viewpointApi.listByProject(projectId).catch(() => []),
+    ]);
+    if (packages.length === 0 && views.length === 0 && viewpoints.length === 0) {
+      return null;
+    }
+    return {
+      packageNames: packages.map((p) => p.name),
+      viewNames: views.map((v) => v.name),
+      viewpointNames: viewpoints.map((v) => v.name),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * M19：构造校验用的「工程级作用域」。
+ *
+ * 两部分：
+ *   1. **名字清单**（包 / view / viewpoint）—— 跨 scope 引用能不能解析。
+ *   2. **expose 的权威解析** —— 有项目模型时按 `views/scope.ts` 解析，
+ *      解析结果直接喂给校验器（校验器不再自己实现一遍暴露语义）。
+ */
+function buildValidation(
+  scopeProject: ProjectModel | null,
+  ns: ValidationScope | null,
+): PipelineValidation {
+  const validation: PipelineValidation = { scope: ns ?? undefined };
+
+  if (scopeProject) {
+    validation.resolveExpose = (m: SysMLModel) => {
+      const reveals = m.views?.[0]?.reveals ?? [];
+      if (reveals.length === 0) return { resolved: [], unresolved: [] };
+      const r = resolveProjectScope(scopeProject, reveals);
+      return {
+        resolved: r.qualifiedNames,
+        unresolved: r.unresolved.map((u) => ({
+          path: u.path,
+          reason: u.reason,
+          viewName: m.views?.[0]?.name,
+        })),
+      };
+    };
+  }
+
+  return validation;
+}
+
+/**
+ * M19：拉取视图作用域需要的源包，合成项目级模型。
+ *
+ * 只拉「expose 路径可能命中」的包（路径首段 = 顶层包名，取它及其后代），
+ * 避免每开一个视图就把整个工程的包全下载一遍。
+ *
+ * 失败不致命 —— 拉不到就退化成「只有视图自己的成员」，画布仍可用。
+ */
+async function loadScopeProject(
+  projectId: string,
+  reveals: readonly string[],
+): Promise<{ project: ProjectModel; qualifiedNames: string[] } | null> {
+  if (reveals.length === 0) return null;
+  try {
+    const summaries = await packageApi.listByProject(projectId);
+    if (!summaries?.length) return null;
+
+    // 包路径（DB 层级）
+    const byId = new Map(summaries.map((p) => [p.id, p]));
+    const pathOf = (id: string): string[] => {
+      const chain: string[] = [];
+      const guard = new Set<string>();
+      let cur = byId.get(id);
+      while (cur && !guard.has(cur.id)) {
+        guard.add(cur.id);
+        chain.unshift(cur.name);
+        cur = cur.parentPackageId ? byId.get(cur.parentPackageId) : undefined;
+      }
+      return chain;
+    };
+    const paths = new Map<string, string[]>();
+    for (const p of summaries) paths.set(p.id, pathOf(p.id));
+
+    // expose 路径的首段 = 顶层 DB 包名
+    const roots = new Set<string>();
+    for (const r of reveals) {
+      const first = r.split('::')[0]?.trim();
+      if (first && first !== '*' && first !== '**') roots.add(first);
+    }
+    if (roots.size === 0) return null;
+
+    const wanted = summaries.filter((p) => {
+      const path = paths.get(p.id) ?? [];
+      return path.length > 0 && roots.has(path[0]!);
+    });
+    if (wanted.length === 0) return null;
+
+    const sources: SourcePackage[] = [];
+    await Promise.all(
+      wanted.map(async (p) => {
+        try {
+          const full = await packageApi.get(p.id);
+          sources.push({
+            path: paths.get(p.id) ?? [p.name],
+            content: full.content ?? '',
+          });
+        } catch {
+          /* 单个包拉不到就跳过，不影响其它包 */
+        }
+      }),
+    );
+    if (sources.length === 0) return null;
+
+    const project = buildProjectModel(sources);
+    const scope = resolveProjectScope(project, reveals);
+    return { project, qualifiedNames: scope.qualifiedNames };
+  } catch {
+    return null;
+  }
+}
 
 /** M16 P5/Q10：拖动停止 800ms 后把当前 scope 的布局推到后端 */
 let layoutFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -77,6 +236,29 @@ interface ModelState {
   pipeline: PipelineResult;
   /** 视图专用：后端解析 content 得到的引用元素缓存（非视图会话恒为空） */
   exposedElements: ExposedElement[];
+  /**
+   * M19：视图会话的**项目级模型**（所有源包合成）。
+   *
+   * 视图画布要画出「真的那个元素」，就得拿到源包里那些元素的 AST ——
+   * 后端只给了「限定名 + kind」的引用清单，画不出端口与子结构。
+   * 这里在前端把工程里相关的包拉下来、解析、合成一份项目模型，
+   * 再按视图的 expose 解析出作用域并投影进视图模型。
+   *
+   * 非视图会话恒为 null。
+   */
+  scopeProject: ProjectModel | null;
+  /** M19：视图作用域（expose 解析结果）—— 投影用 */
+  scopeQualifiedNames: string[];
+  /**
+   * M19：工程级作用域（包名 / view 名 / viewpoint 名）。
+   *
+   * 校验器解析**跨 scope 引用**的唯一依据 —— 没有它，`view V : BaseView`
+   * 与 `expose Pkg::Car` 会被误判成「工程内不存在」（E301 / W303）。
+   *
+   * 身份在整个会话内保持稳定（不是每次渲染新建）—— 编辑器把它当
+   * useCallback 依赖，身份漂移会导致每次渲染都重跑一遍校验。
+   */
+  validationScope: ValidationScope | null;
   saving: boolean;
   saved: boolean;
   /** 内容自上次加载/保存后被修改过 */
@@ -145,6 +327,12 @@ interface ModelState {
   // M2 双向同步
   renameNode: (nodeId: string, newName: string) => void;
   deleteNode: (nodeId: string) => void;
+  /**
+   * M19：从视图里移除一个被 expose 的元素。
+   *
+   * 语义 = 撤销本视图的 expose 引用（删掉视图文本里那条子句），**不动源包**。
+   */
+  removeExposedNode: (nodeId: string) => void;
   deleteConnection: (edgeId: string) => void;
   setNodePosition: (nodeId: string, x: number, y: number, attach?: Anchor) => void;
   applyElkLayout: () => Promise<void>;
@@ -210,6 +398,203 @@ function behavioralOwnerName(
   return label || null;
 }
 
+/**
+ * M19：画布上要画的「幽灵盒」清单。
+ *
+ * 已经被**投影**进模型的 exposed 元素不能再画一遍幽灵盒 —— 否则同一个元素
+ * 在画布上出现两次（一个真节点 + 一个空方块）。
+ *
+ * 投影没覆盖到的（后端解析出来、但前端没解析出作用域的）仍然退化成幽灵盒，
+ * 至少让用户知道「这里引用了一个东西」。
+ *
+ * ⚠️ 但「幽灵盒兜底」只在**前端结论不完整**时才开：
+ *   - 有 expose 子句解析不出来（路径找不到 / 源包没拉到）→ 前端不知道全貌，
+ *     保留后端清单做兜底；
+ *   - 全部解析成功 → **前端结论就是权威**（expose 解析只有一处实现），
+ *     不在作用域里的一律不画。否则用户在视图里删掉一条 expose 后，
+ *     后端那份**陈旧**的清单会把它画回成一个幽灵方块 —— 「删了还在」。
+ */
+function exposedForGraph(scope: ViewScope | null): ExposedElement[] {
+  const { exposedElements } = useModelStore.getState();
+  // 压根没解析（没有源包 / 文本还没写完）→ 全量兜底
+  if (!scope) return exposedElements;
+  const resolved = new Set(scope.qualifiedNames);
+  // 有子句没解析出来 → 结论不完整 → 兜底（但排除已解析出的，避免重复）
+  if (scope.unresolved.length > 0) {
+    return exposedElements.filter((e) => !resolved.has(e.qualifiedName));
+  }
+  // 全部解析成功 → 权威
+  return [];
+}
+
+/**
+ * M19：判断画布节点是不是「被 expose 投影进来」的。
+ *
+ * 投影节点带 `data.exposed`（runPipeline 标），它的 AST 位置指向**源包文本** ——
+ * 拿源包的偏移去改视图文本会改错地方，所以所有写回操作都要先问这一句。
+ */
+function isExposedNode(nodes: readonly Node[], nodeId: string): boolean {
+  const node = nodes.find((n) => String(n.id) === nodeId);
+  const exposed = (node?.data as { exposed?: boolean } | undefined)?.exposed;
+  return exposed === true;
+}
+
+/**
+ * M19：把「元素改名」传播到引用它的视图。
+ *
+ * 视图的 expose 路径 = `<DB 包路径>::<元素在包内的路径>`（约定见
+ * views/projection.ts）。所以要把「包内元素改名」翻译成「DB 级限定名改名」
+ * 才能在视图文本里对上一条 expose 子句。
+ *
+ * 传播失败（网络 / 版本冲突）**不打断改名** —— 视图里会留下一条失效引用，
+ * 校验器会明确报出来，比静默吞掉好。
+ */
+async function propagateElementRename(oldQName: string, newQName: string): Promise<void> {
+  const { entityKind, entityId, projectId } = useModelStore.getState();
+  if (entityKind !== 'package' || !entityId || !projectId) return;
+  if (!oldQName || !newQName || oldQName === newQName) return;
+  try {
+    const summaries = await packageApi.listByProject(projectId);
+    const dbPath = packagePathOf(summaries, entityId);
+    const oldPath = [...dbPath, ...oldQName.split('::')].join('::');
+    const newPath = [...dbPath, ...newQName.split('::')].join('::');
+    if (oldPath === newPath) return;
+    await propagateRenameToViews(projectId, new Map([[oldPath, newPath]]));
+  } catch {
+    /* 传播失败不影响本次改名 */
+  }
+}
+
+/**
+ * M19：标出「被 expose 投影进来的元素」。
+ *
+ * ⚠️ **两条路径都要标**（同步 grid 与 ELK 重排）。
+ *
+ * 踩过的坑：只在 runPipeline（同步路径）里标过一次，ELK 落定后
+ * `applyElkLayout` 用 `modelToFlowLayouted` **重建**了整张节点数组 →
+ * `data.exposed` 全丢了。症状是「刚打开视图时表单是只读的，ELK 跑完就变成
+ * 可编辑的」—— 单测（同步路径）绿、e2e（等 ELK 落定）红。
+ * 丢标记的代价不只是少一句提示：属性窗会把「来自源包、只读」的元素当成
+ * 普通元素，用户能改名/改字段，改的却是源包坐标 → 视图里毫无反应。
+ */
+function markExposedNodes(
+  nodes: Node[],
+  scopeQualifiedNames: readonly string[],
+): Node[] {
+  if (scopeQualifiedNames.length === 0) return nodes;
+  return nodes.map((n) => {
+    const key = stableKeyOf(n.data, String(n.id));
+    const colon = key.indexOf(':');
+    if (colon < 0) return n;
+    const qname = key.slice(colon + 1);
+    const hit = scopeQualifiedNames.find((q) => q === qname || qname.startsWith(`${q}::`));
+    if (!hit) return n;
+    return {
+      ...n,
+      data: {
+        ...n.data,
+        exposed: true,
+        sourceQName: hit,
+      },
+    };
+  });
+}
+
+/**
+ * M19：项目模型的**作用域索引**缓存。
+ *
+ * `resolveProjectScope` 每次都会 buildHierarchy + buildScopeIndex —— 那是 O(工程规模)。
+ * 视图会话里每敲一个字都会重跑 pipeline，索引不缓存的话打字会明显卡顿。
+ */
+const scopeIndexCache = new WeakMap<ProjectModel, ScopeIndex>();
+
+/** 取（并缓存）项目模型的作用域索引 */
+function scopeIndexOf(project: ProjectModel): ScopeIndex {
+  const cached = scopeIndexCache.get(project);
+  if (cached) return cached;
+  const idx = buildScopeIndex(buildHierarchy(project.model));
+  scopeIndexCache.set(project, idx);
+  return idx;
+}
+
+/** 视图作用域的解析结果（含逐条 expose 子句） */
+interface ViewScope {
+  /** 命中的限定名（expose 首次出现顺序） */
+  qualifiedNames: string[];
+  /** 未解析的 expose 路径 */
+  unresolved: Array<{ path: string; reason: string }>;
+  /** 逐条 expose 子句（含文本范围） */
+  clauses: ExposeClause[];
+}
+
+/**
+ * M19：按**当前文本**解析视图的 expose 作用域。
+ *
+ * 为什么必须按当前文本：作用域原先只在「打开视图」时算一次。用户在视图里
+ * 增删 expose 子句后，画布的投影不会跟着变 —— 删掉的元素还在画布上，
+ * 新加的元素不出现。这正是需求 2（文本 ↔ 可视化等价）的断点。
+ */
+function resolveViewScope(
+  content: string,
+  project: ProjectModel | null,
+): ViewScope | null {
+  if (!project) return null;
+  let reveals: string[] = [];
+  let clauses: ExposeClause[] = [];
+  try {
+    const model = parse(content).model;
+    const view = model.views?.[0];
+    reveals = view?.reveals ?? [];
+    clauses = view?.revealClauses ?? [];
+  } catch {
+    return null; // 文本还没写完：保留上一次的投影
+  }
+  if (reveals.length === 0) return { qualifiedNames: [], unresolved: [], clauses: [] };
+  const r = resolveExposeAll(scopeIndexOf(project), reveals);
+  return { qualifiedNames: r.qualifiedNames, unresolved: r.unresolved, clauses };
+}
+
+/**
+ * M19：算出当前视图文本的 expose 作用域（保存时随请求送上去）。
+ *
+ * 返回 null = 算不出来（没加载到源包 / 文本里没有 expose）→ 不送这个字段，
+ * 让后端按自己的解析器算（老行为）。
+ */
+function computeScopeForSave(content: string): {
+  resolved: ExposedElement[];
+  unresolved: ExposedElement[];
+} | null {
+  const { scopeProject } = useModelStore.getState();
+  if (!scopeProject) return null;
+  let reveals: string[] = [];
+  try {
+    const model = parse(content).model;
+    reveals = model.views?.[0]?.reveals ?? [];
+  } catch {
+    return null;
+  }
+  if (reveals.length === 0) return { resolved: [], unresolved: [] };
+
+  const scope = resolveProjectScope(scopeProject, reveals);
+  const kindOf = (qname: string): string => {
+    const m = scopeProject.index.get(qname);
+    const kind = (m as { kind?: string } | undefined)?.kind;
+    if (!kind) return '';
+    return kind.charAt(0).toUpperCase() + kind.slice(1);
+  };
+  return {
+    resolved: scope.qualifiedNames.map((q) => ({
+      qualifiedName: q,
+      kind: kindOf(q),
+    })),
+    unresolved: scope.unresolved.map((u) => ({
+      qualifiedName: u.path,
+      kind: '',
+      reason: u.reason,
+    })),
+  };
+}
+
 export const useModelStore = create<ModelState>((set, get) => ({
   entityKind: null,
   entityId: null,
@@ -223,6 +608,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
   version: 1,
   pipeline: EMPTY_PIPELINE,
   exposedElements: [],
+  scopeProject: null,
+  scopeQualifiedNames: [],
+  validationScope: null,
   saving: false,
   saved: false,
   dirty: false,
@@ -281,16 +669,45 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   runPipeline(text) {
+    const { scopeProject } = get();
+    /**
+     * M19：视图会话的 expose 作用域**按当前文本重算**。
+     *
+     * 改造前作用域只在「打开视图」时算一次并存在 state 里 → 用户在视图里增删
+     * expose 子句后，画布投影纹丝不动（删掉的元素还在、新加的不出现）。
+     * 需求 2 要求文本与可视化等价，这一步是前提。
+     */
+    const scope = scopeProject ? resolveViewScope(text, scopeProject) : null;
+    const scopeQualifiedNames = scope?.qualifiedNames ?? [];
+    /**
+     * M19：视图会话把「源模型里被 expose 的元素」投影进视图模型。
+     *
+     * 投影后画布上画的是**真的那个元素**（带端口、带子结构），而不是
+     * 只有名字的幽灵盒；stableKey 用源限定名 → 同一元素在多个视图里身份一致。
+     */
+    const transform =
+      scopeProject && scopeQualifiedNames.length > 0
+        ? (m: SysMLModel) =>
+            projectScopeIntoModel(m, scopeProject, scopeQualifiedNames)
+        : undefined;
+
     const result = runPipelinePure(
       text,
       currentPositions(get().scopeId),
-      get().exposedElements,
+      exposedForGraph(scope),
+      transform,
+      buildValidation(scopeProject, get().validationScope),
     );
 
     // M17 S4：parse 成功 → 缓存图；失败 → 画布保留上一次成功结果（stale 标记）
     if (result.parseErrors.length === 0) {
+      // M19：标出「被 expose 投影进来的元素」—— 它们归属源包，在视图里**只读**
+      // （改名/删除不会写回视图文本，得去源包里改）。属性窗据此提示用户。
+      result.nodes = markExposedNodes(result.nodes, scopeQualifiedNames);
       lastGoodGraph = { nodes: result.nodes, edges: result.edges };
-      set({ pipeline: result, perfMs: result.layoutMs ?? 0 });
+      // M19：作用域按当前文本重算的结果落 state —— 「从视图移除 exposed 元素」
+      // 等操作要靠它知道当前画布上哪些节点是被投影进来的。
+      set({ pipeline: result, perfMs: result.layoutMs ?? 0, scopeQualifiedNames });
       // 异步触发 ELK 自动布局：完成后用 ELK 坐标覆盖 grid 坐标
       void get().applyElkLayout();
     } else {
@@ -304,26 +721,38 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   async applyElkLayout() {
-    const { pipeline, scopeId } = get();
+    const { pipeline, scopeId, content, scopeProject } = get();
     if (pipeline.parseErrors.length > 0) return;
     const t0 = performance.now();
     try {
       // S4：ELK 路径同样要传 exposed —— 漏了幽灵节点会每次布局完消失又回来
-      const laid = await modelToFlowLayouted(pipeline.model, get().exposedElements);
+      // ⚠️ M19：必须用**投影后的**模型（graphModel）—— 用 pipeline.model 会把
+      // 视图里投影进来的源元素漏掉，ELK 排出来的图比同步图少一半节点。
+      //
+      // 幽灵盒清单也要按**当前文本**的作用域算（与同步路径同一套判定）——
+      // 否则同步图里没有幽灵盒、ELK 图里却有，同一个模型两种画法。
+      const scope = scopeProject ? resolveViewScope(content, scopeProject) : null;
+      const laid = await modelToFlowLayouted(
+        pipeline.graphModel ?? pipeline.model,
+        exposedForGraph(scope),
+      );
       const positions = currentPositions(scopeId) ?? {};
       // 用户拖动过的节点保留用户位置，未拖动的采用 ELK 坐标
       //
       // M17：查表用 stableKey，且**不再跳过端口**（带 parentId 的）。
       // 改造前这里对端口直接 return n，配合 pipeline.ts 的同名守卫，端口坐标
       // 每次重排都被打回默认值 —— 这就是「端口位置存不住」的两个来源之一。
-      const merged = laid.nodes.map((n) => {
-        const up = positions[stableKeyOf(n.data, String(n.id))];
-        if (!up) return n;
-        const next: Node = { ...n, position: { x: up.x, y: up.y } };
-        // 同 pipeline：锚点随节点下发，DiagramCanvas 由它反推位置
-        if (up.attach) next.data = { ...n.data, attach: up.attach };
-        return next;
-      });
+      const merged = markExposedNodes(
+        laid.nodes.map((n) => {
+          const up = positions[stableKeyOf(n.data, String(n.id))];
+          if (!up) return n;
+          const next: Node = { ...n, position: { x: up.x, y: up.y } };
+          // 同 pipeline：锚点随节点下发，DiagramCanvas 由它反推位置
+          if (up.attach) next.data = { ...n.data, attach: up.attach };
+          return next;
+        }),
+        get().scopeQualifiedNames,
+      );
       const ms = performance.now() - t0;
       // S4：ELK 后的图同样记入 lastGood
       lastGoodGraph = { nodes: merged, edges: pipeline.edges };
@@ -344,6 +773,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await packageApi.get(packageId);
       useLayoutStore.getState().setProject(rec.projectId);
+      // M19：工程级命名空间（跨 scope 引用的解析依据）。
+      // 三个 summary 请求，很轻；失败退化成 null（校验器少报，不会误报）。
+      const projectNamespace = await loadProjectNamespace(rec.projectId);
       const initialContent = rec.content ?? '';
       set({
         entityKind: 'package',
@@ -357,6 +789,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
         version: rec.version,
         baseVersion: rec.version,
         baseContent: initialContent,
+        // M19：包会话没有视图作用域（投影只属于视图）
+        scopeProject: null,
+        scopeQualifiedNames: [],
+        validationScope: projectNamespace,
         loading: false,
         saved: false,
         dirty: false,
@@ -388,7 +824,27 @@ export const useModelStore = create<ModelState>((set, get) => ({
     try {
       const rec = await viewApi.get(viewId);
       useLayoutStore.getState().setProject(rec.projectId);
+      // M19：工程级命名空间（跨 scope 引用的解析依据）
+      const projectNamespace = await loadProjectNamespace(rec.projectId);
       const initialContent = rec.content ?? '';
+
+      // M19：解析视图的 expose 引用，拉取作用域需要的源包，合成项目级模型。
+      // 后端只给了「限定名 + kind」的引用清单 —— 画不出端口与子结构；
+      // 这里在前端用**同一个** PEG 解析器把源元素解析出来，投影进视图画布。
+      let scopeProject: ProjectModel | null = null;
+      let scopeQualifiedNames: string[] = [];
+      try {
+        const viewModel = parse(initialContent).model;
+        const reveals = viewModel.views?.[0]?.reveals ?? [];
+        const loaded = await loadScopeProject(rec.projectId, reveals);
+        if (loaded) {
+          scopeProject = loaded.project;
+          scopeQualifiedNames = loaded.qualifiedNames;
+        }
+      } catch {
+        /* 视图文本还没写完 / 拉不到源包：退化成「只画视图自己的成员」 */
+      }
+
       set({
         entityKind: 'view',
         entityId: rec.id,
@@ -402,6 +858,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
         baseVersion: rec.version,
         baseContent: initialContent,
         exposedElements: rec.exposedElements ?? [],
+        scopeProject,
+        scopeQualifiedNames,
+        validationScope: projectNamespace,
         loading: false,
         saved: false,
         dirty: false,
@@ -464,6 +923,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
         });
       } else if (entityKind === 'view') {
         const full = await viewApi.get(entityId);
+        // M19：把**前端算好的** expose 作用域一起送上去（权威值）。
+        //
+        // 后端原有一套 Go 正则解析器（逐行扫描包文本），与前端用的 TS PEG
+        // 解析器对同一段文本会给出不同结论 → 树上徽章「⚠ 未解析」与画布上
+        // 明明有元素，自相矛盾。带上这个字段后，解析只在 TS 侧做一次。
+        const scope = computeScopeForSave(content);
         rec = await viewApi.update(entityId, {
           name,
           packageId: full.packageId,
@@ -474,6 +939,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
           metadata: full.metadata,
           version,
           baseContent,
+          ...(scope ? { exposedElements: scope.resolved, exposedElementsUnresolved: scope.unresolved } : {}),
         });
       } else {
         throw new Error('未知实体类型');
@@ -618,6 +1084,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
       version: 1,
       pipeline: EMPTY_PIPELINE,
       exposedElements: [],
+      scopeProject: null,
+      scopeQualifiedNames: [],
+      validationScope: null,
       saving: false,
       saved: false,
       dirty: false,
@@ -635,6 +1104,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   renameNode(nodeId, newName) {
     const { content, pipeline, scopeId } = get();
+    // M19 护栏：被 expose 投影进来的元素**归属源包** —— 在视图里改名既改不到
+    // 源文本（AST 位置指向源包），又会算出一个静默的 no-op。
+    // 直接拒绝，属性窗的「只读」提示才是唯一入口。
+    if (isExposedNode(pipeline.nodes, nodeId)) return;
     const result = editRename(content, pipeline.model, nodeId, newName);
     if (result.text === content) return; // no-op
     // M17：改名要改 stableKey，但**位置不该丢**。改造前是 clearScope(scopeId) ——
@@ -651,14 +1124,62 @@ export const useModelStore = create<ModelState>((set, get) => ({
     }
     set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
+
+    // M19：改名**跨命名空间传播** —— 视图里的 `expose Vehicle::Car;` 按名解析，
+    // 源包里改名后它就指空了（元素从视图里消失 + 多一条校验错误）。
+    // 这里把改名同步到引用它的视图；失败不影响本次改名（校验器会报出失效引用）。
+    const qnameOf = (key: string) => {
+      const colon = key.indexOf(':');
+      return colon >= 0 ? key.slice(colon + 1) : '';
+    };
+    void propagateElementRename(qnameOf(oldKey), qnameOf(newKey));
   },
 
   deleteNode(nodeId) {
     const { content, pipeline } = get();
+    // M19：被 expose 投影进来的元素**归属源包**（§7.26 expose 是引用不是复制）。
+    // 在视图里「删掉它」的正确语义 = **撤销本视图对它的引用**（删掉视图文本里
+    // 那条 expose 子句），而不是去改源包 —— 改源包会把其它引用它的视图一起弄坏。
+    if (isExposedNode(pipeline.nodes, nodeId)) {
+      get().removeExposedNode(nodeId);
+      return;
+    }
     const result = editDelete(content, pipeline.model, nodeId);
     if (result.text === content) return;
     set({ content: result.text, saved: false, dirty: true });
     get().runPipeline(result.text);
+  },
+
+  /**
+   * M19：从视图里移除一个被 expose 的元素（撤销 expose 引用）。
+   *
+   * 走的是「文本是 SSOT」的老路：按解析器给出的偏移删掉那条 expose 子句，
+   * 再重跑 pipeline（作用域按当前文本重算 → 投影里那个元素随之消失）。
+   *
+   * 删哪条子句：官方四种粒度（`P::X` / `P::X::**` / `P::*` / `P::*::**`）
+   * 都可能覆盖同一个元素，所以按「**解析结果包含该元素**」来找，而不是按
+   * 元素名反推路径（`P::**` 里根本没有元素名）。
+   */
+  removeExposedNode(nodeId) {
+    const { content, pipeline, scopeProject, entityKind } = get();
+    if (entityKind !== 'view') return;
+    const node = pipeline.nodes.find((n) => String(n.id) === nodeId);
+    const sourceQName = (node?.data as { sourceQName?: string } | undefined)?.sourceQName;
+    if (!sourceQName) return;
+
+    const clauses = pipeline.model.views?.[0]?.revealClauses ?? [];
+    if (clauses.length === 0) return;
+
+    const idx = scopeProject ? scopeIndexOf(scopeProject) : null;
+    const covering = clausesCovering(clauses, sourceQName, (c) =>
+      idx ? resolveExposePath(idx, c.path).qualifiedNames : [],
+    );
+    if (covering.length === 0) return;
+
+    const res = removeExposeClauses(content, covering, () => true);
+    if (!res.changed) return;
+    set({ content: res.text, saved: false, dirty: true });
+    get().runPipeline(res.text);
   },
 
   deleteConnection(edgeId) {

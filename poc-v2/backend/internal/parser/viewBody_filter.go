@@ -34,12 +34,12 @@ func indexFromPackages(packages []PackageRef) *expr.Index {
 	for _, p := range packages {
 		// 包本身就是 namespace member（model 包 = kind 'package'）
 		elements = append(elements, expr.ElementInfo{
-			Name:         p.Name,
+			Name:          p.Name,
 			QualifiedName: p.Name,
-			Kind:         "package",
-			Specializes:  []string{},
-			Metadata:     []string{},
-			Features:     []expr.FeatureInfo{},
+			Kind:          "package",
+			Specializes:   []string{},
+			Metadata:      []string{},
+			Features:      []expr.FeatureInfo{},
 		})
 		// 包内 def / usage：只做词法扫描（MVP：低频手段；P5+ 接入 Go 解析器）
 		if p.HasContent && p.Content != "" {
@@ -49,16 +49,96 @@ func indexFromPackages(packages []PackageRef) *expr.Index {
 	return expr.NewIndex(elements)
 }
 
-// scanPackageMembers 轻量级包成员扫描——MVP 边界。
-// 仅做行内 `/^\s*(port|part|...) def X/` / `port name : T;` 关键词 + 命中关键字。
-// 完整 AST 解析（P5+ 接入 SysML Go parser 后启用）。
+// scanPackageMembers 轻量级包成员扫描——**legacy 兜底**。
+//
+// ⚠️ M19 定位：expose 作用域的**权威实现是前端 TS PEG 解析器**
+//
+//	（views/scope.ts）。浏览器端保存视图时会把算好的作用域随请求送上来
+//	（exposedElements / exposedElementsUnresolved），后端直接采用。
+//	这个 Go 扫描器只在「客户端没送作用域」时兜底（脚本调用 / 老客户端）。
+//
+//	所以它**不需要**是完整解析器，但**不能**与 TS 侧差太远 ——
+//	两套实现给出不同结论时，树上会出现「⚠ 未解析」徽章，而画布上明明有元素。
+//
+// M19 修复：原来只扫**包文本的顶层行**，于是
+//   - 子包里的元素扫不到（`expose P::Sub::X` 解析不出来）；
+//   - 定义体里的成员扫不到（`expose P::X::y` 同理）。
+//
+// 现在按**花括号深度 + 命名空间栈**跟踪，成员归属到正确的限定名前缀。
 func scanPackageMembers(pkgName, src string, out *[]expr.ElementInfo) {
 	lines := strings.Split(src, "\n")
+	// 命名空间栈：每一项是「成员该挂在哪个限定名前缀下」+「它开启时的花括号深度」。
+	type nsFrame struct {
+		prefix string
+		depth  int
+	}
+	var stack []nsFrame
+	depth := 0
+
+	// 当前成员该用的限定名前缀（栈顶优先，没有则是包本身）
+	currentPrefix := func() string {
+		if len(stack) == 0 {
+			return pkgName
+		}
+		return stack[len(stack)-1].prefix
+	}
+
 	for _, line := range lines {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") {
+			depth += strings.Count(line, "{") - strings.Count(line, "}")
 			continue
 		}
+		// 这一行开头的花括号数（包 / 定义体的 `{` 都在行尾）
+		opensBefore := depth
+
+		// ── 1) 包声明 → 压栈（子包的成员属于子包）──
+		if strings.HasPrefix(t, "package ") {
+			name := strings.TrimPrefix(t, "package ")
+			if i := strings.IndexAny(name, " {:;"); i >= 0 {
+				name = name[:i]
+			}
+			name = strings.TrimSpace(name)
+			if name != "" && strings.Contains(line, "{") {
+				prefix := currentPrefix()
+				// ⚠️ 包文本本身就是 `package <包名> { … }`（DB 里存的是整段文本），
+				//    所以**最外层**的 package 声明就是这个包自己，不能再拼一次名字
+				//    （否则会扫出 `Pkg::Pkg::Vehicle` 这种双前缀）。
+				//    只有**嵌套**的子包才追加一段。
+				if len(stack) > 0 {
+					prefix = prefix + "::" + name
+				}
+				depth = opensBefore + strings.Count(line, "{")
+				stack = append(stack, nsFrame{prefix: prefix, depth: depth})
+				continue
+			}
+		}
+
+		// ── 2) 定义（part def X { … }）→ 压栈，body 成员挂在它下面 ──
+		if name, kind, ok := matchDefinition(t); ok && strings.Contains(line, "{") {
+			prefix := currentPrefix()
+			if prefix != "" {
+				prefix = prefix + "::" + name
+			} else {
+				prefix = name
+			}
+			depth = opensBefore + strings.Count(line, "{")
+			stack = append(stack, nsFrame{prefix: prefix, depth: depth})
+			// 定义本身也是一个元素（part def X 是可 expose 的成员）
+			*out = append(*out, expr.ElementInfo{
+				Name:          name,
+				QualifiedName: prefix,
+				Kind:          kind,
+				Specializes:   []string{},
+				Metadata:      []string{},
+				Features:      []expr.FeatureInfo{},
+			})
+			continue
+		}
+
+		// ── 3) 普通成员行 ──
+		prefix := currentPrefix()
+
 		// def 类（part/port/attribute/item/requirement/constraint/action/state def Name）
 		for _, kw := range []string{"part def", "port def", "attribute def", "item def",
 			"requirement def", "constraint def", "action def", "state def"} {
@@ -71,21 +151,21 @@ func scanPackageMembers(pkgName, src string, out *[]expr.ElementInfo) {
 				if name != "" {
 					kind := capitalize(strings.TrimSuffix(kw, " def")) + "Definition"
 					*out = append(*out, expr.ElementInfo{
-						Name:         name,
-						QualifiedName: pkgName + "::" + name,
-						Kind:         kind,
-						Specializes:  []string{},
-						Metadata:     []string{},
-						Features:     []expr.FeatureInfo{},
+						Name:          name,
+						QualifiedName: joinQName(prefix, name),
+						Kind:          kind,
+						Specializes:   []string{},
+						Metadata:      []string{},
+						Features:      []expr.FeatureInfo{},
 					})
 				}
 				break
 			}
 		}
 		// usage 类（part|port name : T; / attribute name : T;）
-		for _, prefix := range []string{"part ", "port ", "attribute ", "item "} {
-			if strings.HasPrefix(t, prefix) {
-				rest := strings.TrimPrefix(t, prefix)
+		for _, prefix2 := range []string{"part ", "port ", "attribute ", "item "} {
+			if strings.HasPrefix(t, prefix2) {
+				rest := strings.TrimPrefix(t, prefix2)
 				if i := strings.Index(rest, " : "); i > 0 {
 					name := rest[:i]
 					typ := rest[i+3:]
@@ -97,24 +177,59 @@ func scanPackageMembers(pkgName, src string, out *[]expr.ElementInfo) {
 					name = strings.TrimSpace(name)
 					if name != "" && typ != "" {
 						usageKind := "Usage"
-						if prefix == "port " {
+						if prefix2 == "port " {
 							usageKind = "PortUsage"
 						}
 						*out = append(*out, expr.ElementInfo{
-							Name:         name,
-							QualifiedName: pkgName + "::" + name,
-							Kind:         capitalize(strings.TrimSuffix(prefix, " ")) + usageKind,
-							TypeRef:      &typ,
-							Specializes:  []string{},
-							Metadata:     []string{},
-							Features:     []expr.FeatureInfo{},
+							Name:          name,
+							QualifiedName: joinQName(prefix, name),
+							Kind:          capitalize(strings.TrimSuffix(prefix2, " ")) + usageKind,
+							TypeRef:       &typ,
+							Specializes:   []string{},
+							Metadata:      []string{},
+							Features:      []expr.FeatureInfo{},
 						})
 					}
 				}
 				break
 			}
 		}
+
+		// ── 4) 收尾：更新花括号深度，弹出已经闭合的命名空间 ──
+		depth += strings.Count(line, "{") - strings.Count(line, "}")
+		for len(stack) > 0 && depth < stack[len(stack)-1].depth {
+			stack = stack[:len(stack)-1]
+		}
 	}
+}
+
+// joinQName 拼接限定名（前缀为空时只返回名字）。
+func joinQName(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	return prefix + "::" + name
+}
+
+// matchDefinition 识别 `part def X` / `port def X` 这类定义行。
+// 返回 (名字, kind, 是否是定义)。
+func matchDefinition(t string) (string, string, bool) {
+	for _, kw := range []string{"part def", "port def", "attribute def", "item def",
+		"requirement def", "constraint def", "action def", "state def"} {
+		if !strings.HasPrefix(t, kw+" ") {
+			continue
+		}
+		name := strings.TrimPrefix(t, kw+" ")
+		if i := strings.IndexAny(name, " {:;("); i >= 0 {
+			name = name[:i]
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", "", false
+		}
+		return name, capitalize(strings.TrimSuffix(kw, " def")) + "Definition", true
+	}
+	return "", "", false
 }
 
 func capitalize(s string) string {
@@ -129,10 +244,10 @@ func capitalize(s string) string {
 // 实现策略：
 //   - 用 packages/* 对全部工程包构建 expr.Index
 //   - 对每个 ParsedViewBody.ExposedElements（resolved 列表）：
-//       * `P::X::**`  → 展开 X 与其后裔；filter 求值
-//       * `P::*::**`  → 展开 P 与其后代嵌套；filter 求值
-//       * `P::*`      → 同上但不递归
-//       * `P::X`      → 单元素 X
+//   - `P::X::**`  → 展开 X 与其后裔；filter 求值
+//   - `P::*::**`  → 展开 P 与其后代嵌套；filter 求值
+//   - `P::*`      → 同上但不递归
+//   - `P::X`      → 单元素 X
 //     unresolved → 不 apply（移交给 getExposedElementsUnresolved）
 //   - filter 求值失败的项保留并标记 reason
 //   - 去重（同一元素被多 expose 引用时只算一次）

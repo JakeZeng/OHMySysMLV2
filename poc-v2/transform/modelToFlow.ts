@@ -158,13 +158,33 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     collectMembers(vp, partDefs, portDefs, structureDefs, partUsages, referenceUsages, connections, stateMachines, activities, requirements, constraintBlocks, allocations);
   }
   // 顶层平铺集合（模型根上的元素）：限定名就是短名。
-  // 注意 connection/stateMachine 等在 model 顶层与包内会重复收集，
-  // 这是**既有行为**（stableKey 的 #n 消歧正好能兜住同名重复）。
+  //
+  // ⚠️ M19：这里会与上面 `collectMembers` 的结果**重复**——因为解析器的
+  // `flattenNestedMembers` 现在**保留**了包内成员的归属（不再把它们从
+  // `pkg.members` 里删掉），所以「包内的状态机」既出现在
+  // `collectMembers(pkg)` 的结果里，也出现在 `model.stateMachines` 里。
+  //
+  // 重复不是「两份真相」，而是**同一元素的两个索引视图**。统一由
+  // `dedupeById` 收敛：按 AST id 去重，保留**限定名更完整**的那一份
+  // （`P::SM` 优于 `SM`）—— 这样 stableKey 拿到的也是正确的限定名。
   connections.push(...model.connections.map((c) => ({ node: c, qname: c.name || '' })));
   stateMachines.push(...model.stateMachines.map((m) => ({ node: m, qname: m.name || '' })));
   activities.push(...model.activities.map((a) => ({ node: a, qname: a.name || '' })));
   requirements.push(...model.requirements.map((r) => ({ node: r, qname: r.name || '' })));
   constraintBlocks.push(...model.constraintBlocks.map((c) => ({ node: c, qname: c.name || '' })));
+
+  // M19：按 AST id 收敛重复项（保留限定名更完整的一份）
+  dedupeById(partDefs);
+  dedupeById(portDefs);
+  dedupeById(structureDefs);
+  dedupeById(partUsages);
+  dedupeById(referenceUsages);
+  dedupeById(connections);
+  dedupeById(stateMachines);
+  dedupeById(activities);
+  dedupeById(requirements);
+  dedupeById(constraintBlocks);
+  dedupeById(allocations);
 
   // M17：稳定键分配器，一次 pipeline 重建一张图的键
   const keys = new StableKeys();
@@ -853,6 +873,42 @@ function makeAllocationEdge(
 }
 
 // ─── 收集 ──────────────────────────────────────────────────────────────
+
+/**
+ * M19：按 AST id 去重收集桶，保留**限定名更完整**的那一份。
+ *
+ * 背景见 buildGraph 里的说明：解析器现在保留包内成员的归属，于是同一个
+ * 元素会经由「命名空间递归」与「顶层平铺索引」两条路径各进桶一次。
+ *
+ * 判据：限定名越长（`::` 段数越多）越完整 —— `P::SM` 优于 `SM`。
+ * 同长度时保留先到的那一份（`collectMembers` 先跑，带的是命名空间路径）。
+ *
+ * 没有 id 的元素（理论上不存在：解析器给每个节点都分配了 id）保持原样，
+ * 不做去重 —— 宁可多画一个节点，也不要静默吞掉用户的元素。
+ */
+function dedupeById<T extends { id?: string }>(bucket: Q<T>[]): void {
+  const best = new Map<string, number>();
+  for (let i = 0; i < bucket.length; i++) {
+    const { node, qname } = bucket[i]!;
+    const id = node?.id;
+    if (!id) continue;
+    const prev = best.get(id);
+    if (prev === undefined) {
+      best.set(id, i);
+      continue;
+    }
+    const prevQ = bucket[prev]!.qname;
+    if (qname.length > prevQ.length) best.set(id, i);
+  }
+  if (best.size === bucket.length) return; // 无重复
+  const keep = new Set(best.values());
+  const out: Q<T>[] = [];
+  for (let i = 0; i < bucket.length; i++) {
+    if (keep.has(i)) out.push(bucket[i]!);
+  }
+  bucket.length = 0;
+  bucket.push(...out);
+}
 
 /**
  * 递归收集 namespace 内的可渲染成员。

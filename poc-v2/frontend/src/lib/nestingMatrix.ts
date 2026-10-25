@@ -55,6 +55,20 @@ export const CONTAINER_LABEL: Readonly<Record<ContainerKind, string>> = {
 
 const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
   // 实证：package / viewDef / viewpoint 当前接受集相同
+  //
+  // ⚠️ `state` / `activityAction`（`action x;`）在**命名空间层**是合法的
+  //    usage —— OMG 官方参考模型里就有：
+  //      · `state failureModes[*] nonunique;` 直接写在 package 里
+  //        （ptc/25-04-31 第 456 行，package KeyWord_MetadataDefinitions）
+  //      · `action generateTorque;` 写在 part 的体里
+  //        （ptc/25-04-31 第 490 行）
+  //    SysML v2 的 Usage 可以被 Package / Definition 拥有，所以这两类元素
+  //    **在包、视图、视角、零件定义里都放得下**。
+  //
+  // ⚠️ 但 `initial state` / `final state`（本项目自造的状态机扩展，官方
+  //    SysML v2 根本没有 InitialState / FinalState 这两个元素）**只属于
+  //    状态机** —— 语法上已经把它们限定在状态机体里（StateDef），
+  //    所以这一行不放它们。
   package: [
     'partDef',
     'portDef',
@@ -77,6 +91,8 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'analysisCaseDef',
     'verificationCaseDef',
     'enumDef',
+    'state',
+    'activityAction',
   ],
   viewDef: [
     'partDef',
@@ -100,6 +116,8 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'analysisCaseDef',
     'verificationCaseDef',
     'enumDef',
+    'state',
+    'activityAction',
   ],
   viewpoint: [
     'partDef',
@@ -123,6 +141,8 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     'analysisCaseDef',
     'verificationCaseDef',
     'enumDef',
+    'state',
+    'activityAction',
   ],
   // M17 S5a/S5c：PartBodyMember 接受嵌套 def（PartDef / PortDef / ItemDef /
   // OccurrenceDef / ConnectionDef / AttributeDef / InterfaceDef /
@@ -150,6 +170,11 @@ const MATRIX_DATA: Readonly<Record<ContainerKind, readonly PaletteKind[]>> = {
     // M17.S9：RequirementDef 也进了 PartBodyMember（需求可内联嵌套）
     'requirementDef',
     'enumDef',
+    // 官方 §7.11：动作 / 流 / 状态都是 usage，可以内联在零件定义里
+    // （`action generateTorque;` 见 ptc/25-04-31 第 490 行）
+    'activityAction',
+    'activityFlow',
+    'state',
   ],
   portDef: ['portUsage', 'attributeUsage'],
   // 状态机成员是 state / initial state / final state / transition（usage 形态）；
@@ -256,10 +281,14 @@ export function unsupportedReason(
 ): string | undefined {
   if (ALLOWED_SETS[container].has(kind)) return undefined;
 
-  // 状态机家族：语法支持但只能在状态机内使用
+  // 状态机家族：**只有状态机内**才放得下的那几种
+  // （`initial state` / `final state` 是本项目自造的状态机扩展，
+  //   `transition` 是状态机成员 —— 语法上都不在命名空间层）
+  //
+  // ⚠️ 普通 `state` 不在此列：它是合法的 StateUsage，命名空间层也放得下
+  //    （官方 ptc/25-04-31 第 456 行就有包级 `state failureModes[*];`）。
   if (
-    (kind === 'state' ||
-      kind === 'initialState' ||
+    (kind === 'initialState' ||
       kind === 'finalState' ||
       kind === 'transition') &&
     container !== 'stateMachine'

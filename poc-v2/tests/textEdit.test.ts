@@ -406,3 +406,63 @@ describe('Text Edit - 元素级 rename/delete', () => {
     expect(r2.errors).toEqual([]);
   });
 });
+
+/**
+ * M19 需求②剩余一条：视图里 **owned 元素**的编辑要回写**视图文本**。
+ *
+ * 视图会话里画布上的元素有两类，写回通道完全不同：
+ *   - exposed：从源包投影来的 → 只读（归属源包）
+ *   - owned：直接写在视图体里的 → 可写（归属视图）
+ *
+ * 本文件钉的是 **transform 层**（文本 ↔ AST 的往返），
+ * store 层的接线见 frontend/src/stores/modelStore.viewScope.test.ts。
+ */
+describe('Text Edit - 视图里的 owned 元素（M19 需求②）', () => {
+  /** 视图文本：owned 元素 + exposed 引用混在一行里（最容易被误删的形态）。 */
+  const VIEW_SRC = 'view V { expose Vehicle::Car; part def LocalWidget; }';
+
+  function ownedId(model: any): string {
+    const view = model.views?.[0];
+    const m = view?.members?.find((x: any) => x.name === 'LocalWidget');
+    if (!m) throw new Error('owned 元素没被解析进 view.members');
+    return `pd:${m.id}`;
+  }
+
+  it('视图里的 owned 元素能被改名（且只改这一处）', () => {
+    const r = parse(VIEW_SRC);
+    expect(r.ok).toBe(true);
+    const res = renameNode(VIEW_SRC, r.model, ownedId(r.model), 'RenamedWidget');
+    expect(res.text).toContain('part def RenamedWidget;');
+    expect(res.text).not.toContain('LocalWidget');
+    // expose 子句不受影响
+    expect(res.text).toContain('expose Vehicle::Car;');
+    expect(parse(res.text).ok).toBe(true);
+  });
+
+  it('视图里的 owned 元素能被删除（同行的 expose 子句必须保住）', () => {
+    const r = parse(VIEW_SRC);
+    expect(r.ok).toBe(true);
+    const res = deleteNode(VIEW_SRC, r.model, ownedId(r.model));
+    expect(res.text).not.toContain('LocalWidget');
+    // ⚠️ 回归点：原来「无体声明按整行删」→ 整行被抹掉，expose 一起没了
+    expect(res.text).toContain('expose Vehicle::Car;');
+    expect(res.text).toContain('view V');
+    expect(parse(res.text).ok).toBe(true);
+  });
+
+  it('多行视图里删除 owned 元素不影响其它行', () => {
+    const src = `view V {
+  expose Vehicle::Car;
+  part def LocalWidget;
+  part def Another;
+}`;
+    const r = parse(src);
+    expect(r.ok).toBe(true);
+    const id = `pd:${r.model.views[0].members.find((m: any) => m.name === 'LocalWidget').id}`;
+    const res = deleteNode(src, r.model, id);
+    expect(res.text).not.toContain('LocalWidget');
+    expect(res.text).toContain('part def Another;');
+    expect(res.text).toContain('expose Vehicle::Car;');
+    expect(parse(res.text).ok).toBe(true);
+  });
+});

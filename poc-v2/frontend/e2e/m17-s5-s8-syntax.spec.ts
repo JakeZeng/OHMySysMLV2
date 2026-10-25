@@ -349,11 +349,22 @@ test.describe('M17 调色板拖入容器', () => {
     const { projectId, packageId } = await seedPackage(request, auth, `package P1 {\n  part def B;\n}`);
     await openCanvas(page, projectId, packageId);
 
-    // `state` 只能放进 stateMachine（nestingMatrix 的 stateMachine 行），
-    // 放进 partDef 属于「语法支持但不能放入当前容器」→ 应被矩阵拒绝。
+    // ⚠️ 这里拖的是 **transition**（不是 `state`）：
+    //
+    // M19 需求①按 OMG 官方参考模型核对过 —— `state`（StateUsage）是**合法
+    // 的 usage**，命名空间层放得下（官方 ptc/25-04-31 第 456 行就有包级的
+    // `state failureModes[*] nonunique;`）；SysML v2 的 Usage 可以被
+    // Package / Definition 拥有 → `part def B { state s; }` 同样合法。
+    // 所以「state 拖进 part def 被矩阵拒绝」这条旧断言**已经不成立**
+    // （矩阵放行是符合规范的，放行之后才会撞上「目标 def 没有 body」这道
+    //   另一道守卫，报的是「嵌套失败」而不是矩阵原因）。
+    //
+    // 仍然被矩阵拒绝的是**状态机专属成员**：`transition`（以及本项目自造的
+    // `initial state` / `final state`）—— 它们只在 state machine 里合法。
+    //
     // 选拒绝路径而不是放行路径：放行路径的插入结果已由 textOps 单测覆盖，
     // 而**矩阵判定发生在画布 onDrop 之后**这一步，正是 e2e 独有的价值。
-    const source = page.locator('[data-testid="palette-item-state"]');
+    const source = page.locator('[data-testid="palette-item-transition"]');
     await expect(source).toBeVisible({ timeout: 15_000 });
 
     // HTML5 drag&drop：显式构造真实 DataTransfer 并按序派发四个事件。
@@ -364,7 +375,7 @@ test.describe('M17 调色板拖入容器', () => {
     // ⚠️ kind 直接 setData，不依赖 React 的 onDragStart —— 合成（非 trusted）
     //    事件下它不保证触发，getData 会返回空串，handleDrop 直接 return。
     const dispatched = await page.evaluate(() => {
-      const src = document.querySelector('[data-testid="palette-item-state"]');
+      const src = document.querySelector('[data-testid="palette-item-transition"]');
       const node = document.querySelector('.react-flow__node[data-id^="pd:"]');
       if (!src || !node) return 'missing element';
       const dt = new DataTransfer();
@@ -378,7 +389,7 @@ test.describe('M17 调色板拖入容器', () => {
           new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, ...at }),
         );
       fire(src, 'dragstart');
-      dt.setData('application/x-sysml-palette', 'state');
+      dt.setData('application/x-sysml-palette', 'transition');
       dt.effectAllowed = 'copy';
       fire(node, 'dragover');
       fire(node, 'drop');
@@ -387,7 +398,7 @@ test.describe('M17 调色板拖入容器', () => {
     });
     expect(dispatched, `拖放事件没派发出去：${dispatched}`).toBe('ok');
 
-    // 矩阵拒绝 → toast 提示「不能放入零件定义」
+    // 矩阵拒绝 → toast 提示「需在状态机内使用…」
     const toast = page.locator('.toast-root');
     await expect(toast.first()).toBeVisible({ timeout: 10_000 });
     const toastText = await toast.first().innerText();
@@ -395,7 +406,7 @@ test.describe('M17 调色板拖入容器', () => {
 
     // 文本必须没被改动
     const content = await saveAndReadContent(page, request, auth, packageId);
-    expect(content, '被拒绝的元素不该插进模型').not.toMatch(/\bstate\s+\w+\s*;/);
+    expect(content, '被拒绝的元素不该插进模型').not.toMatch(/\btransition\b/);
   });
 
   test('P3. allocation 已移出调色板（原本会生成非法语法）', async ({ page, request }) => {

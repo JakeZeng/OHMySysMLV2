@@ -278,6 +278,22 @@ describe('insertSnippetIntoElement', () => {
     expect(r.content).toBe(c);
   });
 
+  it('插入后**保留闭合括号的缩进**（不被裁到行首）', () => {
+    // 改造前：插入点前的尾随空白被整段裁掉，闭合 `}` 前的缩进一起没了 ——
+    // 用户的文本被改成 `…\n}`（实测在状态机里插 transition 时看到）。
+    const c = 'package SMModel {\n  state machine SM {\n    state Off;\n    state On;\n  }\n}\n';
+    const r = insertSnippetIntoElement(c, 'SM', 'transition Off to On;');
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain('    transition Off to On;\n  }\n}');
+  });
+
+  it('插入后闭合括号仍在行首（原文没缩进就不加）', () => {
+    const c = 'package P {\npart def X {\n}\n}\n';
+    const r = insertSnippetIntoElement(c, 'X', 'part def Child;');
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain('part def Child;\n}');
+  });
+
   it('def 后跟 `;` 单行定义 → 无 body 不能嵌套', () => {
     const c = 'package P {\n  part def Inline;\n}\n';
     const r = insertSnippetIntoElement(c, 'Inline', 'part def Child;');

@@ -25,6 +25,8 @@ import type { TreeNode } from '../../lib/tree';
 const ELEMENT_KIND_META: Record<string, { icon: string; color: string }> = {
   partDef: { icon: '🧱', color: 'text-blue-600 dark:text-blue-300' },
   partUsage: { icon: '🔌', color: 'text-orange-600 dark:text-orange-300' },
+  itemUsage: { icon: '🔌', color: 'text-orange-600 dark:text-orange-300' },
+  referenceUsage: { icon: '🔗', color: 'text-orange-600 dark:text-orange-300' },
   portDef: { icon: '🔘', color: 'text-cyan-600 dark:text-cyan-300' },
   portUsage: { icon: '🔘', color: 'text-cyan-600 dark:text-cyan-300' },
   attributeUsage: { icon: '📐', color: 'text-slate-500 dark:text-slate-300' },
@@ -34,6 +36,65 @@ const ELEMENT_KIND_META: Record<string, { icon: string; color: string }> = {
   actionUsage: { icon: '⚡', color: 'text-violet-600 dark:text-violet-300' },
   requirement: { icon: '📋', color: 'text-amber-600 dark:text-amber-300' },
   constraint: { icon: '⛔', color: 'text-amber-700 dark:text-amber-300' },
+  // M19：状态机 / 活动 / 约束块 / 视图等原先整类掉出树外，现在按文本层级上树
+  stateMachine: { icon: '🔀', color: 'text-violet-600 dark:text-violet-300' },
+  activity: { icon: '🏃', color: 'text-violet-600 dark:text-violet-300' },
+  constraintBlock: { icon: '⛔', color: 'text-amber-700 dark:text-amber-300' },
+  constraintParam: { icon: '📐', color: 'text-amber-700 dark:text-amber-300' },
+  enumDef: { icon: '🔢', color: 'text-teal-600 dark:text-teal-300' },
+  enumValue: { icon: '•', color: 'text-teal-600 dark:text-teal-300' },
+  // 文本里写的 view / viewpoint（区别于后端实体节点）—— 加「local」角标提示
+  view: { icon: '👁', color: 'text-brand-600 dark:text-brand-400' },
+  viewpoint: { icon: '🧭', color: 'text-indigo-600 dark:text-indigo-300' },
+  // 命名空间 / 分组
+  package: { icon: '📦', color: 'text-amber-600 dark:text-amber-400' },
+  implicitRoot: { icon: '🌐', color: 'text-gray-500 dark:text-gray-400' },
+  // ── M19 需求①：官方参考模型补齐的那批 kind ──
+  // 之前这些 kind 在树上没有图标（`ELEMENT_KIND_META[...] ?? null` → 退化成
+  // 无图标的纯文字行），用户看到「一个没图标的行」分不清是什么东西。
+  // 补齐后，官方新增的用法/定义在树里都有稳定的视觉标识。
+  actionDef: { icon: '⚡', color: 'text-violet-600 dark:text-violet-300' },
+  sendActionUsage: { icon: '📤', color: 'text-violet-600 dark:text-violet-300' },
+  acceptActionUsage: { icon: '📥', color: 'text-violet-600 dark:text-violet-300' },
+  performUsage: { icon: '🎭', color: 'text-violet-600 dark:text-violet-300' },
+  eventOccurrence: { icon: '📣', color: 'text-violet-600 dark:text-violet-300' },
+  messageUsage: { icon: '✉️', color: 'text-violet-600 dark:text-violet-300' },
+  joinUsage: { icon: '🔗', color: 'text-violet-600 dark:text-violet-300' },
+  forkUsage: { icon: '🌿', color: 'text-violet-600 dark:text-violet-300' },
+  successionAsUsage: { icon: '⏭️', color: 'text-violet-600 dark:text-violet-300' },
+  controlFlow: { icon: '🔀', color: 'text-violet-600 dark:text-violet-300' },
+  // 分析 / 验证 / 计算
+  analysisUsage: { icon: '📊', color: 'text-sky-600 dark:text-sky-300' },
+  analysisDef: { icon: '📊', color: 'text-sky-600 dark:text-sky-300' },
+  verificationUsage: { icon: '✅', color: 'text-sky-600 dark:text-sky-300' },
+  verificationDef: { icon: '✅', color: 'text-sky-600 dark:text-sky-300' },
+  objective: { icon: '🎯', color: 'text-sky-600 dark:text-sky-300' },
+  verify: { icon: '🔍', color: 'text-sky-600 dark:text-sky-300' },
+  calcUsage: { icon: '🧮', color: 'text-sky-600 dark:text-sky-300' },
+  calcDefinition: { icon: '🧮', color: 'text-sky-600 dark:text-sky-300' },
+  returnValue: { icon: '↩️', color: 'text-sky-600 dark:text-sky-300' },
+  // 需求 / 追溯 / 依赖
+  requirementUsage: { icon: '📋', color: 'text-amber-600 dark:text-amber-300' },
+  requireStatement: { icon: '📌', color: 'text-amber-600 dark:text-amber-300' },
+  trace: { icon: '🔗', color: 'text-amber-600 dark:text-amber-300' },
+  dependencyUsage: { icon: '🧷', color: 'text-amber-600 dark:text-amber-300' },
+  concernDef: { icon: '⚠️', color: 'text-amber-700 dark:text-amber-300' },
+  assumptionDef: { icon: '💭', color: 'text-amber-700 dark:text-amber-300' },
+  // 元数据 / 变体 / 个体
+  metadataDef: { icon: '🏷', color: 'text-teal-600 dark:text-teal-300' },
+  metadataUsage: { icon: '🏷', color: 'text-teal-600 dark:text-teal-300' },
+  metadataAssignment: { icon: '🔖', color: 'text-teal-600 dark:text-teal-300' },
+  variantDef: { icon: '🧬', color: 'text-teal-600 dark:text-teal-300' },
+  variantUsage: { icon: '🧬', color: 'text-teal-600 dark:text-teal-300' },
+  variantAttributeUsage: { icon: '🧬', color: 'text-teal-600 dark:text-teal-300' },
+  individualUsage: { icon: '🧍', color: 'text-teal-600 dark:text-teal-300' },
+  timesliceUsage: { icon: '⏱', color: 'text-teal-600 dark:text-teal-300' },
+  snapshotDef: { icon: '📸', color: 'text-teal-600 dark:text-teal-300' },
+  occurrenceUsage: { icon: '📍', color: 'text-teal-600 dark:text-teal-300' },
+  // 连接 / 分配
+  connectionDef: { icon: '🔗', color: 'text-cyan-600 dark:text-cyan-300' },
+  allocation: { icon: '🔀', color: 'text-cyan-600 dark:text-cyan-300' },
+  allocationUsage: { icon: '🔀', color: 'text-cyan-600 dark:text-cyan-300' },
 };
 
 export interface TreeRowProps {

@@ -146,7 +146,11 @@ describe('nestingMatrix — unsupportedReason', () => {
   });
 
   it('状态机家族在非状态机容器 → 引导先建状态机', () => {
-    expect(unsupportedReason('package', 'state')).toContain('状态机');
+    // ⚠️ 普通 `state` 不属于「只在状态机内」的家族 —— 它是合法的
+    //    StateUsage，命名空间层也放得下（官方 ptc/25-04-31 第 456 行
+    //    就有包级 `state failureModes[*] nonunique;`）。
+    expect(unsupportedReason('package', 'state')).toBeUndefined();
+    expect(unsupportedReason('package', 'initialState')).toContain('状态机');
     expect(unsupportedReason('partDef', 'transition')).toContain('状态机');
   });
 

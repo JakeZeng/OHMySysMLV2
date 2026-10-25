@@ -38,6 +38,7 @@ import type {
   PortUsage,
   SysMLModel,
 } from '../ast/model';
+import { quoteName } from '../ast/naming';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────
 
@@ -171,12 +172,30 @@ function pushNamed(out: EditableDecl[], kind: EditableDecl['kind'], node: any): 
 
 /** namespace members 数组 → out（递归交给调用方的 collect* 处理）。 */
 function collectMembers(members: any[] | undefined, out: EditableDecl[]): void {
-  for (const m of members ?? []) collectFromPackage(m as any, out);
+  for (const m of members ?? []) collectMember(m, out);
 }
 
+/**
+ * M19：视图 / 视角的 **owned 成员**（view-private 元素）也要能被改名 / 删除。
+ *
+ * ⚠️ 这里原来错把成员当**包**递归（`collectFromPackage(m)`）—— 成员是
+ *    **元素**（有 kind / name / body），没有 `.members` 字段 →
+ *    `for (const m of pkg.members)` 直接抛 `pkg.members is not iterable`。
+ *
+ * 症状：需求②「视图内编辑 owned 元素 → 回写视图 content」在视图会话里
+ * 一改名/一删除就整个崩掉（白屏），而在包会话里一切正常 —— 因为包会话
+ * 走的是 `model.packages`，视图会话的元素在 `model.views[].members`。
+ *
+ * 修法：把「处理一个命名空间成员」的逻辑抽成 `collectMember`，
+ * 包成员与视图成员共用它（两者都是 Namespace 成员，结构一致）。
+ */
 function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
-  for (const m of pkg.members) {
-    switch (m.kind) {
+  for (const m of pkg.members ?? []) collectMember(m, out);
+}
+
+/** 单个命名空间成员 → EditableDecl（包成员 / 视图成员共用）。 */
+function collectMember(m: any, out: EditableDecl[]): void {
+  switch (m.kind) {
       case 'partDef':
         out.push({
           kind: 'partDef',
@@ -184,7 +203,7 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
           name: m.name,
           location: m.location,
         });
-        collectBody(m.body, out, pkg.name);
+        collectBody(m.body, out, '');
         break;
       case 'portDef':
         out.push({
@@ -193,7 +212,7 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
           name: m.name,
           location: m.location,
         });
-        collectBody(m.body, out, pkg.name);
+        collectBody(m.body, out, '');
         break;
       case 'partUsage':
         out.push({
@@ -202,7 +221,7 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
           name: m.name,
           location: m.location,
         });
-        collectBody(m.body, out, pkg.name);
+        collectBody(m.body, out, '');
         break;
       case 'portUsage':
         out.push({
@@ -238,7 +257,7 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
       // ── M18：以下几类原本被 switch 漏掉，导致改名 / 删除对它们静默失效 ──
       case 'itemUsage':
         out.push({ kind: 'itemUsage', id: m.id, name: m.name, location: m.location });
-        collectBody(m.body, out, pkg.name);
+        collectBody(m.body, out, '');
         break;
       case 'referenceUsage':
         out.push({
@@ -294,11 +313,10 @@ function collectFromPackage(pkg: Package, out: EditableDecl[]): void {
             name: m.name,
             location: m.location,
           });
-          collectBody(m.body, out, pkg.name);
+          collectBody(m.body, out, '');
         }
         break;
     }
-  }
 }
 
 function collectBody(
@@ -899,29 +917,56 @@ function collectAllConns(pkg: Package, out: Connection[]): void {
 }
 
 /**
- * findBlockRange — 从 startOffset 开始向前找到匹配的 `{...}` 块，返回 [start, end]。
- * 包含闭合 `}` 及其后的换行。
+ * findBlockRange — 返回一个声明语句的完整文本范围 [start, end)。
+ *
+ * ⚠️ M19：这里的「无体声明」分支原来直接**按整行删除**。在包会话里通常没事
+ *    （`part def X;` 独占一行），但在**视图**里一行常常写着好几样东西：
+ *        view V { expose Vehicle::Car; part def LocalWidget; }
+ *    按整行删 → 整个视图连同 expose 子句一起没了（实测 content 直接变成空串）。
+ *
+ * 改成：先定位**语句起点**（向前扫到 `;` / `{` / `}` 之后），再定位**语句终点**
+ * （有体 → 配平括号；无体 → 找 `;`）。这样删掉的正好是那一条声明，
+ * 同行的兄弟声明（expose / 其它成员）不受影响。
  */
 function findBlockRange(text: string, startOffset: number): [number, number] {
-  // 先向前找到 `{`
-  let i = startOffset;
-  while (i < text.length && text[i] !== '{') i++;
-  if (i >= text.length) {
-    // 没有 `{`，按行删除到行尾
-    return findLineRange(text, offsetToLine(text, startOffset));
+  // 1) 语句起点：向前扫到上一个 `;` / `{` / `}`（保留 `part def` 这类关键字）
+  let s = startOffset;
+  while (s > 0) {
+    const c = text[s - 1];
+    if (c === ';' || c === '{' || c === '}') break;
+    s--;
   }
-  // 从 `{` 起数括号深度
-  let depth = 1;
-  i++;
-  while (i < text.length && depth > 0) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') depth--;
+  // 跳过起点与声明之间的空白
+  while (s < startOffset && /[\s]/.test(text[s])) s++;
+
+  // 2) 语句终点：向后找体（`{`）或分号（`;`）
+  let i = startOffset;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '{') {
+      // 从 `{` 起数括号深度
+      let depth = 1;
+      i++;
+      while (i < text.length && depth > 0) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}') depth--;
+        i++;
+      }
+      // i 现在是 `}` 之后的位置
+      // 跳过紧随的换行符
+      while (i < text.length && (text[i] === '\n' || text[i] === '\r')) i++;
+      return [s, i];
+    }
+    if (c === ';') {
+      i++;
+      // 吃掉紧随的换行（保持文件整洁）
+      while (i < text.length && (text[i] === '\n' || text[i] === '\r')) i++;
+      return [s, i];
+    }
     i++;
   }
-  // i 现在是 `}` 之后的位置
-  // 跳过紧随的换行符
-  while (i < text.length && (text[i] === '\n' || text[i] === '\r')) i++;
-  return [startOffset, i];
+  // 没有 `;` 也没有 `{`（残缺文本）→ 退化成按行删
+  return findLineRange(text, offsetToLine(text, startOffset));
 }
 
 /**
@@ -1156,5 +1201,94 @@ export function deleteElementByName(text: string, kind: string, name: string): E
   for (const [s, e] of cascade.filter((r) => !overlapsPrimary(r)).sort((a, b) => b[0] - a[0])) {
     edits.push({ offset: s, length: e - s, replacement: '' });
   }
+  return applyEdits(text, edits);
+}
+
+// ─── 视图 / 视角声明改名（M19）────────────────────────────────────────────
+
+/**
+ * 视图 / 视角的声明行。
+ *
+ * 官方形态（§7.26 / §8.2.2.26）：
+ *   `view def Name { … }`      —— ViewDefinition
+ *   `view Name : Def { … }`    —— ViewUsage（引用一个 ViewDefinition）
+ *   `view Name { … }`          —— ViewUsage 简写
+ *   `viewpoint def Name { … }` / `viewpoint Name { … }`
+ *
+ * 名字可能是裸标识符，也可能带引号（`'Part Structure View'`）。
+ */
+const VIEW_DECL_RE =
+  /^([ \t]*)(view|viewpoint)([ \t]+)(def([ \t]+))?([A-Za-z_][A-Za-z0-9_]*|'[^']*')/;
+
+/**
+ * 改名：把视图 / 视角的**声明**改名，并同步它被引用的地方。
+ *
+ * ## 为什么必须有这个函数
+ *
+ * 视图的名字原本有**两处真相**：后端 `views.name` 字段 + 视图文本里的声明。
+ * 树面板显示前者，画布 / 导出用后者 —— 改一个不改另一个，用户就会看到
+ * 「树上叫 A、文本里叫 B」，而 `expose` 路径 / `view X : Def` 引用全按文本里的
+ * 名字解析 → 引用悄悄失效。
+ *
+ * 同步范围：
+ *   - 声明本身（`view def Old` / `view Old` / `viewpoint def Old` / `viewpoint Old`）
+ *   - 别的视图对它的引用：`view Usage : Old`（ViewUsage → ViewDefinition）
+ *   - 视角引用：`satisfy Old;`
+ */
+export function renameViewDeclInText(
+  text: string,
+  oldName: string,
+  newName: string,
+): EditResult {
+  if (!oldName || !newName) return { text, edits: [] };
+  const edits: TextEdit[] = [];
+  /** 已被声明改名覆盖的名字 token 区间 —— 引用同步要跳过它们（否则改两遍） */
+  const declSpans: Array<[number, number]> = [];
+  const lines = text.split('\n');
+  let offset = 0;
+
+  for (const line of lines) {
+    const m = VIEW_DECL_RE.exec(line);
+    if (m) {
+      const decl = m[6]!;
+      const bare = decl.startsWith("'") ? decl.slice(1, -1) : decl;
+      if (bare === oldName) {
+        // 名字 token 的绝对偏移：行首 + 前缀长度
+        // （m[4] = 可选的 `def ` 整段；m[5] = 其中紧随 def 的空白）
+        const prefixLen =
+          m[1]!.length + m[2]!.length + m[3]!.length + (m[4]?.length ?? 0);
+        const start = offset + prefixLen;
+        declSpans.push([start, start + decl.length]);
+        edits.push({
+          offset: start,
+          length: decl.length,
+          replacement: quoteName(newName),
+        });
+      }
+    }
+    offset += line.length + 1; // +1 = '\n'
+  }
+
+  // 引用同步：`view Usage : Old`（ViewUsage 指向 ViewDefinition）
+  //          `satisfy Old;`（视图满足某个 Viewpoint）
+  const refRe = new RegExp(
+    `(:\\s*)${escapeRegex(oldName)}\\b|(\\bsatisfy\\s+)${escapeRegex(oldName)}\\b`,
+    'g',
+  );
+  let rm: RegExpExecArray | null;
+  while ((rm = refRe.exec(text)) !== null) {
+    const group = rm[1] ?? rm[2] ?? '';
+    const nameStart = rm.index + group.length;
+    const nameEnd = nameStart + oldName.length;
+    // 跳过已被声明改名覆盖的那一处（否则同一个 token 被改两遍）
+    if (declSpans.some(([s, e]) => nameStart >= s && nameEnd <= e)) continue;
+    edits.push({
+      offset: nameStart,
+      length: oldName.length,
+      replacement: quoteName(newName),
+    });
+  }
+
+  if (edits.length === 0) return { text, edits: [] };
   return applyEdits(text, edits);
 }

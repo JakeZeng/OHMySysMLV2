@@ -448,6 +448,12 @@ if (!headerMatch) {
   // 把 closeOffset 前的尾随空白（缩进/换行）裁掉
   let insertAt = closeOffset;
   while (insertAt > i + 1 && /\s/.test(content[insertAt - 1])) insertAt--;
+  // ⚠️ 裁掉的尾部空白里，**最后一行是闭合括号的缩进** —— 一起裁掉的话
+  // `}` 会跑到行首，用户的文本被改得很难看（实测：
+  // `state machine SM { … }` 插完变成 `…\n}`）。
+  // 只保留缩进（不保留多余空行），补回去。
+  const tail = content.slice(insertAt, closeOffset);
+  const closingIndent = tail.slice(tail.lastIndexOf('\n') + 1);
   // 保留一行换行（如果原本是 body 内已有内容结尾）以维持可读性
   const hasTrailingNewline = content[insertAt - 1] === '\n';
   const sep = hasTrailingNewline ? '' : '\n';
@@ -457,6 +463,7 @@ if (!headerMatch) {
     sep +
     indentedSnippet +
     '\n' +
+    closingIndent +
     content.slice(closeOffset);
 
   return { content: result, ok: true };

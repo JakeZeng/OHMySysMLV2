@@ -14,6 +14,7 @@ import { packageApi } from '../services/packageApi';
 import { runPipeline, EMPTY_PIPELINE } from '../lib/pipeline';
 import type { SysMLModel } from '@ast/model';
 import type { ElementNodeInfo } from '../lib/tree';
+import { buildHierarchy, type HierarchyNode } from '@views/index';
 
 interface ElementTreeCacheState {
   /** packageId → 元素节点列表 */
@@ -33,42 +34,26 @@ interface ElementTreeCacheState {
   getCached: (packageId: string) => ElementNodeInfo[] | undefined;
 }
 
-interface MemberLike {
-  id?: string;
-  name?: string;
-  kind?: string;
-  body?: MemberLike[];
-  members?: MemberLike[];
-  isImplicitRoot?: boolean;
-}
-
 /** M16 P2：虚拟「模型根」节点名（Q6=A：AST 不动，只在树显示层分组） */
 export const IMPLICIT_ROOT_LABEL = '<模型根>';
 
 /**
- * 把单个 namespace member 转成元素节点。
- * M16 P2：改为**真递归**——body（def/usage 的 ownership 链）与 members
- * （content 内嵌套 `package {}` 块）都逐层展开。
- * view/viewpoint 成员跳过（它们由后端 View/Viewpoint 实体节点呈现，避免重复）。
+ * M19：层级节点 → 树元素节点。
  *
- * astId：带上 NamespaceMember.id 供属性窗展示/同名消歧用。注意它**不能**跨解析
- * 拿去匹配画布节点 id（解析器 id 计数器全局递增），理由见 lib/treeSelection.ts。
+ * 数据来源是 `poc-v2/views/hierarchy.ts` 的**统一层级**（而不是这里自己
+ * 遍历 AST）。这一层是「树 == 文本层级」的唯一实现点：
+ *   - 嵌套关系来自 AST 的 ownership 链（body / members / states / actions）
+ *   - 同层顺序来自源文本偏移
+ *   - 不再有任何 kind 被静默丢弃
  */
-function toElementInfo(m: MemberLike): ElementNodeInfo | null {
-  const name = m.name;
-  if (!name) return null;
-  if (m.kind === 'view' || m.kind === 'viewpoint') return null;
-  const info: ElementNodeInfo = { name, kind: m.kind ?? '' };
-  if (m.id) info.astId = m.id;
-  const kids = [...(m.body ?? []), ...(m.members ?? [])];
-  if (kids.length > 0) {
-    const children: ElementNodeInfo[] = [];
-    for (const b of kids) {
-      const child = toElementInfo(b);
-      if (child) children.push(child);
-    }
-    if (children.length > 0) info.children = children;
-  }
+function toElementInfo(n: HierarchyNode): ElementNodeInfo | null {
+  if (!n.name) return null;
+  const info: ElementNodeInfo = { name: n.name, kind: n.kind, offset: n.offset };
+  if (n.astId) info.astId = n.astId;
+  const kids = n.children
+    .map((c) => toElementInfo(c))
+    .filter((x): x is ElementNodeInfo => !!x);
+  if (kids.length > 0) info.children = kids;
   return info;
 }
 
@@ -83,6 +68,14 @@ function toElementInfo(m: MemberLike): ElementNodeInfo | null {
  *     实体包节点即命名空间，不再多一层同名文本包）
  *   - content 含多个命名包 / 命名包+裸成员混合 → 命名包成子树（kind 'package')，
  *     裸顶层成员（解析器归入 isImplicitRoot 隐式根包）挂虚拟 `<模型根>` 分组
+ *
+ * M19：**层级与顺序统一由 `poc-v2/views/hierarchy.ts` 提供**。本函数只负责
+ * 「命名空间 → 树」的呈现层分组（单包平铺 / 虚拟模型根），不再自己遍历 AST。
+ * 修掉的三个真问题：
+ *   1. 顶层 state machine / activity / requirement / constraint block 原来
+ *      **整类掉出树外**（只把它们内部的 state/action 平铺成孤儿节点）。
+ *   2. 包内 state machine 的状态原来不挂在状态机下面（state 无父节点）。
+ *   3. 同层顺序不是文本顺序（隐式根成员在前、行为元素追加在末尾）。
  *
  * ⚠️ M18.1：真正干活的是 `extractElementsFromModel`。
  * 编辑器里 modelStore 已经有一份 parse 结果（`pipeline.model`），树直接复用它
@@ -100,75 +93,49 @@ export function extractElements(content: string): ElementNodeInfo[] {
 
 /** 与 `extractElements` 同逻辑，但直接吃 model（避免重复 parse）。 */
 export function extractElementsFromModel(model: SysMLModel): ElementNodeInfo[] {
-  {
-    const bareMembers: MemberLike[] = [];
-    const namedPkgs: MemberLike[] = [];
-    for (const pkg of (model.packages ?? []) as MemberLike[]) {
-      if (pkg.isImplicitRoot) bareMembers.push(...(pkg.members ?? []));
-      else namedPkgs.push(pkg);
-    }
+  const roots = buildHierarchy(model);
 
-    const out: ElementNodeInfo[] = [];
-    const seen = new Set<string>();
-    const pushInfo = (info: ElementNodeInfo | null) => {
-      if (!info || seen.has(info.name)) return;
-      seen.add(info.name);
-      out.push(info);
-    };
+  // 命名包 vs 裸顶层成员
+  const namedPkgs = roots.filter((r) => r.kind === 'package');
+  const bare = roots.filter((r) => r.kind !== 'package');
 
-    // 顶层 stateMachines / activities 的子成员（M10 扁平渲染）——算裸成员
-    const flatBehavior: ElementNodeInfo[] = [];
-    for (const sm of model.stateMachines ?? []) {
-      for (const s of sm.states ?? []) {
-        if (!s.name) continue;
-        flatBehavior.push({
-          name: s.name,
-          kind: s.isInitial ? 'initialState' : s.isFinal ? 'finalState' : 'state',
-        });
-      }
-    }
-    for (const act of model.activities ?? []) {
-      for (const a of act.actions ?? []) {
-        if (a.name) flatBehavior.push({ name: a.name, kind: 'actionUsage' });
-      }
-    }
+  const out: ElementNodeInfo[] = [];
+  const seen = new Set<string>();
+  const pushInfo = (info: ElementNodeInfo | null) => {
+    if (!info || seen.has(info.name)) return;
+    seen.add(info.name);
+    out.push(info);
+  };
 
-    const bareInfos = bareMembers
-      .map((m) => toElementInfo(m))
-      .filter((x): x is ElementNodeInfo => !!x);
-    const hasBare = bareInfos.length > 0 || (namedPkgs.length === 0 && flatBehavior.length > 0);
-
-    if (namedPkgs.length === 1 && !hasBare) {
-      // 单命名包：平铺成员（历史行为）
-      for (const m of namedPkgs[0].members ?? []) pushInfo(toElementInfo(m));
-      for (const f of flatBehavior) pushInfo(f);
-      return out;
-    }
-
-    // 结构化模式：命名包成子树
-    for (const pkg of namedPkgs) {
-      pushInfo({
-        name: pkg.name ?? '',
-        kind: 'package',
-        children: (pkg.members ?? [])
-          .map((m) => toElementInfo(m))
-          .filter((x): x is ElementNodeInfo => !!x),
-      });
-    }
-    // 裸顶层成员 → 虚拟「模型根」（Q6=A：只在有命名包对照时才分组，
-    // 全裸 content 保持平铺，不给最常见场景加噪音层级）
-    const bareAll = [...bareInfos, ...flatBehavior];
-    if (namedPkgs.length > 0 && bareAll.length > 0) {
-      pushInfo({
-        name: IMPLICIT_ROOT_LABEL,
-        kind: 'implicitRoot',
-        children: bareAll,
-      });
-    } else {
-      for (const b of bareAll) pushInfo(b);
-    }
+  // 单命名包：平铺成员（历史行为 —— 实体包节点即命名空间，不再多一层同名文本包）
+  if (namedPkgs.length === 1 && bare.length === 0) {
+    for (const c of namedPkgs[0]!.children) pushInfo(toElementInfo(c));
     return out;
   }
+
+  // 结构化模式：命名包成子树
+  for (const pkg of namedPkgs) pushInfo(toElementInfo(pkg));
+
+  // 裸顶层成员 → 虚拟「模型根」（Q6=A：只在有命名包对照时才分组，
+  // 全裸 content 保持平铺，不给最常见场景加噪音层级）
+  const bareInfos = bare
+    .map((b) => toElementInfo(b))
+    .filter((x): x is ElementNodeInfo => !!x);
+  if (namedPkgs.length > 0 && bareInfos.length > 0) {
+    pushInfo({
+      name: IMPLICIT_ROOT_LABEL,
+      kind: 'implicitRoot',
+      // 虚拟分组的位置 = 它第一个成员的文本位置（M19：树要镜像文本顺序）
+      offset: Math.min(...bareInfos.map((b) => b.offset ?? 0)),
+      children: bareInfos,
+    });
+  } else {
+    for (const b of bareInfos) pushInfo(b);
+  }
+
+  // M19：按文本顺序排（命名包 / 虚拟模型根 / 其它同级节点混排时也保持原文次序）
+  out.sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
+  return out;
 }
 
 export const useElementTreeCacheStore = create<ElementTreeCacheState>(

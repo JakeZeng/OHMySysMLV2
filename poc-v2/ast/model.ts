@@ -68,10 +68,14 @@ export type NamespaceMember =
   | StructureDefinition
   | PartUsage
   | ItemUsage
+  | OccurrenceUsage
   | ReferenceUsage
   | PortUsage
   | AttributeUsage
   | Connection
+  | SuccessionAsUsage
+  | PerformActionUsage
+  | ExhibitStateUsage
   | StateMachine
   | Activity
   | Requirement
@@ -174,6 +178,11 @@ export type PartBodyMember =
   | AttributeUsage
   | PortUsage
   | ItemUsage
+  | OccurrenceUsage
+  | ControlFlow
+  | SuccessionAsUsage
+  | PerformActionUsage
+  | ExhibitStateUsage
   | PartDefinition
   | PortDefinition
   | StructureDefinition
@@ -190,6 +199,8 @@ export interface PartUsage extends SysMLNode {
   name: string;
   typeRef: string;             // 例如 "Car"
   body: PartBodyMember[];
+  /** 官方 §7.5.4：`nonunique` / `unique` 修饰（跟在多重性之后） */
+  isUnique?: boolean;
 }
 
 /** `item sensor : TempSensor;` —— §7.5.6 ItemUsage，PartUsage 的孪生兄弟 */
@@ -200,6 +211,23 @@ export interface ItemUsage extends SysMLNode {
   /** `item x :> Base;` 的特化目标（`:>` 形式） */
   inherits?: string;
   body: PartBodyMember[];
+  /** 官方 §7.5.4：`nonunique` / `unique` 修饰（跟在多重性之后） */
+  isUnique?: boolean;
+}
+
+/**
+ * `occurrence logicalOccurrences [*] nonunique;` —— §7.5.5 OccurrenceUsage。
+ *
+ * 官方里 `occurrence X` 是 **usage**，`occurrence def X` 才是 definition
+ * （见 OMG 官方参考模型 ptc/25-04-31 第 463 / 785 行）。
+ */
+export interface OccurrenceUsage extends SysMLNode {
+  kind: 'occurrenceUsage';
+  name: string;
+  typeRef?: string;            // `occurrence x :> T;`（官方允许省略）
+  body: PartBodyMember[];
+  /** 官方 §7.5.4：`nonunique` / `unique` 修饰 */
+  isUnique?: boolean;
 }
 
 /** `ref sensor :> TempSensor;` —— §7.5.8 ReferenceUsage，不拥有 body */
@@ -226,6 +254,8 @@ export interface AttributeUsage extends SysMLNode {
   name: string;
   typeRef: string;             // 例如 "Real"
   defaultValue?: string;
+  /** 官方 §7.5.4：`nonunique` / `unique` 修饰 */
+  isUnique?: boolean;
 }
 
 // ─── Connection ─────────────────────────────────────────────────────────
@@ -264,6 +294,41 @@ export interface StateDefinition extends SysMLNode {
   name: string;
   isInitial?: boolean;
   isFinal?: boolean;
+  /** 官方 §7.5.4：`nonunique` / `unique` 修饰 */
+  isUnique?: boolean;
+  /** 官方嵌套状态体（`state operatingStates { ... }`） */
+  nested?: {
+    states: StateDefinition[];
+    transitions: Transition[];
+    /** 体内**全部**成员（约束 / ref / entry-do-exit 等）—— 不能只留 state 与 transition */
+    members?: unknown[];
+  };
+}
+
+/** 官方 §7.11 PerformActionUsage —— `perform action providePower;` */
+export interface PerformActionUsage extends SysMLNode {
+  kind: 'performUsage';
+  name: string;
+  /** 被 perform 的动作（限定名原样保留） */
+  target: string;
+  /** `perform X redefines Y;` 的被重定义名 */
+  redefines?: string;
+}
+
+/** 官方 §7.11 ExhibitStateUsage —— `exhibit state vehicleStates parallel { ... }` */
+export interface ExhibitStateUsage extends SysMLNode {
+  kind: 'exhibitStateUsage';
+  name: string;
+  isParallel?: boolean;
+  states: StateDefinition[];
+  transitions: Transition[];
+}
+
+/** 官方状态机体内的 `entry action a;` / `do b;` / `exit c;` */
+export interface BehaviorAction extends SysMLNode {
+  kind: 'behaviorAction';
+  phase: 'entry' | 'do' | 'exit';
+  name: string;
 }
 
 export interface Transition extends SysMLNode {
@@ -272,6 +337,12 @@ export interface Transition extends SysMLNode {
   target: string;
   trigger?: string;
   guard?: string;
+  /** 官方 transition 名（`transition off_To_starting first off … then starting;`） */
+  name?: string;
+  /** `accept X via port` 的 via 端口 */
+  via?: string;
+  /** `do <效果>` 子句 */
+  effect?: string;
 }
 
 // ─── Activity（M5 行为视图）────────────────────────────────────────────
@@ -295,6 +366,21 @@ export interface ControlFlow extends SysMLNode {
   source: string;
   target: string;
   guard?: string;
+  /** 官方 §7.14：`flow of <Type> from a to b;` 的载荷类型 */
+  payloadType?: string;
+  /** 官方 §7.14：`flow <name> from a to b;` 的名字 */
+  name?: string;
+}
+
+/**
+ * `first a.b then c.d;` —— 官方 §7.15 SuccessionAsUsage。
+ *
+ * 出现在 part def body 里，描述两个 occurrence（端点是**带点路径**）之间的先后关系。
+ */
+export interface SuccessionAsUsage extends SysMLNode {
+  kind: 'successionAsUsage';
+  source: string;
+  target: string;
 }
 
 // ─── Requirement（M5 需求视图）─────────────────────────────────────────
@@ -387,6 +473,22 @@ export interface CommentBlock extends SysMLNode {
  * 解析后的整个模型。M5 扩展支持行为视图、需求视图、参数视图。
  */
 /**
+ * M19：一条 expose 子句（§8.2.2.26）。
+ *
+ * `location.endOffset` = 分号之后的位置 —— 删除这一整条子句时用它切片。
+ */
+export interface ExposeClause {
+  /** 完整引用路径：`P::X` / `P::X::**` / `P::*` / `P::*::**` */
+  path: string;
+  /** 官方四种粒度 */
+  form: 'member' | 'memberRecursive' | 'namespace' | 'namespaceRecursive';
+  /** 内联 filter（`[@SysML::PartUsage]`） */
+  inline?: string;
+  /** 子句在源文本中的位置 */
+  location: SourceLocation & { endOffset: number };
+}
+
+/**
  * M15 §7.26：View 是 Namespace —— body 内既有子句（expose/render/filter），
  * 也有 owned 成员（`part def X` 等，qualified name = `V::X`）。
  */
@@ -416,6 +518,15 @@ export interface SysMLView {
    * 官方硬约束：expose 只能出现在 ViewUsage 体内（definition 的 body 无 expose）。
    */
   reveals: string[];
+  /**
+   * M19：expose 子句的**逐条**信息（与 `reveals` 一一对应，顺序相同）。
+   *
+   * 为什么 `reveals` 不够：`reveals` 只有路径字符串，**没有文本位置**。
+   * 「在视图里移除一个被 expose 的元素」必须按偏移删掉那一行 —— 否则就得再写
+   * 一套正则扫描器去文本里找 `expose ...;`，那正是本项目在消灭的「两套解析实现」。
+   * 位置由 PEG 解析器给出（`ExposeStatement` 规则），消费方只按偏移删。
+   */
+  revealClauses?: ExposeClause[];
   /** filter 条件列表，标准形式含算子与取反，如 `not @SysML::ConnectionUsage` */
   filters: string[];
   /** 路由到哪个 renderer */

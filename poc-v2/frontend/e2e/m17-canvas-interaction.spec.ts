@@ -174,11 +174,12 @@ async function gotoVehicleCanvas(page: Page, auth: Auth): Promise<Locator> {
 /**
  * 从 `src` 拖一条连线到 `tgt`，返回是否真的画出了边。
  *
- * ⚠️ **必须从 React Flow 的可见 Handle 起手，不能用边框带。**
- *    state 是容器的**子节点**，子节点上的 `AnchorStrips` 不生效 ——
- *    实测按边框带取点时 `elementFromPoint` 命中的是 className 为空的元素、
- *    连预览线都不出现（preview=0），手势根本没发起；换 `.react-flow__handle.source`
- *    立刻就通（第二次尝试 preview=1、用例通过）。
+ * ⚠️ **必须从边框带（anchor strip）起手，不能用 `.react-flow__handle.source`。**
+ *    节点上那对 handle 是 M17 S5 的 **LEGACY_HANDLE_HIDE**（`opacity: 0` +
+ *    `pointer-events: none`）—— 按它等于按在节点正文上，手势变成**拖节点**，
+ *    画不出连线（实测：节点被拖走了，边数 0）。
+ *    边框带才是正规通道：M17 S5 之后连线一律从边框带发起。
+ *    子节点（state 是状态机的子节点）上的边框带**同样有效**（实测可用）。
  *
  * ⚠️ 也不能从节点中心起手 —— 那是节点拖拽。
  *    终点用「朝向对方的那一边」：ELK 的 layered（direction=RIGHT）会把两个
@@ -214,8 +215,10 @@ async function dragConnect(
   };
   const to = facing(b, ca);
 
-  const srcHandle = src.locator('.react-flow__handle.source').first();
-  const sb = (await srcHandle.boundingBox())!;
+  // 起点：src 节点朝向 tgt 的那条边框带（带宽 8px，取中点）
+  const srcStrip = src.locator('[data-testid="anchor-strip"][data-side="left"]').first();
+  await expect(srcStrip).toBeVisible({ timeout: 10_000 });
+  const sb = (await srcStrip.boundingBox())!;
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
   await page.waitForTimeout(80);
@@ -392,6 +395,12 @@ async function settled(
 test.use({ viewport: { width: 1680, height: 900 } });
 
 test.describe('M17 画布交互', () => {
+  // 这组用例每条都要开画布、等 ELK 布局、做真实手势 —— 实测 12~26s，
+  // 默认 30s 预算在机器稍忙时就超（随机红）。统一放宽，别让预算把真红盖掉。
+  test.beforeEach(() => {
+    test.setTimeout(90_000);
+  });
+
   test('A. 空格 + 左键拖拽平移画布；不按空格时拖空白不产生平移', async ({ page, request }) => {
     const auth = await bootstrap(request, 'm17pan');
     await injectAuth(page, auth);
@@ -630,8 +639,18 @@ test.describe('M17 画布交互', () => {
     const before = await modelPos(node);
     expect(before).toBeTruthy();
     const box = (await node.boundingBox())!;
-    // 上边框内侧 10px：不在 8px 边框带里，也不是任何 Handle（Handle 只在左右中点）
-    const grab = { x: box.x + box.width / 2, y: box.y + 10 };
+    // 取点必须**跟着边框带自己的盒子**走，不能写死屏幕坐标。
+    //
+    // 边框带厚 8 **CSS px**（节点本地坐标），画布会把它按 zoom 放大 —— zoom=2 时
+    // 屏幕上就是 16px 厚。原来写死「上边框内侧 10px（屏幕坐标）」，放大后 10px
+    // 仍然落在带子上：测的就不是「越过带子」，而是「按在带子上」——
+    // 拖拽被带子吃掉是**设计如此**，于是用例红了（zoom 小的场景又绿）。
+    //
+    // 正确写法：从带子的实际下沿再往下 4px，语义与 zoom 无关。
+    const strip = node.locator('[data-testid="anchor-strip"][data-side="top"]').first();
+    await expect(strip).toBeVisible({ timeout: 10_000 });
+    const stripBox = (await strip.boundingBox())!;
+    const grab = { x: box.x + box.width / 2, y: stripBox.y + stripBox.height + 4 };
 
     await page.mouse.move(grab.x, grab.y);
     await page.mouse.down();
@@ -899,6 +918,9 @@ test.describe('M17 画布交互', () => {
   // M17.S9：把「连线手势 → transition 写进状态机 body」这条链接回 e2e。
   // 之前只由 modelStore 单测守着，因为边框带取点在子节点斜向布局下会算错边。
   test('D2. 状态机内画线 → transition 落进状态机 body（不是当前包）', async ({ page, request }) => {
+    // 这条用例比同文件其它用例重得多（建包 → 开画布 → 画线 → 保存 → 回读），
+    // 默认的 30s 预算在机器稍忙时就超（实测 33s）→ 随机红。给它单独放宽。
+    test.setTimeout(90_000);
     const auth = await bootstrap(request, 'm17d2');
     await injectAuth(page, auth);
 
@@ -955,13 +977,22 @@ test.describe('M17 画布交互', () => {
     expect(ids).toContain(eps!.target);
 
     // 保存后回读：transition 必须落在 state machine 的 {} 内部
+    //
+    // ⚠️ 读回必须**轮询**，不能「点保存 + 固定等 2.5s」：保存是异步请求，
+    //    机器忙的时候 2.5s 不够，回读拿到的是**旧内容** → 误判成
+    //    「transition 没写进去」。轮询到内容出现为止，超时才判失败。
     await page.getByTestId('save-content').click();
-    await page.waitForTimeout(2500);
-    const res = await request.get(`/api/v1/packages/${smPkgId}`, {
-      headers: { Authorization: `Bearer ${auth.token}` },
-    });
-    const body: any = await res.json();
-    const content: string = body?.data?.content ?? body?.content ?? '';
+    let content = '';
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const res = await request.get(`/api/v1/packages/${smPkgId}`, {
+        headers: { Authorization: `Bearer ${auth.token}` },
+      });
+      const body: any = await res.json();
+      content = body?.data?.content ?? body?.content ?? '';
+      if (/transition\s+Off\s+to\s+On\s*;/.test(content)) break;
+      await page.waitForTimeout(500);
+    }
     expect(content, '文本里没有 transition').toMatch(/transition\s+Off\s+to\s+On\s*;/);
     const smAt = content.indexOf('state machine SM');
     const trAt = content.search(/transition\s+Off\s+to\s+On\s*;/);

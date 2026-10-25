@@ -54,6 +54,8 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
   const createNodeFromPalette = useModelStore((s) => s.createNodeFromPalette);
   const addConnection = useModelStore((s) => s.addConnection);
   const edgeAnchors = useScopeEdgeAnchors();
+  // M19：工程级作用域（包名 / view 名 / viewpoint 名）
+  const validationScope = useModelStore((s) => s.validationScope);
 
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [aiOpen, setAiOpen] = React.useState(false);
@@ -65,6 +67,8 @@ export const ViewModelingPane: React.FC<ViewModelingPaneProps> = ({
       version: view.version,
       content: view.content,
       pipeline: view.pipeline,
+      // M19：工程级作用域（跨 scope 引用的解析依据）
+      validationScope: validationScope ?? undefined,
       loading: view.loading,
       saving: view.saving,
       saved: false,

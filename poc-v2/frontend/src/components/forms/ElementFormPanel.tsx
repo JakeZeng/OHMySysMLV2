@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { X, Trash2, Eye, MapPin, CheckCircle2, AlertTriangle, Plus, Minus, Pencil } from 'lucide-react';
+import { X, Trash2, Eye, EyeOff, MapPin, CheckCircle2, AlertTriangle, Plus, Minus, Pencil } from 'lucide-react';
 import type { Node } from '@xyflow/react';
 import type { SysMLModel } from '../../../../ast/model';
 import { useModelStore } from '../../stores/modelStore';
@@ -71,6 +71,8 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const pipeline = useModelStore((s) => s.pipeline);
   const setContent = useModelStore((s) => s.setContent);
   const deleteNode = useModelStore((s) => s.deleteNode);
+  // M19：从视图里移除被 expose 的元素（撤销 expose 引用，不动源包）
+  const removeExposedNode = useModelStore((s) => s.removeExposedNode);
   // M12：建模模式是全局 UI 偏好，不再挂在 View 实体上
   const modelingMode = useUIStore((s) => s.modelingMode);
   const panelRef = React.useRef<HTMLElement | null>(null);
@@ -133,9 +135,15 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
   const location = data.location as { line: number; column: number } | undefined;
 
   const isFromModel = !!location && nodeType.startsWith('sysml');
+  /**
+   * M19：被 expose 投影进来的元素（`data.exposed`）**归属源命名空间** ——
+   * 在视图里改名/改字段都写不回视图文本（AST 位置指向源包），所以一律只读。
+   */
+  const isExposed = data.exposed === true;
+  const sourceQName = typeof data.sourceQName === 'string' ? data.sourceQName : '';
   // M17 S4：只读三来源 —— readOnly prop / data.readOnly（协同锁）/ ghost 引用节点
   const effectiveReadOnly =
-    readOnly || data.readOnly === true || nodeType === 'sysmlGhost';
+    readOnly || data.readOnly === true || nodeType === 'sysmlGhost' || isExposed;
   const issue = pipeline.validationIssues.find(
     (i) => (i as { elementId?: string }).elementId === selectedNode.id
   );
@@ -225,6 +233,26 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
     }
   };
 
+  /**
+   * M19：把被 expose 的元素**从本视图移除**。
+   *
+   * 语义（§7.26 expose 是引用不是复制）：只撤销本视图对它的引用 ——
+   * 视图文本里那条 expose 子句被删掉，**源包里的元素原封不动**。
+   * 所以按钮文案是「从视图移除」而不是「删除」：删了它，别的视图照样能引用它。
+   */
+  const handleRemoveFromView = () => {
+    if (!isExposed) return;
+    if (
+      !window.confirm(
+        `把 "${String(data.label ?? '')}" 从本视图移除？\n\n只撤销本视图的 expose 引用，源包里的元素不会被删除。`,
+      )
+    ) {
+      return;
+    }
+    removeExposedNode(String(selectedNode.id));
+    onClear();
+  };
+
   return (
     <aside
       ref={panelRef}
@@ -273,6 +301,21 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
         {nodeType === 'sysmlGhost' && typeof data.sourcePackage === 'string' && (
           <div className="-mt-2 mb-3 text-[10px] text-gray-400">
             来源：{data.sourcePackage}（归属不变）
+          </div>
+        )}
+
+        {/* M19：被 expose 投影进来的元素 —— 归属源包，在本视图里只读 */}
+        {isExposed && (
+          <div
+            className="mb-3 rounded border border-teal-200 bg-teal-50 px-2 py-1.5 text-[10px] leading-relaxed text-teal-800 dark:border-teal-800 dark:bg-teal-900/30 dark:text-teal-200"
+            data-testid="form-exposed-banner"
+            role="note"
+          >
+            <div className="font-semibold">该元素来自源包，在本视图中只读</div>
+            <div className="mt-0.5 font-mono opacity-80">{sourceQName || '(来源未知)'}</div>
+            <div className="mt-1 opacity-80">
+              改名 / 改字段请到源包操作；这里只能把它「从本视图移除」。
+            </div>
           </div>
         )}
 
@@ -370,16 +413,31 @@ export const ElementFormPanel: React.FC<ElementFormPanelProps> = ({
 
       {isFromModel && !readOnly && (
         <div className="border-t border-gray-200 p-2 dark:border-gray-700">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleDelete}
-            className="w-full text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-            data-testid="form-delete"
-          >
-            <Trash2 className="h-3 w-3" />
-            删除节点
-          </Button>
+          {isExposed ? (
+            // M19：被 expose 的元素不能「删除」（它归属源包），
+            // 只能「从本视图移除」（撤销本视图的 expose 引用）。
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleRemoveFromView}
+              className="w-full text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-900/30"
+              data-testid="form-remove-from-view"
+            >
+              <EyeOff className="h-3 w-3" />
+              从视图移除
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleDelete}
+              className="w-full text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+              data-testid="form-delete"
+            >
+              <Trash2 className="h-3 w-3" />
+              删除节点
+            </Button>
+          )}
         </div>
       )}
     </aside>

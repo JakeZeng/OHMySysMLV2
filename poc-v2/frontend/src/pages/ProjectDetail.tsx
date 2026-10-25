@@ -58,11 +58,20 @@ import {
   findElementCanvasNode,
   type ElementOwnerKind,
 } from '../lib/treeSelection';
-import { renameElementByName, deleteElementByName } from '../../../transform/textEdit';
+import { renameElementByName, deleteElementByName, renameViewDeclInText } from '../../../transform/textEdit';
+import { quoteName } from '@ast/naming';
 import { renameInSessionContent } from '../lib/elementRename';
+import { packagePathOf, propagateRenameToViews } from '../lib/viewRenamePropagation';
 import type { TreeAction, TreeEntityKind, ElementRef } from '../components/tree/types';
 
-const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
+/**
+ * M19：名字要按 SysML v2 规则加引号。
+ *
+ * 官方名字允许带引号（`'Part Structure View'`）。不加引号时，名字里有空格
+ * 就会生成**解析不了的文本**（`view def Part Structure View {`）→ 画布空白 +
+ * 语法错误面板。加引号后解析器（`Name` 规则）能正确读回来。
+ */
+const DEFAULT_PACKAGE_BODY = (name: string) => `package ${quoteName(name)} {
   // 在此编写 SysML v2 内容
 }
 `;
@@ -77,7 +86,7 @@ const DEFAULT_PACKAGE_BODY = (name: string) => `package ${name} {
  *   - 过滤用 `filter @<Metaclass>;`（算子 @ / istype / hastype，可 `not` 取反）；
  *   - 引用元素用 `expose <Pkg>::<Element>;`，整包递归用 `expose <Pkg>::**;`。
  */
-const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
+const DEFAULT_VIEW_BODY = (name: string) => `view def ${quoteName(name)} {
   // 作用范围：import Views::*;  filter @SysML::PartUsage;
   // 渲染方式：render <RenderingRef>;   例：<RenderingRef> 占位名 asTreeDiagram;
   // （expose 只能出现在 view usage 体内——官方约束，§8.2.2.26）
@@ -86,9 +95,15 @@ const DEFAULT_VIEW_BODY = (name: string) => `view def ${name} {
 
 /**
  * M15 §7.26：ViewUsage 骨架 —— 视图实例继承模板的 render/expose 语义。
- * 新实例给一份可直接编辑的骨架，并注明它实例化自哪个 ViewDefinition。
+ *
+ * ⚠️ M19 修复：原来生成的是 `view <名> { … }`（简写形态）—— **丢掉了对
+ * ViewDefinition 的引用**。文本是模型的 SSOT，`: <定义>` 才是「这个视图
+ * 实例化自哪个模板」的唯一声明；少了它，导出的 SysML 里实例与模板毫无关系，
+ * 「同一视图使用逻辑」也就无从谈起。
+ *
+ * 现在按官方写法生成 `view <名> : <定义> { … }`。
  */
-const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view ${name} {
+const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view ${quoteName(name)} : ${quoteName(definitionName)} {
   // 实例化自 ViewDefinition「${definitionName}」（§7.26 ViewUsage）
   // 在这里按该实例的语境重写 expose / render：
   // expose <Pkg>::<Element>;
@@ -100,7 +115,7 @@ const DEFAULT_VIEW_USAGE_BODY = (name: string, definitionName: string) => `view 
  * M15 §7.26 / M16 P1：ViewpointDefinition 骨架（官方成员形式，附录 A）。
  * Viewpoint 是利益相关方关注点：subject / stakeholder usage / frame concern / doc。
  */
-const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint def ${name} {
+const DEFAULT_VIEWPOINT_BODY = (name: string) => `viewpoint def ${quoteName(name)} {
   // subject : <Type>;
   // stakeholder se : <StakeholderType>;
   // frame concern fc : <ConcernType>;
@@ -911,13 +926,38 @@ export const ProjectDetail: React.FC = () => {
             version: full.version,
           });
           await refreshPackages();
+          // M19：包改名 → 引用它的视图里的 expose 路径**前缀**跟着改。
+          //
+          // expose 路径按名解析（§8.2.2.26），包 `Vehicle` 改成 `Cars` 之后，
+          // 视图里那条 `expose Vehicle::Car;` 立刻指空 —— 元素从视图里消失。
+          // MBSE 工具的惯例是改名带引用一起走，这里保持一致。
+          const oldPath = packagePathOf(packages, id);
+          if (oldPath.length > 0) {
+            const newPath = [...oldPath.slice(0, -1), trimmed];
+            const propagation = await propagateRenameToViews(
+              projectId,
+              new Map([[oldPath.join('::'), newPath.join('::')]]),
+            );
+            if (propagation.updated.length > 0) {
+              showToast({
+                title: `已同步 ${propagation.updated.length} 个视图的 expose 路径`,
+                description: `包「${currentName}」→「${trimmed}」`,
+                variant: 'success',
+              });
+            }
+          }
         } else if (kind === 'view') {
           const full = await viewApi.get(id);
+          // M19：视图的名字有**两处真相** —— 后端 name 字段 + 文本里的声明。
+          // 只改前者的话，树上叫 A、文本里还叫 B，`expose` 路径与
+          // `view X : Def` 引用全按文本里的名字解析 → 引用悄悄失效。
+          // 这里把声明一起改名（引用同步在 renameViewDeclInText 里做）。
+          const renamed = renameViewDeclInText(full.content ?? '', currentName, trimmed);
           await viewApi.update(id, {
             name: trimmed,
             packageId: full.packageId,
             description: full.description,
-            content: full.content,
+            content: renamed.text,
             colorTag: full.colorTag,
             renderingCategory: full.renderingCategory,
             metadata: full.metadata,
@@ -926,11 +966,13 @@ export const ProjectDetail: React.FC = () => {
           await refreshViews();
         } else {
           const full = await viewpointApi.get(id);
+          // M19：视角同理（声明 + 被 `satisfy` 引用的地方）
+          const renamed = renameViewDeclInText(full.content ?? '', currentName, trimmed);
           await viewpointApi.update(id, {
             name: trimmed,
             packageId: full.packageId,
             description: full.description,
-            content: full.content,
+            content: renamed.text,
             stakeholder: full.stakeholder,
             concern: full.concern,
             metadata: full.metadata,
@@ -947,7 +989,11 @@ export const ProjectDetail: React.FC = () => {
         });
       }
     },
-    [refreshPackages, refreshViews, refreshViewpoints, showToast],
+    // ⚠️ `packages` / `projectId` 必须在依赖里：改名传播要用它们算包的 DB 路径。
+    //    漏掉 `packages` 的症状很隐蔽 —— 闭包捕获的是**首渲染的空数组**，
+    //    `packagePathOf([], id)` 返回空路径 → 传播被静默跳过（视图里的 expose
+    //    路径没跟着改，元素从视图里消失）。
+    [packages, projectId, refreshPackages, refreshViews, refreshViewpoints, showToast],
   );
 
   // M16：移动包到新父包下（树拖拽 / 右键）

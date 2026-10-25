@@ -46,6 +46,13 @@ export interface ElementNodeInfo {
    * view / viewpoint = view-private（qualified name = `V::X`），进对应节点子树。
    */
   ownerKind?: 'package' | 'view' | 'viewpoint';
+  /**
+   * M19：源文本偏移（character offset）—— 同层排序依据。
+   *
+   * 树要镜像文本层级，同层兄弟就该按**文本顺序**排，而不是按 kind 分组。
+   * 这个字段是 `@views/hierarchy` 带来的，缺省时按声明顺序退化。
+   */
+  offset?: number;
 }
 
 export interface TreeNode {

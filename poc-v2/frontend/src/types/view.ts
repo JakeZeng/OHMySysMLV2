@@ -131,6 +131,16 @@ export interface CreateViewRequest {
   kind?: 'definition' | 'usage';
   /** M15：kind='usage' 时必填 —— 实例化的 ViewDefinition ID */
   viewDefinitionId?: string;
+  /**
+   * M19：客户端算好的 expose 作用域（**权威值**）。
+   *
+   * 后端原有一套 Go 正则解析器（逐行扫描包文本），与前端用的 TS PEG 解析器
+   * 对同一段文本会给出不同结论 → 树上徽章「⚠ 未解析」与画布上明明有元素，
+   * 自相矛盾。带上这个字段后，**解析只在 TS 侧做一次**，后端只做存储。
+   */
+  exposedElements?: ExposedElement[];
+  /** M19：未解析的 expose 路径 */
+  exposedElementsUnresolved?: ExposedElement[];
 }
 
 export interface UpdateViewRequest {
@@ -146,6 +156,10 @@ export interface UpdateViewRequest {
   force?: boolean;
   /** M13：客户端编辑时基于的原始内容（用于后端 diff / merge base） */
   baseContent?: string;
+  /** M19：客户端算好的 expose 作用域（权威值，理由见 CreateViewRequest） */
+  exposedElements?: ExposedElement[];
+  /** M19：未解析的 expose 路径 */
+  exposedElementsUnresolved?: ExposedElement[];
 }
 
 /** 兼容历史：UI 仍可能用到 ModelingMode（来自 useUIStore） */

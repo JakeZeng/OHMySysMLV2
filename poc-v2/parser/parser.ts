@@ -122,6 +122,20 @@ export { locationOf };
 
 // ─── 内部辅助：扁平化包内成员 ─────────────────────────────────────────────
 
+/**
+ * 把包内的「可可视化成员」**索引**到 model 顶层数组。
+ *
+ * M19 语义澄清（本函数的关键约定）：
+ *   提升 = **多一份按 kind 取集合的索引**，**不是**「把元素从命名空间里搬走」。
+ *   所有被提升的成员仍然留在原 `members` 里，归属（ownership）不变。
+ *   `_hoisted` 标记用于区分「写在文本顶层」与「写在包内」——validator 的
+ *   W307（顶层裸元素风格告警）据此只对真正顶层的元素发。
+ *
+ *   改造前（≤M18）本函数会把 stateMachine / activity / requirement /
+ *   constraintBlock 从 `pkg.members` 里**删掉**，只留在顶层数组里。后果：
+ *   「包内状态机」在 AST 层面变成了顶层元素 → 树面板（按 members 建树）
+ *   挂不回包下面 → **树 ≠ 文本层级**；限定名也从 `P::SM` 退化成 `SM`。
+ */
 function flattenNestedMembers(model: SysMLModel): void {
   const collected: typeof model.stateMachines = [];
   const collectedActs: typeof model.activities = [];
@@ -151,15 +165,23 @@ function flattenNestedMembers(model: SysMLModel): void {
       } else if (m.kind === 'stateMachine') {
         m._hoisted = true;
         collected.push(m);
+        // M19：**保留归属**。提升到顶层数组只是提供一份「按 kind 取集合」的
+        // 索引视图，不代表元素脱离了自己的命名空间。改造前这里把成员从
+        // `pkg.members` 里删掉了，于是「包内状态机」在 AST 里变成了顶层元素
+        // —— 树面板按成员列表建树，就再也挂不回包下面（= 树 ≠ 文本层级）。
+        remaining.push(m);
       } else if (m.kind === 'activity') {
         m._hoisted = true;
         collectedActs.push(m);
+        remaining.push(m); // M19：保留归属（见 stateMachine 分支注释）
       } else if (m.kind === 'requirement') {
         m._hoisted = true;
         collectedReqs.push(m);
+        remaining.push(m); // M19：保留归属（见 stateMachine 分支注释）
       } else if (m.kind === 'constraintBlock') {
         m._hoisted = true;
         collectedCbs.push(m);
+        remaining.push(m); // M19：保留归属（见 stateMachine 分支注释）
       } else {
         remaining.push(m);
       }

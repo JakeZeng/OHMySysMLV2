@@ -152,6 +152,27 @@ func (h *Handler) resolveViewKind(
 	}
 }
 
+// resolveViewDefByName —— 按**名字**在工程内找 ViewDefinition（M19）。
+//
+// 用途：视图文本里写的是 `view X : MyDef { }` —— 文本是 SSOT，DB 的
+// view_definition_id 必须由它推出来，而不是由请求参数带进来。
+func (h *Handler) resolveViewDefByName(c *gin.Context, projectID, name string) (string, bool) {
+	if strings.TrimSpace(name) == "" {
+		return "", false
+	}
+	views, err := h.repo.ListViewsByProject(c.Request.Context(), projectID)
+	if err != nil {
+		serverError(c, "查询视图列表失败", err)
+		return "", false
+	}
+	for _, v := range views {
+		if v.Name == name {
+			return v.ID, true
+		}
+	}
+	return "", false
+}
+
 func (h *Handler) Health(c *gin.Context) {
 	// M4.5 增量：附带 DB ping + 资源计数，便于运维探活与监控。
 	// 失败时仍返回 200（健康探针不应被资源统计拖死），但 status 字段标 degraded。
@@ -1023,6 +1044,19 @@ type createViewReq struct {
 	Kind string `json:"kind,omitempty"`
 	// M15：kind='usage' 时必填 —— 实例化的 ViewDefinition。
 	ViewDefinitionID string `json:"viewDefinitionId,omitempty"`
+	// M19：客户端算好的 expose 作用域（**权威值**）。
+	//
+	// 为什么需要它：暴露元素的解析此前只有 Go 侧一套正则实现
+	// （parser/viewBody_filter.go 的 scanPackageMembers 是逐行扫描，
+	// 只认包文本顶层的 `X def Name`）—— 子包里的元素、part def body 里的
+	// 成员都解析不到。前端用的是 TS 侧的 PEG 解析器（同一套官方语法），
+	// 两者对同一段文本会给出不同结论 → 树上徽章「⚠ 未解析」与画布上明明
+	// 有元素，自相矛盾。
+	//
+	// 客户端带上已解析好的清单 → **解析只在 TS 侧做一次**，后端只做存储。
+	// 字段缺省时后端仍按自己的解析器算（老客户端兼容）。
+	ExposedElements          []model.ExposedElement `json:"exposedElements,omitempty"`
+	ExposedElementsUnresolved []model.ExposedElement `json:"exposedElementsUnresolved,omitempty"`
 }
 
 type updateViewReq struct {
@@ -1040,6 +1074,9 @@ type updateViewReq struct {
 	// M13：force 强制覆盖；BaseVersion 用于 diff
 	Force       bool `json:"force"`
 	BaseVersion int  `json:"baseVersion"`
+	// M19：客户端算好的 expose 作用域（权威值，理由见 createViewReq）
+	ExposedElements          []model.ExposedElement `json:"exposedElements,omitempty"`
+	ExposedElementsUnresolved []model.ExposedElement `json:"exposedElementsUnresolved,omitempty"`
 }
 
 // ListViewsByProject GET /projects/:id/views
@@ -1090,6 +1127,23 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// M19：**文本是 SSOT** —— 文本里写明了形态（`view def X` / `view X : Def`）
+	// 时以文本为准；文本没给结论（简写形态 / 空文本）才用请求参数。
+	if decl, hasDecl := parser.ParseViewDeclaration(req.Content); hasDecl {
+		switch decl.Kind {
+		case parser.ViewDeclDefinition:
+			kind = model.ViewKindDefinition
+			viewDefID = ""
+		case parser.ViewDeclUsage:
+			defID, found := h.resolveViewDefByName(c, projectID, decl.DefinitionRef)
+			if !found {
+				badRequest(c, "文本引用的 ViewDefinition 不存在："+decl.DefinitionRef, nil)
+				return
+			}
+			kind = model.ViewKindUsage
+			viewDefID = defID
+		}
+	}
 	v := &model.View{
 		ID:                uuid.NewString(),
 		ProjectID:         projectID,
@@ -1115,19 +1169,44 @@ func (h *Handler) CreateViewInProject(c *gin.Context) {
 	v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
 	v.RenderKind = parsed.RenderKind
 	v.FilterQualifiedNames = parsed.FilterQualifiedNames
-	// M16 P4：注入标准库前缀（4 官方 + 4 历史上常用），再把 view 包内容塞到其下做合成渲染——
-	// `render asTreeDiagram;` 等引用即可 resolve 到合法 rendering def（不再生成非法
-	// 方言）。ComputeExposed 对已解析的 expose 路径 + filter 表达式求值，输出
-	// 真实过 filter 的元素集合（覆盖旧 ExposedElements 的「未过滤」语义）。
-	v.Content = parser.StandardLibrary + "\n" + req.Content
-	pkgRefs = h.packageRefsForResolve(c, projectID) // 含 stdlib 的最新引用
-	parsed = parser.ParseViewBodyWithPackages(v.Content, pkgRefs)
-	filtered := parser.ComputeExposed(parsed, pkgRefs)
-	if len(filtered) > 0 {
-		v.ExposedElements = make([]model.ExposedElement, 0, len(filtered))
-		for _, fe := range filtered {
-			v.ExposedElements = append(v.ExposedElements, fe.ExposedElement)
+	// M16 P4：解析时注入标准库（4 官方 + 4 历史上常用），让
+	// `render asTreeDiagram;` 等引用能 resolve 到合法 rendering def。
+	//
+	// ⚠️ M19 修复：标准库**只在解析时注入，不写进用户内容**。
+	// 改造前这里是 `v.Content = stdlib + "\n" + req.Content` —— 于是
+	//   - 用户在编辑器里看到 24 行自己没写的 `rendering def …`；
+	//   - 下一次保存走 UpdateView（那里**不**注入标准库）→ 标准库被丢掉
+	//     → `render asTreeDiagram;` 的解析结果在「创建后」与「保存后」不一致。
+	// 文本是用户的，标准库是解析期的上下文，不该混在一起。
+	parseContent := parser.StandardLibrary + "\n" + req.Content
+	pkgRefs = h.packageRefsForResolve(c, projectID)
+	parsed = parser.ParseViewBodyWithPackages(parseContent, pkgRefs)
+	// M19：客户端带了已解析好的作用域时**直接采用**，不再跑后端那套 expose 解析。
+	//
+	// 理由：expose 作用域的**权威实现是前端 TS PEG 解析器**（views/scope.ts）。
+	// 后端这套（viewBody_filter.go 的词法扫描 + expr 求值）只是**兜底**，
+	// 两套实现对同一段文本给出不同结论时，树上会出现「⚠ 未解析」徽章、
+	// 而画布上明明有元素 —— 自相矛盾。
+	//
+	// 之前虽然最终值也会被 req 覆盖，但 ComputeExposed 仍然跑了一遍：
+	// 既浪费，又在**中间态**留下与前端不一致的结论。
+	// 现在：客户端给了 → 只用客户端的；没给（老客户端 / 脚本调用）→ 才用后端兜底。
+	if req.ExposedElements != nil {
+		v.ExposedElements = req.ExposedElements
+		v.ExposedElementsUnresolved = req.ExposedElementsUnresolved
+	} else {
+		filtered := parser.ComputeExposed(parsed, pkgRefs)
+		if len(filtered) > 0 {
+			v.ExposedElements = make([]model.ExposedElement, 0, len(filtered))
+			for _, fe := range filtered {
+				v.ExposedElements = append(v.ExposedElements, fe.ExposedElement)
+			}
+		} else {
+			// ComputeExposed 产出为空时保留解析器给出的原始 resolved 列表
+			//（改造前就是这个行为：只有 filtered 非空才覆盖）。
+			v.ExposedElements = parsed.ExposedElements
 		}
+		v.ExposedElementsUnresolved = parsed.ExposedElementsUnresolved
 	}
 	// FilterQualifiedNames 是 filter 全文，已被 ComputeExposed 使用过；保持原值
 	v.FilterQualifiedNames = parsed.FilterQualifiedNames
@@ -1195,7 +1274,49 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	}
 	// M15：kind 为空 = 调用方不关心（普通内容保存），保持既有判定不变 ——
 	// 否则每次保存都会把 ViewUsage 静默降级成 ViewDefinition。
-	if req.Kind != "" || req.ViewDefinitionID != "" {
+	//
+	// M19：**文本是 SSOT** —— 用户在编辑器里把 `view def X` 改成
+	// `view X : Def`，DB 的 kind / view_definition_id 必须跟着变。
+	// 文本给出了明确形态（definition / usage+定义引用）时以文本为准；
+	// 文本没给出结论（简写形态、空文本）时才回落到请求参数。
+	decl, hasDecl := parser.ParseViewDeclaration(req.Content)
+	kindFromText := model.ViewKind("")
+	viewDefIDFromText := ""
+	if hasDecl {
+		switch decl.Kind {
+		case parser.ViewDeclDefinition:
+			kindFromText = model.ViewKindDefinition
+			viewDefIDFromText = ""
+		case parser.ViewDeclUsage:
+			defID, ok := h.resolveViewDefByName(c, v.ProjectID, decl.DefinitionRef)
+			if !ok {
+				badRequest(c, "文本引用的 ViewDefinition 不存在："+decl.DefinitionRef, nil)
+				return
+			}
+			kindFromText = model.ViewKindUsage
+			viewDefIDFromText = defID
+		}
+	}
+	if kindFromText != "" {
+		// usage-of-usage 禁止（SysML v2：ViewUsage 实例化的是 ViewDefinition）
+		if kindFromText == model.ViewKindUsage && viewDefIDFromText != "" {
+			def, err := h.repo.GetView(c.Request.Context(), viewDefIDFromText)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					badRequest(c, "引用的 ViewDefinition 不存在", nil)
+					return
+				}
+				serverError(c, "校验 ViewDefinition 失败", err)
+				return
+			}
+			if def.Kind == model.ViewKindUsage {
+				badRequest(c, "引用的视图本身是 ViewUsage，不能作为模板", nil)
+				return
+			}
+		}
+		v.Kind = kindFromText
+		v.ViewDefinitionID = viewDefIDFromText
+	} else if req.Kind != "" || req.ViewDefinitionID != "" {
 		kind, viewDefID, ok := h.resolveViewKind(c, v.ProjectID, req.Kind, req.ViewDefinitionID)
 		if !ok {
 			return
@@ -1212,7 +1333,15 @@ func (h *Handler) UpdateView(c *gin.Context) {
 	v.ViewpointQualifiedName = satisfiesQName
 	v.ViewpointID = h.resolveSatisfiedViewpointID(c, v.ProjectID, satisfiesQName)
 	parseFn := func(content string) ([]model.ExposedElement, []model.ExposedElement, model.RenderKind, []string, []model.InnerElement) {
-		parsed := parser.ParseViewBodyWithPackages(content, pkgRefs)
+		// M19：标准库只在**解析期**注入，不写进用户内容（与 CreateView 一致）。
+		// 否则「创建后」的内容带标准库、「保存后」的不带 —— 同一个视图
+		// 在两次解析里结论不同。
+		parsed := parser.ParseViewBodyWithPackages(parser.StandardLibrary+"\n"+content, pkgRefs)
+		// M19：客户端带了已解析好的作用域时以它为准（解析只在 TS 侧做一次）。
+		// 客户端没带（老客户端）→ 用后端自己的解析结果。
+		if req.ExposedElements != nil {
+			return req.ExposedElements, req.ExposedElementsUnresolved, parsed.RenderKind, parsed.FilterQualifiedNames, parsed.InnerElements
+		}
 		return parsed.ExposedElements, parsed.ExposedElementsUnresolved, parsed.RenderKind, parsed.FilterQualifiedNames, parsed.InnerElements
 	}
 	if err := h.repo.UpdateView(c, v, parseFn); err != nil {

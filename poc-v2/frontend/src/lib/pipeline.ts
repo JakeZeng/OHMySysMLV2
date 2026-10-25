@@ -11,7 +11,7 @@ import { parse } from '@parser/parser';
 import { validate } from '@validator/validator';
 import { modelToFlow } from '@transform/modelToFlow';
 import type { ParseError, SysMLModel } from '@ast/model';
-import type { ValidationIssue } from '@validator/validator';
+import type { ValidationIssue, ValidationScope } from '@validator/validator';
 import type { Node, Edge } from '@xyflow/react';
 import type { NodePosition } from '../stores/layoutStore';
 import { stableKeyOf } from '@transform/stableKey';
@@ -21,6 +21,14 @@ export interface PipelineResult {
   parseErrors: ParseError[];
   validationIssues: ValidationIssue[];
   model: SysMLModel;
+  /**
+   * M19：真正用来画图的模型。
+   *
+   * 视图会话里它 = 视图模型 **+ 投影进来的源元素**（被 expose 的那些）。
+   * `model` 是用户写的文本解析结果（校验针对它），`graphModel` 是画布用的。
+   * 没投影时两者相同。
+   */
+  graphModel?: SysMLModel;
   nodes: Node[];
   edges: Edge[];
   layoutMs?: number;
@@ -55,21 +63,46 @@ export const EMPTY_PIPELINE: PipelineResult = {
 };
 
 /**
+ * M19：校验用的「工程级作用域」。
+ *
+ * 校验器只看到**当前 scope 的一段文本**，而 SysML v2 的命名空间是工程级的
+ * （`view V : BaseView` 的 BaseView、`expose Pkg::Car` 的 Pkg 都在别的
+ * scope 里）。没有这段输入，跨 scope 引用会被误判成「工程内不存在」。
+ */
+export interface PipelineValidation {
+  /** 工程级名字清单（view 名 / viewpoint 名） */
+  scope?: ValidationScope;
+  /**
+   * expose 路径的**权威**解析。
+   *
+   * 传入的是解析好的模型（当前文本），返回解析结果 —— 解析的唯一实现是
+   * `views/scope.ts`，校验器不再自己实现一遍。
+   */
+  resolveExpose?: (model: SysMLModel) => ValidationScope['exposeResolution'];
+}
+
+/**
  * 同步运行 pipeline。
  *
  * @param text           SysML v2 源文本
  * @param userPositions  节点位置覆盖（nodeId → {x,y}）；undefined 表示不覆盖
  * @param exposed        M17 S4：视图会话的跨包 expose 元素（渲染为只读幽灵节点）
+ * @param modelTransform M19：模型变换钩子。视图会话用它把「源模型里被 expose
+ *                         的元素」投影进视图模型 —— 投影后画布上画的是
+ *                         **真的那个元素**（带端口、带子结构），而不是幽灵盒。
  */
 export function runPipeline(
   text: string,
   userPositions?: Record<string, NodePosition>,
   exposed?: ExposedExternal[],
+  modelTransform?: (model: SysMLModel) => SysMLModel,
+  validation?: PipelineValidation,
 ): PipelineResult {
   const t0 = performance.now();
   let parseErrors: ParseError[] = [];
   let validationIssues: ValidationIssue[] = [];
   let model: SysMLModel = EMPTY_MODEL;
+  let graphModel: SysMLModel = EMPTY_MODEL;
   let nodes: Node[] = [];
   let edges: Edge[] = [];
 
@@ -78,11 +111,19 @@ export function runPipeline(
     parseErrors = r.errors;
     model = r.model;
 
-    const v = validate(model);
+    const v = validate(model, {
+      ...validation?.scope,
+      // expose 的权威解析结果（没给就退回校验器自己的兜底判定）
+      exposeResolution:
+        validation?.resolveExpose?.(model) ?? validation?.scope?.exposeResolution,
+    });
     validationIssues = v.issues;
 
     if (parseErrors.length === 0) {
-      const f = modelToFlow(model, exposed);
+      // M19：投影后的模型才进 modelToFlow —— 校验仍然针对**用户写的**那份文本
+      // （投影进来的元素属于别的包，不该在这里重复报重复名之类的错）。
+      graphModel = modelTransform ? modelTransform(model) : model;
+      const f = modelToFlow(graphModel, exposed);
       nodes = f.nodes;
       edges = f.edges;
     }
@@ -129,6 +170,7 @@ export function runPipeline(
     parseErrors,
     validationIssues,
     model,
+    graphModel,
     nodes,
     edges,
     layoutMs: performance.now() - t0,

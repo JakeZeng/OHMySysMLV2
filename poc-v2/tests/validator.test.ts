@@ -460,6 +460,66 @@ describe('Validator - Views (M15 §7.26)', () => {
     expect(issues[0].message).toContain('TmplNotExist');
   });
 
+  it('V2b. view def 在**工程内另一个视图**里 → 不报 E301', () => {
+    // 改造前：校验器只看当前 scope 的视图 → 跨视图引用必然误报
+    const model = {
+      packages: [],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'inst',
+          declKind: 'usage',
+          viewDefinitionRef: 'TmplNotExist',
+          reveals: [],
+          filters: [],
+          members: [],
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+      viewpoints: [],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model, { viewNames: ['TmplNotExist'] });
+    expect(r.issues.filter((i) => i.code === 'E301_VIEW_USAGE_NO_DEF')).toHaveLength(0);
+  });
+
+  it('V2c. viewpoint 在工程内另一个视角里 → 不报 E302', () => {
+    const model = {
+      packages: [],
+      connections: [],
+      stateMachines: [],
+      activities: [],
+      requirements: [],
+      traceLinks: [],
+      constraintBlocks: [],
+      enums: [],
+      comments: [],
+      viewpoints: [],
+      views: [
+        {
+          kind: 'view',
+          id: 'v1',
+          name: 'v',
+          reveals: [],
+          filters: [],
+          members: [],
+          satisfies: 'OtherVP',
+          location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
+        },
+      ],
+    } as unknown as Parameters<typeof validate>[0];
+    const r = validate(model, { viewpointNames: ['OtherVP'] });
+    expect(r.issues.filter((i) => i.code === 'E302_SATISFY_NOT_VIEWPOINT')).toHaveLength(0);
+  });
+
   it('V3. satisfy 非 viewpoint 报错 E302', () => {
     const model = {
       packages: [],
@@ -535,8 +595,14 @@ describe('Validator - Views (M15 §7.26)', () => {
     expect(r.issues.filter((i) => i.code === 'E302_SATISFY_NOT_VIEWPOINT')).toHaveLength(0);
   });
 
-  it('V5. expose 顶级包不存在 → W303_EXPOSE_NOT_RESOLVED', () => {
-    const model = {
+  /**
+   * M19：expose 解析的判定基准从「当前 scope 看不到」改成「**工程内不存在**」。
+   *
+   * 改造前：校验器只有当前 scope 的包清单，视图会话里 expose 的源包永远不在
+   * 当前 scope 里 → W303 必然误报（e2e 实测）。
+   */
+  const exposeModel = (reveals: string[]) =>
+    ({
       packages: [
         {
           kind: 'package',
@@ -562,15 +628,53 @@ describe('Validator - Views (M15 §7.26)', () => {
           kind: 'view',
           id: 'v1',
           name: 'v',
-          reveals: ['MissingPkg::Element'],
+          reveals,
           filters: [],
           members: [],
           location: { offset: 0, line: 1, column: 0, length: 0, lineText: '' },
         },
       ],
-    } as unknown as Parameters<typeof validate>[0];
-    const r = validate(model);
+    }) as unknown as Parameters<typeof validate>[0];
+
+  it('V5. expose 顶级包不在工程级清单里 → W303_EXPOSE_NOT_RESOLVED', () => {
+    const r = validate(exposeModel(['MissingPkg::Element']), {
+      packageNames: ['RealPkg'],
+    });
     expect(r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED')).toHaveLength(1);
+  });
+
+  it('V5b. expose 顶级包在工程级清单里（跨包引用）→ 不报 W303', () => {
+    // 改造前：视图会话里源包不在当前 scope → 必然误报 W303
+    const r = validate(exposeModel(['MissingPkg::Element']), {
+      packageNames: ['RealPkg', 'MissingPkg'],
+    });
+    expect(r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED')).toHaveLength(0);
+  });
+
+  it('V5c. 没有工程级信息时**不断言**不存在 → 不报 W303', () => {
+    // 「没加载到工程信息」≠「工程内不存在」—— 这是 M19 要消灭的那类误报
+    const r = validate(exposeModel(['MissingPkg::Element']));
+    expect(r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED')).toHaveLength(0);
+  });
+
+  it('V5d. 权威 expose 解析结果里的未解析路径 → W303（带原因）', () => {
+    const r = validate(exposeModel(['MissingPkg::Element']), {
+      exposeResolution: {
+        resolved: [],
+        unresolved: [{ path: 'MissingPkg::Element', reason: '找不到 `MissingPkg`', viewName: 'v' }],
+      },
+    });
+    const issues = r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED');
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toContain('MissingPkg::Element');
+    expect(issues[0].message).toContain('找不到');
+  });
+
+  it('V5e. 权威 expose 解析结果全解析成功 → 不报 W303', () => {
+    const r = validate(exposeModel(['SrcModel::Car']), {
+      exposeResolution: { resolved: ['SrcModel::Car'], unresolved: [] },
+    });
+    expect(r.issues.filter((i) => i.code === 'W303_EXPOSE_NOT_RESOLVED')).toHaveLength(0);
   });
 
   it('V6. render 引用已知 kind 不报错，引用未知名 → W304', () => {

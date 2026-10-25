@@ -18,6 +18,7 @@ import React, {
   useCallback,
   useRef,
   useEffect,
+  useLayoutEffect,
   forwardRef,
   useImperativeHandle,
 } from 'react';
@@ -109,6 +110,18 @@ const FALLBACK_NODE_H = 80;
 /** 端口徽标的兜底尺寸 —— 徽标只装方向箭头，约 14~22px；端口名不占盒子。 */
 const FALLBACK_PORT_W = 18;
 const FALLBACK_PORT_H = 14;
+
+/**
+ * M19：节点的**稳定身份**（跨解析轮次不变）。
+ *
+ * 节点 id 来自解析器的全局计数器（`sysml.pegjs` 的 nextId），任何一次文本
+ * 编辑都会让整棵树的 id 整体平移（实测 `pd:partDef_3` → `pd:partDef_16`）。
+ * 需要跨轮次对同一个节点做缓存时**不能用 id** —— 用 kind + label。
+ */
+function stableNodeKey(n: Node): string {
+  const label = (n.data as { label?: string } | undefined)?.label ?? '';
+  return `${n.type ?? 'default'}::${label}`;
+}
 
 /**
  * M17 S5：普通图元上那对「左中 / 右中」固定 Handle 的可见性。
@@ -856,6 +869,12 @@ export interface DiagramCanvasProps {
   onSelectionChange?: (node: Node | null) => void;
   highlightNodeIds?: string[];
   nodeCount?: number;
+  /**
+   * M19：当前布局引擎（'grid' = 临时坐标，'elk' = 布局已落定）。
+   *
+   * 布局落定的那一刻才谈得上「重新取景」—— 之前画的是临时坐标。
+   */
+  layoutEngine?: 'grid' | 'elk';
   /** M11: 是否处于可交互（drag）模式；text 模式时画布只读 */
   interactive?: boolean;
   /**
@@ -898,6 +917,69 @@ export interface DiagramCanvasHandle {
   exportSvg(): Promise<Blob | null>;
 }
 
+/**
+ * 画布内容是否**完整落在**当前视口内。
+ *
+ * 判定用 RF 内部节点的**绝对坐标**：子节点（端口徽标）的 `position` 是相对
+ * owner 的偏移，直接拿它算会得出「所有子节点都贴在原点」的结论。
+ *
+ * 视口矩形由 viewport 变换反算：屏幕坐标 = 画布坐标 × zoom + 平移。
+ *
+ * 返回三态而不是布尔：
+ *   - `inside`  内容完整在视野里 → 不用动视口
+ *   - `outside` 内容被裁到视野外 → 该取景
+ *   - `unknown` 节点还没量到尺寸（width/height = 0）→ **判不了**，稍后再判
+ *
+ * ⚠️ `unknown` 必须单独区分：把「量不到尺寸」当成「在视野里」会永久放弃取景，
+ * 节点就一直被 `onlyRenderVisibleElements` 裁掉（实测 m16-p5 的 Vehicle 子节点
+ * 整个 hidden）。反过来当成「在外面」又会在每次布局抖动时乱动视口。
+ */
+function contentInsideViewport(
+  inst: ReactFlowInstance,
+  width: number,
+  height: number,
+): 'inside' | 'outside' | 'unknown' {
+  // 尺寸未知（画布还没量到）→ 判不了
+  if (width <= 0 || height <= 0) return 'unknown';
+
+  const vp = inst.getViewport();
+  const zoom = vp.zoom || 1;
+  const viewX = -vp.x / zoom;
+  const viewY = -vp.y / zoom;
+  const viewW = width / zoom;
+  const viewH = height / zoom;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let measuredCount = 0;
+  for (const n of inst.getNodes()) {
+    const internal = inst.getInternalNode(n.id);
+    const pa = internal?.internals.positionAbsolute;
+    if (!pa) continue;
+    const w = internal?.measured?.width ?? 0;
+    const h = internal?.measured?.height ?? 0;
+    if (w > 0 && h > 0) measuredCount += 1;
+    if (pa.x < minX) minX = pa.x;
+    if (pa.y < minY) minY = pa.y;
+    if (pa.x + w > maxX) maxX = pa.x + w;
+    if (pa.y + h > maxY) maxY = pa.y + h;
+  }
+  // 没有可判定的节点 → 判不了
+  if (!Number.isFinite(minX)) return 'unknown';
+  // 还没有任何节点量到尺寸 → 判不了（尺寸为 0 的盒子算出来的边界是假的）
+  if (measuredCount === 0) return 'unknown';
+
+  const EPS = 1;
+  const inside =
+    minX >= viewX - EPS &&
+    minY >= viewY - EPS &&
+    maxX <= viewX + viewW + EPS &&
+    maxY <= viewY + viewH + EPS;
+  return inside ? 'inside' : 'outside';
+}
+
 // ─── 组件 ─────────────────────────────────────────────
 
 export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>(({
@@ -912,6 +994,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
   onSelectionChange,
   highlightNodeIds,
   nodeCount,
+  layoutEngine,
   interactive = true,
   onPaletteDrop,
   onPaneDoubleClick,
@@ -920,6 +1003,34 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
 }, ref) => {
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  /**
+   * M19：节点尺寸的**持久缓存**（跨渲染、跨 nodes 引用变化）。
+   *
+   * RF 的 `adoptUserNodes` 每次收到引用变化的 nodes 都会用 `userNode.measured`
+   * 重建内部节点 —— measured 缺失就把内部尺寸清成 `undefined`，
+   * `nodeHasDimensions` 转 false → 节点被加 `visibility: hidden`，
+   * 而 ResizeObserver 对同一 DOM 元素重复 observe() 不会再回调 → **永远量不回来**。
+   *
+   * 缓存只在拿到真实测量值时更新，不写兜底常量。
+   */
+  const measuredCacheRef = useRef(new Map<string, { width: number; height: number }>());
+  /**
+   * M19：本次会话是否已经取景过。
+   *
+   * 取景 = 移动视口，只能在「内容真的被裁到视口外」时做，而且一次会话只做
+   * 一次 —— 否则用户按下鼠标、坐标都算好了，画布却自己挪了，手势全废。
+   */
+  const layoutFittedRef = React.useRef(false);
+  /** 上一轮的节点 id 集合（用来识别「换实体了」→ 允许重新取景） */
+  const prevNodeIdsRef = React.useRef<Set<string>>(new Set());
+  /**
+   * M19：用户是不是**正在**画布上操作（指针按着 / 刚平移过）。
+   *
+   * 取景 = 移动视口。手势进行中移动视口 = 手势全废（用户刚按下鼠标、
+   * 坐标都算好了，画布却自己挪了）。所以这两个信号都为真时**不取景**。
+   */
+  const pointerActiveRef = React.useRef(false);
+  const userMovedRef = React.useRef(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // M17 S3：dragover 期间 dataTransfer 值受保护读不到，拖拽 kind 走 uiStore；
   // entityKind 决定空白画布（scope 容器）的合法性。
@@ -1278,6 +1389,60 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         }
       }
     }
+    /**
+     * M19：节点尺寸的**持久兜底**（跨渲染、跨 nodes 引用变化、跨 id 平移）。
+     *
+     * ## 根因
+     *
+     * RF 的 `adoptUserNodes`（@xyflow/system:1692）每次收到引用变化的 nodes 都会
+     * 用 `userNode.measured` **重建**内部节点：
+     *
+     *     measured: { width: userNode.measured?.width, height: userNode.measured?.height }
+     *
+     * `userNode.measured` 缺失 → 内部尺寸被清成 `undefined` →
+     * `nodeHasDimensions` 为 false → NodeWrapper 给节点加 `visibility: hidden`
+     * （@xyflow/react NodeWrapper 的 style）。而 ResizeObserver 对**同一个**
+     * DOM 元素重复 observe() 不会再回调，尺寸清空后**永远量不回来**。
+     *
+     * 症状：节点还在 DOM 里（`data-id` 正常），但 `visibility: hidden` ——
+     * 截图上是「画布空白」，Playwright 判 `toBeVisible()` 失败。
+     *
+     * ## 为什么「从 RF 实例读回上一轮」不够
+     *
+     * 节点 id 来自解析器的全局计数器（`sysml.pegjs` 的 nextId），**任何一次
+     * 文本编辑都会让整棵树的 id 整体平移**（`pd:partDef_3` → `pd:partDef_16`）。
+     * 于是「按 id 读回 measured」在新 id 上必然落空 —— 实测 m16-p5 的
+     * `Vehicle` 节点会在 04-05 / 09-10 之间随机中招。
+     *
+     * ## 修法
+     *
+     * 用**稳定身份**（kind + label）做 key 缓存尺寸，来源是 DOM 实测：
+     * `useLayoutEffect` 里读 `.react-flow__node` 的 `offsetWidth/offsetHeight`。
+     * 缓存只在拿到真实测量值时更新（不写兜底常量），所以它不会伪造尺寸，
+     * 只会防止「已量到的尺寸被无谓清空」。
+     */
+    const measuredCache = measuredCacheRef.current;
+    for (const n of nodes) {
+      const idStr = String(n.id);
+      const m = inst?.getInternalNode(idStr)?.measured;
+      if (typeof m?.width === 'number' && typeof m?.height === 'number') {
+        measuredCache.set(idStr, { width: m.width, height: m.height });
+      }
+    }
+    const measuredFor = new Map<string, { width: number; height: number }>();
+    for (const n of nodes) {
+      const idStr = String(n.id);
+      const own = (n as { measured?: { width: number; height: number } }).measured;
+      // 三级兜底：本节点自带 → RF 内部节点 → 持久缓存（按稳定身份）
+      const m =
+        own ??
+        prevMeasured.get(idStr) ??
+        measuredCache.get(idStr) ??
+        measuredCache.get(stableNodeKey(n));
+      if (m && typeof m.width === 'number' && typeof m.height === 'number') {
+        measuredFor.set(idStr, m);
+      }
+    }
     // M17：先给所有「可作为端口宿主」的节点量出绝对包围盒，供下面算挂点。
     // 端口自身的盒子在 map 回调里现算（measured 可能刚拿到）。
     //
@@ -1307,8 +1472,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       const cls: string[] = [];
       if (idStr === highlightedNodeId) cls.push('rf-node-highlight');
       if (hlSet.has(idStr)) cls.push('rf-node-sim-active');
-      const own = (n as { measured?: { width: number; height: number } }).measured;
-      const measured = own ?? prevMeasured.get(idStr);
+      const measured = measuredFor.get(idStr);
       // M17 S3：拖拽 palette 时按真实 kind + 矩阵高亮目标节点
       // （绿=合法可嵌套 / 红=非法目标）。
       if (idStr === hoveredPaletteDropNodeId) {
@@ -1369,6 +1533,122 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       };
     });
   }, [nodes, highlightedNodeId, highlightNodeIds, selectedNodeIds, hoveredPaletteDropNodeId]);
+
+  /**
+   * M19：从 **DOM 实测**节点尺寸，写进持久缓存（按稳定身份）。
+   *
+   * ## 为什么必须自己量
+   *
+   * RF 的 `adoptUserNodes` 每次收到引用变化的 nodes 都会用 `userNode.measured`
+   * 重建内部节点；`measured` 缺失就把内部尺寸清成 `undefined` →
+   * `nodeHasDimensions` 转 false → 节点被加 `visibility: hidden`。
+   * 而 ResizeObserver 对**同一个** DOM 元素重复 `observe()` 不会再回调，
+   * 于是尺寸一旦清空就永远量不回来 —— 节点永久隐身（画布一片空白）。
+   *
+   * 节点 id 还会随解析轮次整体平移，所以「从 RF 实例按 id 读回」也不可靠。
+   * 唯一稳的来源是 DOM 自己的 `offsetWidth/offsetHeight`。
+   *
+   * ## 为什么用 `useLayoutEffect`
+   *
+   * 必须在浏览器绘制**之前**读 —— 否则会出现「先画一帧空白、再补测」的闪烁。
+   * 另外这里只读不写 state，不触发额外渲染。
+   */
+  useLayoutEffect(() => {
+    const root = wrapperRef.current;
+    if (!root) return;
+    const cache = measuredCacheRef.current;
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>('.react-flow__node'))) {
+      const idStr = el.getAttribute('data-id');
+      if (!idStr) continue;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      if (w <= 0 || h <= 0) continue;
+      cache.set(idStr, { width: w, height: h });
+      // 同时按稳定身份存一份 —— id 平移后仍能取回同一元素的尺寸
+      const node = nodes.find((n) => String(n.id) === idStr);
+      if (node) cache.set(stableNodeKey(node), { width: w, height: h });
+    }
+  });
+
+  /**
+   * M19：布局落定后按需**重新取景**（fitView）。
+   *
+   * ## 为什么需要它
+   *
+   * RF 的 `fitView` prop 在「节点首次被量到尺寸」时就执行 —— 那一刻画布上的
+   * 坐标还是 pipeline 的**临时 grid 坐标**（80,80 起步），而真正的坐标要等
+   * ELK 布局异步算完。两者的错位造成两个后果：
+   *
+   *   1. 视图框住的是临时位置 → ELK 落定后节点跑到视口外（左半截被裁掉）；
+   *   2. **端口徽标整个消失** —— 徽标骑在 owner 边框上（有一半在框外），
+   *      落在视口外就被 RF 的 `onlyRenderVisibleElements` 直接不渲染，
+   *      用户看到「元素在、端口没了」。
+   *
+   * ## 为什么只在「内容被裁出视口」时取景、且只取景一次
+   *
+   * 取景 = 移动视口。如果每次节点集合变化都取景，用户刚按下鼠标、坐标都
+   * 算好了，画布却自己挪了 —— 手势全废（M17 的 A/A2/A4/A5 就是这么被顶红的：
+   * 单独跑绿、连着跑红）。所以：
+   *
+   *   - **只在内容真的被裁到视口外时才取景**（内容本来就在视野里就别动它）；
+   *   - **一次会话只取景一次**（布局落定那一刻），之后用户的视图归用户管；
+   *   - **换实体**（节点集合完全不重叠）时重新允许取景。
+   */
+  useEffect(() => {
+    const inst = rfInstanceRef.current;
+    if (!inst) return;
+
+    const ids = new Set(nodes.map((n) => String(n.id)));
+    const prev = prevNodeIdsRef.current;
+    if (prev.size > 0 && ![...ids].some((id) => prev.has(id))) {
+      // 节点集合完全不重叠 = 换实体了 → 允许重新取景
+      layoutFittedRef.current = false;
+    }
+    prevNodeIdsRef.current = ids;
+
+    // 布局还没落定（还在临时 grid 坐标）→ 等 ELK
+    if (layoutEngine !== 'elk') return;
+    if (layoutFittedRef.current) return;
+
+    /**
+     * ⚠️ 这里**不能**用 `requestAnimationFrame` + 「同步置位已取景」那套写法。
+     *
+     * 旧写法的坑：`layoutFittedRef.current = true` 同步置位，而真正的取景在
+     * rAF 回调里。RF 量到节点尺寸会立刻回写 nodes → effect 重跑 → cleanup
+     * 把还没执行的 rAF 取消掉 → 取景永远不发生，而「已取景」标记已经置位，
+     * 后面再也不会试。结果就是节点被 `onlyRenderVisibleElements` 裁到视口外
+     * （实测 m16-p5 的 Vehicle 子节点整个 hidden）。
+     *
+     * 现在的写法：判定与置位都在**同一个**延迟回调里；节点没量到尺寸就
+     * 「判不了」，隔一小段时间重试（上限 12 次 ≈ 1s），绝不凭假尺寸下结论。
+     */
+    let cancelled = false;
+    let timer: number | null = null;
+    const attempt = (retriesLeft: number) => {
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        // 用户正在操作画布 → 视口归用户管，不动
+        if (pointerActiveRef.current || userMovedRef.current) return;
+        const rect = wrapperRef.current?.getBoundingClientRect();
+        const state = contentInsideViewport(inst, rect?.width ?? 0, rect?.height ?? 0);
+        if (state === 'unknown') {
+          // 还没量到尺寸 → 稍后再判；用完次数就放弃（不乱动视口）
+          if (retriesLeft > 0) attempt(retriesLeft - 1);
+          return;
+        }
+        layoutFittedRef.current = true;
+        // 内容已经完整落在视野里 → 也别动用户的视口
+        if (state === 'inside') return;
+        inst.fitView({ padding: 0.2, duration: 150 });
+      }, 80);
+    };
+    attempt(12);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [nodes, layoutEngine]);
+
   // 手势期间要按 id 反查节点盒子，而 `boxOfNode` 注册在 [] 依赖上 —— 用 ref 把
   // 最新一版节点池喂进去，避免闭包冻在首帧的空数组上。
   stableNodesRef.current = stableNodes;
@@ -1903,8 +2183,14 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onPointerDownCapture={handleCanvasPointerDown}
-      onPointerUpCapture={handleCanvasPointerUp}
+      onPointerDownCapture={(e) => {
+        pointerActiveRef.current = true;
+        handleCanvasPointerDown(e);
+      }}
+      onPointerUpCapture={(e) => {
+        pointerActiveRef.current = false;
+        handleCanvasPointerUp(e);
+      }}
       onDoubleClick={handlePaneDoubleClick}
       data-testid="canvas-wrapper"
       data-mode={interactive ? 'drag' : 'text'}
@@ -1924,9 +2210,20 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, DiagramCanvasProps>
         onConnect={handleConnect}
         onInit={handleInit}
         onSelectionChange={handleSelectionChange}
+        // M19：用户自己平移/缩放 → 视口归用户管，取景时让路。
+        // event 为 null 表示程序化移动（fitView / setCenter），不算用户操作。
+        onMoveStart={(event) => {
+          if (event) userMovedRef.current = true;
+        }}
         // 空白处单击 → 清选中（ReactFlow 只负责把事件递过来，位移起点见 handleCanvasPointerDown）
         onPaneClick={handlePaneClick}
-        onlyRenderVisibleElements={true}
+        // M19：视口裁剪**按规模启用**。
+        //
+        // 小图（≤200 节点）全量渲染：端口徽标骑在 owner 边框上、有一半探出
+        // 框外，只要它落在视口外就会被 RF 整块丢掉 —— 用户看到「元素在、
+        // 端口没了」。大图才开裁剪换性能（M2/M9 的优化对上百节点的场景才有
+        // 意义），并且此时布局落定后的取景会把内容整体框进视野。
+        onlyRenderVisibleElements={(nodeCount ?? 0) > 200}
         // M17：空格+左键是唯一平移方式 → 空白处左键改成框选。
         // RF 内部 panOnDrag = panActivationKeyPressed || _panOnDrag，
         // 所以 _panOnDrag 关掉后，空格按下时 pane 会自动切回平移。

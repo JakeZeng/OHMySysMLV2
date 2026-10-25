@@ -36,6 +36,7 @@ import { SimulationPanel } from '../sim/SimulationPanel';
 import { useSimulationStore, selectCurrentStateId } from '../../stores/simulationStore';
 import { useToast } from '../ui/Toast';
 import type { PipelineResult } from '../../lib/pipeline';
+import type { ValidationScope } from '@validator/validator';
 import { PalettePanel } from '../diagram/PalettePanel';
 import { CollabStrip } from '../collab/CollabStrip';
 import { ConflictModal } from '../modals/ConflictModal';
@@ -56,6 +57,13 @@ export interface ModelingAdapter {
   content: string;
   /** 解析后的图节点 / 边 */
   pipeline: PipelineResult;
+  /**
+   * M19：工程级作用域（跨 scope 引用的解析依据）。
+   *
+   * 编辑器用它给 Monaco 打 marker —— 不给的话，`view V : BaseView`
+   * （BaseView 在另一个视图里）会被标红。
+   */
+  validationScope?: ValidationScope;
   /** 状态 */
   loading: boolean;
   saving: boolean;
@@ -448,6 +456,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
                 onPipelineResult={() => {}}
                 onCursorChange={() => {}}
                 onFormatResult={handleFormatResult}
+                validationScope={adapter.validationScope}
                 readOnly={false}
               />
             </div>
@@ -511,6 +520,7 @@ export const ModelingPane: React.FC<ModelingPaneProps> = ({
                 onEdgeSelectionChange={adapter.onSelectEdge}
                 highlightNodeIds={simCurrentStateId ? [simCurrentStateId] : []}
                 nodeCount={adapter.pipeline.nodes.length}
+                layoutEngine={adapter.pipeline.layoutEngine}
                 interactive={interactive}
                 onPaletteDrop={handlePaletteDrop}
                 onPaneDoubleClick={handlePaneDoubleClick}

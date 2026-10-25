@@ -56,12 +56,18 @@ port def P;`);
     expect(deep?.children?.map((c) => c.name)).toEqual(['a']);
   });
 
-  it('content 内的 view/viewpoint 成员不进元素树（由后端实体节点呈现）', () => {
+  it('content 内的 view/viewpoint 成员**进**元素树（树要镜像文本层级）', () => {
+    // ⚠️ M19 语义变更：改造前 view / viewpoint 成员被前端**主动丢弃**
+    // （理由是「它们由后端 View/Viewpoint 实体节点呈现」）—— 但视图实体是
+    // 另一套存储，用户在包里手写的 `view def V { … }` 在树里根本看不见，
+    // 于是**树 ≠ 文本层级**。M19 起层级统一由 @views/hierarchy 提供，
+    // 文本里写了什么，树里就有什么。
     const els = extractElements(`package P {
   part def X;
   view def V { render asTreeDiagram; }
 }`);
-    expect(els.map((e) => e.name)).toEqual(['X']);
+    expect(els.map((e) => e.name)).toEqual(['X', 'V']);
+    expect(els[1]!.kind).toBe('view');
   });
 
   it('空 content / 解析失败 → 空列表', () => {
@@ -99,6 +105,70 @@ describe('extractElements astId（M18）', () => {
     const port = vehicle?.children?.find((c) => c.name === 'powerPort');
     expect(port?.astId).toBeTruthy();
     expect(port?.astId).not.toBe(vehicle?.astId);
+  });
+});
+
+/**
+ * M19：树 == 文本层级。
+ *
+ * 改造前树有三处与文本不一致：
+ *   1. 顶层 state machine / activity / requirement / constraint block
+ *      **整类掉出树外**（只有它们内部的 state / action 被平铺成孤儿节点）；
+ *   2. 包内 state machine 的状态**不挂在状态机下面**（state 没有父节点）；
+ *   3. 同层顺序不是文本顺序（隐式根成员在前、行为元素追加在末尾）。
+ */
+describe('extractElementsFromModel（M19 树 == 文本层级）', () => {
+  it('包内状态机挂回包下，状态挂在状态机下', () => {
+    const els = extractElements(`package P {
+  part def Car;
+  state machine Ignition { state Off; state On; }
+}`);
+    expect(els.map((e) => e.name)).toEqual(['Car', 'Ignition']);
+    const sm = els[1]!;
+    expect(sm.kind).toBe('stateMachine');
+    expect(sm.children?.map((c) => c.name)).toEqual(['Off', 'On']);
+  });
+
+  it('顶层状态机不再掉出树外（原来整类丢失）', () => {
+    const els = extractElements(`state machine SM { state S; }`);
+    expect(els.map((e) => e.name)).toEqual(['SM']);
+    expect(els[0]!.children?.map((c) => c.name)).toEqual(['S']);
+  });
+
+  it('顶层需求 / 活动 / 约束块不再掉出树外', () => {
+    const els = extractElements(`requirement def R;
+activity A { action Act; }
+constraint def C { attribute p : Real; }`);
+    expect(els.map((e) => e.name)).toEqual(['R', 'A', 'C']);
+    expect(els[1]!.children?.map((c) => c.name)).toEqual(['Act']);
+  });
+
+  it('同层顺序 = 文本顺序（不按 kind 分组）', () => {
+    const els = extractElements(`package P {
+  part def Zebra;
+  state machine Apple { state X; }
+  part def Mango;
+}`);
+    expect(els.map((e) => e.name)).toEqual(['Zebra', 'Apple', 'Mango']);
+  });
+
+  it('根层级：命名包与裸成员按文本顺序交错（虚拟模型根落在裸成员的位置）', () => {
+    const els = extractElements(`package A { part def X; }
+part def Loose;
+package B { part def Y; }`);
+    // 裸成员被收进虚拟「<模型根>」分组（M16 P2 的呈现约定），分组本身
+    // 落在它代表的那些成员的文本位置上（M19）。
+    expect(els.map((e) => e.name)).toEqual(['A', '<模型根>', 'B']);
+    const root = els.find((e) => e.name === '<模型根>');
+    expect(root?.children?.map((c) => c.name)).toEqual(['Loose']);
+  });
+
+  it('包内成员在树里只出现一次（顶层索引数组不产生副本）', () => {
+    const els = extractElements(`package P {
+  state machine SM { state S; }
+  requirement def R;
+}`);
+    expect(els.map((e) => e.name)).toEqual(['SM', 'R']);
   });
 });
 

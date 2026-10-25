@@ -39,6 +39,40 @@ async function register(page: Page, u: ReturnType<typeof newUser>) {
   await page.locator('button[type=submit]').click();
 }
 
+/**
+ * 关掉「新用户引导」向导。
+ *
+ * ⚠️ 这不是可选的洁癖：向导是 `fixed inset-0 z-50` 的**全屏遮罩**，新用户
+ * 注册后自动登录 → 向导立刻盖住整个视口 → 顶栏的「更多」按钮被遮罩拦截，
+ * Playwright 报 "… intercepts pointer events"（实测 login 2/3 两条必红）。
+ *
+ * 其余 spec 都用 `localStorage.onboarding_completed = '1'` 绕开它，但这个
+ * spec 测的正是**新用户第一次登录**的真实路径 —— 弹向导才是真实行为，
+ * 所以这里走「用户点右上角 × 关掉向导」这条路，既能测通又不掩盖产品行为。
+ */
+async function dismissOnboarding(page: Page): Promise<void> {
+  const close = page.getByRole('button', { name: '关闭引导' });
+  const shown = await close
+    .waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!shown) return;
+  await close.click();
+  await expect(close).toBeHidden({ timeout: 5_000 });
+}
+
+/**
+ * 走「用户菜单 → 退出登录」。
+ *
+ * ⚠️ 别点顶栏的「更多」菜单 —— 那是市场/工具/集成入口，**不含登出**。
+ * 登出项在右上角头像按钮（`aria-label="用户菜单"`）的下拉里（TopNav.tsx:225-283）。
+ * 早期这条用例点的是「更多」，于是 `getByText('退出登录')` 永远等不到 → 必红。
+ */
+async function logout(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '用户菜单' }).click();
+  await page.getByRole('menuitem', { name: '退出登录' }).click();
+}
+
 test.describe('认证流程', () => {
   test('1. 未登录访问受保护路由 → 被重定向到登录页', async ({ page }) => {
     await page.goto('/');
@@ -57,8 +91,8 @@ test.describe('认证流程', () => {
     });
 
     await test.step('登出 → 回登录页且 token 被清空', async () => {
-      await page.getByRole('button', { name: '更多' }).click();
-      await page.getByText('退出登录').click();
+      await dismissOnboarding(page);
+      await logout(page);
       await expect(page).toHaveURL(/\/login/);
       await expect.poll(() => storedToken(page)).toBeNull();
     });
@@ -73,7 +107,9 @@ test.describe('认证流程', () => {
 
       await expect(page).not.toHaveURL(/\/login/);
       await expect.poll(() => storedToken(page)).not.toBeNull();
-      await expect(page.locator('header')).toBeVisible();
+      // 用 role 而不是 `header` 标签：概览页还有一个 `<header class="mb-6">`，
+      // `locator('header')` 会 strict mode violation（解析到 2 个）。
+      await expect(page.getByRole('banner')).toBeVisible();
     });
 
     await test.step('刷新后仍然保持登录（token 可用于 bootstrap）', async () => {
@@ -90,8 +126,8 @@ test.describe('认证流程', () => {
     await expect.poll(() => storedToken(page)).not.toBeNull();
 
     // 登出后用错密码重登
-    await page.getByRole('button', { name: '更多' }).click();
-    await page.getByText('退出登录').click();
+    await dismissOnboarding(page);
+    await logout(page);
     await expect(page).toHaveURL(/\/login/);
 
     await page.locator('#username').fill(u.username);
