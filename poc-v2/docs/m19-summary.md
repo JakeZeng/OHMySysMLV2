@@ -1219,15 +1219,64 @@ M10 的仿真面板判定是 `enableSimulation && stateMachines.length > 0`，
 第六轮文档里「多层端点解析期丢中段」的说法**不成立**，已在
 `AGENTS.md` 第七轮段与本文件 §8.6 修正。
 
-### 9.8 回归
+### 9.8 SSE 复审加固（用户追问「这样改了后会有问题吗」）
+
+把 `EventSource` 换成 fetch 后，**EventSource 免费提供的语义要自己补齐** ——
+浏览器原生实现是无限重连、退避封顶、收到数据才算恢复、每次重连重读凭据。
+逐条对照后改了 4 处：
+
+| # | 问题 | 后果 | 修法 |
+|---|---|---|---|
+| ① | `maxReconnect` 默认 **5** | 5 次失败后**永久放弃** → 后端重启一次 / 网络抖一下，用户不刷新页面就再也收不到事件（原生 EventSource 是无限重连） | 默认改 `Number.POSITIVE_INFINITY`；显式传有限值才放弃 |
+| ② | 退避**不封顶** | 第 20 次失败要等 `2^19` 秒 ≈ 12 天 —— 那不叫重连 | 新增 `maxDelay`（默认 30s），`nextReconnectDelay(attempt, base, max)` 封顶 |
+| ③ | 退避计数在 **HTTP 200 时**归零 | 「连上就被掐断」的场景退避永远回到 1s → 每秒一次的紧密重连循环（原生 EventSource 最小间隔 ~3s） | 改成**收到第一个有效帧**才归零 |
+| ④ | token 只在 effect 建立时读一次 | 登出再登入后重连仍拿旧 token → 401 | 每次 `connect()` 重读 `localStorage['sysmlv2.token']` |
+
+①②抽成纯函数 `nextReconnectDelay` / `shouldGiveUp`，补 **4 条**单测
+（`useCollabStream.test.ts` 12/12）。
+
+#### nginx：先前的判断被实测推翻（如实记录）
+
+第一版加固里，我判断「生产 nginx 的 `proxy_buffering on` 会把 SSE 卡死 →
+生产阻断级，必须单独开 location」。**这个判断是错的**，用容器做了 A/B 对照：
+
+| 场景 | ttfb | 结论 |
+|---|---|---|
+| 直连后端（无 nginx） | 0.009s | 基线 |
+| nginx `location /api/`（**默认** `proxy_buffering on`） | 0.018s | 事件照样立刻到达 |
+| nginx `location /api/v1/events/`（`proxy_buffering off`） | 0.019s | 无差别 |
+
+再补一组对照实验（同一个 node SSE 上游，只差响应头）：**上游不带
+`X-Accel-Buffering` 时，nginx 默认缓冲下事件依然按秒透传** → 真正起作用的是
+「上游每写一帧、nginx 每读一段就下推」，而不是必须靠响应头。
+后端本来就带了 `X-Accel-Buffering: no`（`eventsHandler.go:57`），
+所以**原始的 `location /api/` 并没有把 SSE 卡死**。
+
+结论：**不是生产阻断**。独立 location 仍然保留，但降级为**防御性冗余**
+（将来后端不再带该头、或中间加一层默认缓冲的 CDN/网关时的保险），
+`nginx.conf` 里的注释已改成如实描述实测结论 —— 原来的「生产静默失效」
+属于**未经验证的断言**，留着会误导后人。
+
+同时删掉了两个临时验证脚本（`scripts/verify-sse-through-nginx.mjs`、
+`scripts/_tmp-sse-nginx-check.mjs`）和 3 个临时 nginx 配置副本：
+它们的前提（`proxy_buffering off` 是必需的）已被证伪，留着是负资产。
+
+> 复现配方（本机 Docker Hub 不可达，用本地镜像
+> `docker.m.daocloud.io/library/nginx:1.27-alpine`）：
+> 容器内访问宿主要用 `host.docker.internal`（`--network host` 在 Docker Desktop
+> 上指的是 VM 的 loopback，连不到 Windows 宿主）；起好后
+> `curl -N -H "Authorization: Bearer <jwt>" "http://localhost:<port>/api/v1/events/stream?scope=package:<id>"`
+> 看 `-w "%{time_starttransfer}"` 即可。
+
+### 9.9 回归
 
 | 项 | 结果 |
 |---|---|
 | 根 vitest | **643 / 644**（唯一失败 = 已记录的 ELK 负载敏感 flaky，单跑 10/10 绿） |
-| frontend vitest | **850 / 850** |
+| frontend vitest | **854 / 854**（含 SSE 加固的 4 条退避单测） |
 | Go | 全绿 |
 | frontend typecheck | clean |
-| e2e | **110 / 110**（14 spec，17.1 分钟） |
+| e2e | **110 / 110**（14 spec，18.5 分钟） |
 
 新增/变更的测试：
 
@@ -1243,3 +1292,5 @@ M10 的仿真面板判定是 `enableSimulation && stateMachines.length > 0`，
 - `poc-v2/backend/internal/handler/importHandler_test.go`：改建 package +
   权限拒绝两条新用例。
 - `poc-v2/backend/internal/metamodel/registry_test.go`：Part 存在性。
+- `poc-v2/frontend/src/hooks/useCollabStream.test.ts` +4 条（§9.8 的重连退避：
+  指数退避、封顶 30s、默认永不放弃、显式上限才放弃）—— 全文件 **12 / 12**。

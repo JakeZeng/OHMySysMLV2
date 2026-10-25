@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseSseFrames } from './useCollabStream';
+import { parseSseFrames, nextReconnectDelay, shouldGiveUp } from './useCollabStream';
 
 describe('parseSseFrames', () => {
   it('解析单帧：event + data', () => {
@@ -66,5 +66,29 @@ describe('parseSseFrames', () => {
 
   it('空输入 → 空结果', () => {
     expect(parseSseFrames('')).toEqual({ frames: [], rest: '' });
+  });
+});
+
+describe('重连退避（EventSource 免费给的语义，自己实现就得补上）', () => {
+  it('指数退避：1s → 2s → 4s → 8s', () => {
+    expect(nextReconnectDelay(0)).toBe(1000);
+    expect(nextReconnectDelay(1)).toBe(2000);
+    expect(nextReconnectDelay(2)).toBe(4000);
+    expect(nextReconnectDelay(3)).toBe(8000);
+  });
+
+  it('封顶 30s（不封顶的话第 20 次要等 11 天）', () => {
+    expect(nextReconnectDelay(10)).toBe(30_000);
+    expect(nextReconnectDelay(50)).toBe(30_000);
+  });
+
+  it('默认永不放弃（与 EventSource 一致）', () => {
+    expect(shouldGiveUp(0, Number.POSITIVE_INFINITY)).toBe(false);
+    expect(shouldGiveUp(9999, Number.POSITIVE_INFINITY)).toBe(false);
+  });
+
+  it('显式设上限时才放弃', () => {
+    expect(shouldGiveUp(4, 5)).toBe(false);
+    expect(shouldGiveUp(5, 5)).toBe(true);
   });
 });

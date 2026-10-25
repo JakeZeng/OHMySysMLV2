@@ -7,7 +7,7 @@
  * 行为：
  *   - 打开 **fetch 流**到 /api/v1/events/stream?scope=...
  *   - 解析 event: + data: → 分派到 collabStore
- *   - 自动重连（最多 5 次，指数退避）
+ *   - 自动重连（指数退避 + 封顶；**永不放弃**，与 EventSource 一致）
  *   - scope 变化 → 关闭旧连接、打开新连接
  *
  * ## ⚠️ 为什么不用 EventSource（M19 第八轮修的真 bug）
@@ -77,17 +77,58 @@ export function parseSseFrames(buffer: string): { frames: Array<{ type: string; 
 }
 
 interface UseCollabStreamOptions {
-  /** 重连最大次数；默认 5 */
+  /**
+   * 连续失败多少次后**彻底放弃**。
+   *
+   * 默认 `Infinity` —— 与浏览器原生 `EventSource` 一致（它会一直重连）。
+   * ⚠️ 早先的实现默认 5 次，5 次失败后**永久放弃** → 用户不刷新页面就再也
+   * 收不到实时事件（后端重启一次、网络抖一下就中招）。EventSource 免费给的
+   * 语义必须自己补上。
+   */
   maxReconnect?: number;
   /** 重连初始延迟（ms）；默认 1000 */
   reconnectDelay?: number;
+  /** 重连退避上限（ms）；默认 30000 */
+  maxDelay?: number;
+}
+
+/**
+ * 第 `attempt` 次失败后的重连延迟（ms）。
+ *
+ * 指数退避 + **封顶**：`base * 2^attempt`，但不超过 `maxDelay`。
+ * 不封顶的话第 20 次失败要等 10^6 秒（约 11 天）—— 那不叫重连。
+ *
+ * 导出成纯函数是为了能单测（退避语义是「EventSource 免费给」的一部分，
+ * 自己实现就必须钉死）。
+ */
+export function nextReconnectDelay(
+  attempt: number,
+  base = 1000,
+  max = 30_000,
+): number {
+  const raw = base * Math.pow(2, attempt);
+  return Math.min(Number.isFinite(raw) ? raw : max, max);
+}
+
+/**
+ * 是否彻底放弃重连。
+ *
+ * 默认 `maxReconnect = Infinity` → 永不放弃（与 EventSource 一致）。
+ * 显式传有限值时才会在达到上限后停下。
+ */
+export function shouldGiveUp(attempt: number, maxReconnect: number): boolean {
+  return attempt >= maxReconnect;
 }
 
 export function useCollabStream(
   scope: string | null,
   opts: UseCollabStreamOptions = {},
 ): { connected: boolean; lastError: string | null } {
-  const { maxReconnect = 5, reconnectDelay = 1000 } = opts;
+  const {
+    maxReconnect = Number.POSITIVE_INFINITY,
+    reconnectDelay = 1000,
+    maxDelay = 30_000,
+  } = opts;
   const setConnected = useCollabStore((s) => s.setConnected);
   const setLastError = useCollabStore((s) => s.setLastError);
   const setPresence = useCollabStore((s) => s.setPresence);
@@ -97,8 +138,8 @@ export function useCollabStream(
   const lastError = useCollabStore((s) => s.lastError);
 
   // 防止 Effect 内访问 stale closure：用 ref
-  const optsRef = React.useRef({ maxReconnect, reconnectDelay });
-  optsRef.current = { maxReconnect, reconnectDelay };
+  const optsRef = React.useRef({ maxReconnect, reconnectDelay, maxDelay });
+  optsRef.current = { maxReconnect, reconnectDelay, maxDelay };
 
   React.useEffect(() => {
     if (!scope) {
@@ -113,7 +154,6 @@ export function useCollabStream(
     const api = getApi();
     const baseURL = (api.defaults?.baseURL ?? '').replace(/\/+$/, '');
     const url = `${baseURL}/events/stream?scope=${encodeURIComponent(scope)}`;
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     let controller: AbortController | null = null;
     let reconnectAttempt = 0;
     let cancelled = false;
@@ -176,6 +216,10 @@ export function useCollabStream(
     function connect() {
       if (cancelled) return;
       controller = new AbortController();
+      // token **每次连接时重读** —— 登出再登入后 token 变了，
+      // 下一次重连要能用新的（早先只在 effect 建立时读一次，
+      // 拿着过期 token 重连多少次都是 401）。
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
 
       fetch(url, {
         method: 'GET',
@@ -190,7 +234,6 @@ export function useCollabStream(
           if (!resp.ok) {
             throw new Error(`SSE ${resp.status}`);
           }
-          reconnectAttempt = 0;
           setConnected(true);
           setLastError(null);
 
@@ -206,6 +249,10 @@ export function useCollabStream(
             const { frames, rest } = parseSseFrames(buffer);
             buffer = rest;
             for (const f of frames) {
+              // ⚠️ 退避计数**收到第一个帧才归零**。
+              // 若在 HTTP 200 时就归零，「连上就被掐断」的场景退避永远回到 1s
+              // → 变成每秒一次的紧密重连循环（浏览器 EventSource 默认最小间隔 ~3s）。
+              reconnectAttempt = 0;
               dispatch(f.type, f.data);
             }
           }
@@ -215,14 +262,17 @@ export function useCollabStream(
         .catch((err: unknown) => {
           if (cancelled) return;
           setConnected(false);
-          if (reconnectAttempt >= optsRef.current.maxReconnect) {
+          if (shouldGiveUp(reconnectAttempt, optsRef.current.maxReconnect)) {
             setLastError('SSE 连接已断开（已重试上限）');
             return;
           }
-          const delay =
-            optsRef.current.reconnectDelay * Math.pow(2, reconnectAttempt);
+          const delay = nextReconnectDelay(
+            reconnectAttempt,
+            optsRef.current.reconnectDelay,
+            optsRef.current.maxDelay,
+          );
           reconnectAttempt++;
-          setLastError(`SSE 断开，${delay}ms 后重试…（${String(err)}）`);
+          setLastError(`SSE 断开，${Math.round(delay / 1000)}s 后重试…（${String(err)}）`);
           reconnectTimer = setTimeout(connect, delay);
         });
     }
