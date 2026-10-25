@@ -743,6 +743,131 @@ m16-p5 整组用例吃全局 30s 预算，实测单条 26~40s（要开画布、�
 - m17（11 条）+ m18（8 条）**19/19 全绿**；
 - 全量 e2e 见本轮提交记录。
 
+## 二之七、第六轮：需求①规范收口 + 需求②「关系在画布上可见」
+
+第五轮把「体成员」画上画布之后，画布上有了元素，但**没有关系** ——
+官方参考模型在画布上是 **0 条边**。这一轮把两条线一起收掉：
+官方元类名对齐（需求①），以及关系可见（需求②）。
+
+### 7.1 需求①规范收口：`ControlFlow` 不是官方元类
+
+拿官方 JSON Schema（`ptc/25-04-32`，本机 `sysml-schema.json`）逐字查：
+
+```
+ControlFlow 出现次数: 0
+"referenced" 出现次数: 0
+定义里只有: Flow / FlowUsage / FlowDefinition / FlowEnd
+```
+
+两条结论：
+
+| 本项目原状态 | 官方事实 | 处理 |
+|---|---|---|
+| `kind: 'controlFlow'`（`flow` 语句一律落成它） | 官方**没有** `ControlFlow` 元类 | 统一改成官方 `flowUsage` |
+| 遗留项「`ItemUsage.referenced`」 | schema 里**没有** `referenced` 属性（官方用 `~` 引用标记） | **关闭这条遗留**，不要实现 |
+
+`flow` 在官方模型里有三种上下文（part 体 / interface 体 / action 体），
+**都是同一个元类** `FlowUsage` —— 所以不需要按上下文分流，统一即可。
+
+改动面：`ast/model.ts`（`ControlFlow` 接口退役 → `FlowUsage`）、
+`parser/sysml.pegjs`（`kind: 'flowUsage'`）、`transform/textEdit.ts`、
+`frontend/src/components/tree/TreeRow.tsx`（图标键）、
+`tests/officialSyntax.test.ts`（断言）。
+
+### 7.2 🔴 真 bug（解析层）：限定名被截成第 4 个字符
+
+```pegjs
+QualifiedNamePart
+  = head:Identifier tail:(_ "::" _ n:Identifier { return n; })*
+    { return [head, ...tail.map(t => t[3])].join('::'); }   // ← 这里
+```
+
+`tail` 的元素是**动作的返回值**（标识符字符串），不是匹配数组 ——
+`tail.map(t => t[3])` 取的是**字符串的第 4 个字符**：
+
+| 官方写法 | 改造后 | 原因 |
+|---|---|---|
+| `ActionTree::providePower` | `ActionTree::v` | `providePower[3] === 'v'` |
+| `ActionTree::performSelfTest` | `ActionTree::f` | `performSelfTest[3] === 'f'` |
+| `ActionTree::applyParkingBrake` | `ActionTree::l` | `applyParkingBrake[3] === 'l'` |
+| `ActionTree::senseTemperature` | `ActionTree::s` | `senseTemperature[3] === 's'` |
+
+后果：官方模型里 4 个 `perform ActionTree::…` 的名字全错 →
+限定名查找、端点解析全命中不了。
+
+修法：`[head, ...tail].join('::')`（tail 本身就是字符串数组）。
+
+### 7.3 需求②的断点：官方模型画布上 0 条边
+
+三个独立原因，缺一不可：
+
+1. **收集层**：`collectMembers` 只走**包级成员**（`ns.members`），
+   定义体里的 connect / flow / succession **一条都没被收集** ——
+   而官方模型里绝大多数 connect 都写在 part def 体里（第 636 / 699 / 707 行）。
+2. **解析层**：端点解析只认**全局短名**（`nameToPartId`），
+   而官方端点是**相对宿主的路径**：
+   `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;`。
+3. **类型层**：usage 的端口来自**类型的定义** ——
+   `part starterMotor : StarterMotor;`（第 644 行）里的 `starterMotor.gearPort`
+   指的是 `StarterMotor` **定义体里**的端口，usage 自己体里根本没有端口。
+
+### 7.4 做法：层级索引 + 逐层向外解析
+
+`transform/modelToFlow.ts` 新增 `BuildIndex`：
+
+| 表 | 用途 |
+|---|---|
+| 宿主 → 直接成员 | 端点路径逐段下钻 |
+| 宿主 → 端口 | `part.port` 的第二段 |
+| 限定名 → 节点 | `Pkg::Part` 绝对引用 |
+| 节点 → 类型名 | 端口的**类型继承** |
+| 关系桶 | 定义体里收集到的 connect / flow / succession / allocate |
+
+端点解析按官方 §6.4 **逐层向外**：
+
+```
+① 逐层向外下钻：usage scope → 外层 scope → …
+   （官方两种写法都要支持：
+     `part vehicle_b { part differential; connect differential.leftDiffPort … }`  ← 第一层
+     `interface X { connect engine.drivePwrPort … }`                       ← 第二层，宿主 part def 里的）
+② 限定名（精确 → 后缀匹配，支持相对限定名 `ActionTree::providePower`）
+③ 短名兜底（先 part，再端口）
+```
+
+端口查找**支持多级类型继承**（usage → usage → definition）。
+
+关系语句统一画成边，用 `data.semantics.kind` 区分
+（`connection` 蓝 / `flowUsage` 青 / `successionAsUsage` 紫 / `allocation` 绿虚线）。
+
+### 7.5 顺带的画布补齐
+
+- **体成员的端口徽标**上画布（官方模型徽标数 62 → **80**）；
+- **端口里的嵌套端口**（官方第 571 行 `port x { port y; }`）也画 ——
+  否则第 334 行的 connect 端点找不到；
+- **有名字的 flowUsage** 是官方 usage（命名空间成员）→ **画成节点**；
+  无名的不画（无名 flow 不是元素）。
+
+### 7.6 能力边界（明确记录，不是 bug）
+
+端点是**特性**的流画不出边 —— 端口内特性 / action 的 in-out 参数 / 属性
+在本产品里用**数量徽标**表达，**不是画布节点**。
+
+官方模型 69 条关系（21 connection + 8 flow + 33 succession + 7 allocation）里，
+**28 条**能画成边，剩下 41 条的端点全部是特性级。
+
+要再往上走，需要把「特性」也建成节点（官方 §7.5 的 Feature 层级），
+那是下一轮的「特性建模」专题。
+
+### 7.7 回归
+
+- 新增 `poc-v2/tests/relationVisibility.test.ts`（**12 条**）：官方模型有边、
+  定义体里的四种关系都画成边、端点逐层向外解析、端口类型继承（单级/多级）、
+  `flow` 的 kind 是官方 `flowUsage`、有名字的 flowUsage 上画布、限定名不被截断。
+- `tests/officialSyntax.test.ts` 加第 **28b** 条：`flow` 的 kind 必须是官方
+  `FlowUsage`，且**不得**出现 `controlFlow`。
+- 根 vitest **616/616**（30 文件）、frontend **816/816**、Go 全绿、typecheck clean。
+
+
 
 
 

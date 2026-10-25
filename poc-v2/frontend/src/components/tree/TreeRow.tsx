@@ -62,7 +62,7 @@ const ELEMENT_KIND_META: Record<string, { icon: string; color: string }> = {
   joinUsage: { icon: '🔗', color: 'text-violet-600 dark:text-violet-300' },
   forkUsage: { icon: '🌿', color: 'text-violet-600 dark:text-violet-300' },
   successionAsUsage: { icon: '⏭️', color: 'text-violet-600 dark:text-violet-300' },
-  controlFlow: { icon: '🔀', color: 'text-violet-600 dark:text-violet-300' },
+  flowUsage: { icon: '🔀', color: 'text-violet-600 dark:text-violet-300' },
   // 分析 / 验证 / 计算
   analysisUsage: { icon: '📊', color: 'text-sky-600 dark:text-sky-300' },
   analysisDef: { icon: '📊', color: 'text-sky-600 dark:text-sky-300' },

@@ -216,7 +216,7 @@ export type PartBodyMember =
   | PortUsage
   | ItemUsage
   | OccurrenceUsage
-  | ControlFlow
+  | FlowUsage
   | SuccessionAsUsage
   | PerformActionUsage
   | ExhibitStateUsage
@@ -388,7 +388,8 @@ export interface Activity extends SysMLNode {
   kind: 'activity';
   name: string;
   actions: ActionDefinition[];
-  flows: ControlFlow[];
+  /** 活动体内的流（官方 FlowUsage —— 见下方说明，没有官方的 ControlFlow） */
+  flows: FlowUsage[];
 }
 
 export interface ActionDefinition extends SysMLNode {
@@ -396,17 +397,6 @@ export interface ActionDefinition extends SysMLNode {
   name: string;
   isInitial?: boolean;
   isFinal?: boolean;
-}
-
-export interface ControlFlow extends SysMLNode {
-  kind: 'controlFlow';
-  source: string;
-  target: string;
-  guard?: string;
-  /** 官方 §7.14：`flow of <Type> from a to b;` 的载荷类型 */
-  payloadType?: string;
-  /** 官方 §7.14：`flow <name> from a to b;` 的名字 */
-  name?: string;
 }
 
 /**
@@ -418,6 +408,44 @@ export interface SuccessionAsUsage extends SysMLNode {
   kind: 'successionAsUsage';
   source: string;
   target: string;
+  /** 官方允许给接续命名（`succession s1 from a to b;`）；无名时不算命名空间成员 */
+  name?: string;
+}
+
+/**
+ * `flow of Fuel from fuelOutPort.fuel to fuelInPort.fuel;` —— 官方 **FlowUsage**。
+ *
+ * ## 为什么统一叫 FlowUsage（规范收口，需求①）
+ *
+ * 官方 JSON Schema（`ptc/25-04-32`）里**根本没有 `ControlFlow` 这个元类**
+ * （全文出现 0 次），只有 `Flow` / `FlowUsage` / `FlowDefinition` / `FlowEnd`。
+ *
+ * 改造前本项目把 `flow` 语句一律落成 `kind: 'controlFlow'` —— 那是**早期
+ * SysML v2 草案**的说法，2025 版正式规范已经没有了。于是：
+ *
+ *   - 模型里出现了一个官方不存在的 kind，JSON 导出时无法映射回官方元类；
+ *   - 「流」丢掉了「连接的一种用法」这层身份（官方 FlowUsage 是
+ *     ConnectionUsage 的兄弟），端口方向 / 载荷类型这类校验没有落脚点。
+ *
+ * 官方模型里 `flow` 的三种上下文（`ptc/25-04-31`）都是**同一个** metaclass：
+ *
+ *   - 第 316 / 321 行（interface def 体）：端口 → 端口的信息流；
+ *   - 第 737 行（part def 体）：`flow generateToAmplify from a to b;`（**有名字**，
+ *     因此它是一个**命名空间成员**，要进树）；
+ *   - 第 759 / 764 行（action 体）：动作之间的流（端点是 action 的 in/out 特性）。
+ */
+export interface FlowUsage extends SysMLNode {
+  kind: 'flowUsage';
+  /** 官方允许给流命名（`flow generateToAmplify from a to b;`）；无名时不算命名空间成员 */
+  name?: string;
+  /** 源端点（带点路径，如 `fuelOutPort.fuel`） */
+  source: string;
+  /** 目标端点（带点路径） */
+  target: string;
+  /** `flow of <Type> …` 的载荷类型 */
+  payloadType?: string;
+  /** 官方 §7.14 的守卫（`if <cond>`） */
+  guard?: string;
 }
 
 // ─── Requirement（M5 需求视图）─────────────────────────────────────────

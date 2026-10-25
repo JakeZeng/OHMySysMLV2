@@ -562,7 +562,7 @@ export function renameNode(
 
   // 2) 修改所有引用 —— M16 P0：AST 作用域解析（替代全文 \bName\b 正则）。
   //    只有真正在 AST 上引用了该声明的语句（connect 端点 / usage typeRef /
-  //    transition / controlFlow / trace 端点）才会在其语句范围内做名字替换，
+  //    transition / flowUsage / trace 端点）才会在其语句范围内做名字替换，
   //    注释、文档字符串、同名无关元素不再被误伤。
   if (REFERENCED_DECL_KINDS.has(decl.kind)) {
     const seen = new Set<number>([nameOffset]);
@@ -689,7 +689,7 @@ function collectReferenceSpans(
         }
         break;
       // ── M18：`flow A to B` 的端点按动作名引用 ──
-      case 'controlFlow':
+      case 'flowUsage':
         if (decl.kind === 'actionDef' && (n.source === name || n.target === name)) {
           push(off, findStatementEnd(text, off));
         }
@@ -1054,12 +1054,12 @@ function findRelationStmt(
       if (
         m.kind === 'connection' ||
         m.kind === 'transition' ||
-        m.kind === 'controlFlow' ||
+        m.kind === 'flowUsage' ||
         m.kind === 'trace' ||
         m.kind === 'allocation'
       ) {
         if (m.id === astId) return m;
-        // transition / controlFlow 嵌在 stateMachine / activity 的 body 里，
+        // transition / flowUsage 嵌在 stateMachine / activity 的 body 里，
         // 不在 Package.members 的顶层 —— 必须下潜一层。
         if (Array.isArray(m.transitions)) {
           const hit = m.transitions.find((t: any) => t?.id === astId);

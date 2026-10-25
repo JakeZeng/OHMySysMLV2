@@ -213,32 +213,47 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // 所在的路径去拼：connect 写在模型根上引用包里的 part 时，两者是不同的前缀。
   const nameToQName = new Map<string, string>();
   const partToPortIds = new Map<string, Map<string, string>>();
+  // M19 第六轮：层级索引（端点路径解析 + 关系语句收集）
+  const index: BuildIndex = {
+    keys,
+    nodeChildren: new Map(),
+    partToPortIds,
+    qnameToNodeId: new Map(),
+    nodeTypeRef: new Map(),
+    nameToPartId,
+    nameToQName,
+    relations: [],
+  };
 
   // 3. 节点构造（结构视图）
   for (const { node: pd, qname } of partDefs) {
     const id = `pd:${pd.id}`;
     nameToPartId.set(pd.name, id);
     nameToQName.set(pd.name, qname);
+    index.qnameToNodeId.set(qname, id);
     nodes.push(makePartDefNode(id, pd, keys.alloc(elementKeyBase('partDef', qname))));
     partToPortIds.set(id, collectPortNodes(nodes, pd.body, id, qname, keys));
     // M19 需求②：定义体里的成员也要在画布上看得见（见 collectBodyMembers）
-    collectBodyMembers(nodes, pd.body, qname, keys);
+    collectBodyMembers(nodes, pd.body, qname, id, [id], index);
   }
   for (const { node: pu, qname } of partUsages) {
     const id = `${pu.kind === 'itemUsage' ? 'iu' : 'pu'}:${pu.id}`;
     nameToPartId.set(pu.name, id);
     nameToQName.set(pu.name, qname);
+    index.qnameToNodeId.set(qname, id);
+    if (pu.typeRef) index.nodeTypeRef.set(id, pu.typeRef);
     nodes.push(
       pu.kind === 'itemUsage'
         ? makeItemUsageNode(id, pu, keys.alloc(elementKeyBase('itemUsage', qname)))
         : makePartUsageNode(id, pu, keys.alloc(elementKeyBase('partUsage', qname))),
     );
     partToPortIds.set(id, collectPortNodes(nodes, pu.body, id, qname, keys));
-    collectBodyMembers(nodes, pu.body, qname, keys);
+    collectBodyMembers(nodes, pu.body, qname, id, [id], index);
   }
   // M17 S7.2：reference usage —— 无 body，不建端口子节点
   for (const { node: ru, qname } of referenceUsages) {
     const id = `ru:${ru.id}`;
+    index.qnameToNodeId.set(qname, id);
     nodes.push(makeReferenceUsageNode(id, ru, keys.alloc(elementKeyBase('referenceUsage', qname))));
   }
   for (const { node: portDef, qname } of portDefs) {
@@ -248,9 +263,10 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   // M17 S5a：item / attribute / interface def
   for (const { node: sd, qname } of structureDefs) {
     const id = `sd:${sd.id}`;
+    index.qnameToNodeId.set(qname, id);
     nodes.push(makeStructureDefNode(id, sd, keys.alloc(elementKeyBase(sd.kind, qname))));
     partToPortIds.set(id, collectPortNodes(nodes, sd.body, id, qname, keys));
-    collectBodyMembers(nodes, sd.body, qname, keys);
+    collectBodyMembers(nodes, sd.body, qname, id, [id], index);
   }
   // M19 需求①：官方新增的那批元素（metadata / variant / individual / analysis …）
   for (const { node: g, qname } of genericUsages) {
@@ -269,8 +285,9 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     }
     const id = `usage:${g.id}`;
     nodes.push(makeGenericUsageNode(id, g, keys.alloc(elementKeyBase(g.kind, qname))));
+    index.qnameToNodeId.set(qname, id);
     // 通用节点也可能有体（`individual a { timeslice … { … } }` / `use case u { join j; }`）
-    collectBodyMembers(nodes, g.body, qname, keys);
+    collectBodyMembers(nodes, g.body, qname, id, [id], index);
     // exhibit state 的状态在 `states` 字段（不在 body）
     collectExhibitStates(nodes, g, qname, keys);
   }
@@ -387,8 +404,9 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
     const id = `req:${req.id}`;
     reqNameToId.set(req.name, id);
     nodes.push(makeRequirementNode(id, req.name, req.reqId, req.text, keys.alloc(elementKeyBase('req', qname))));
+    index.qnameToNodeId.set(qname, id);
     // 需求体里的成员（requirement usage / objective / verify / require …）
-    collectBodyMembers(nodes, req.body, qname, keys);
+    collectBodyMembers(nodes, req.body, qname, id, [id], index);
   }
 
   // 3e. 节点构造（M5 约束块）
@@ -449,6 +467,17 @@ function buildGraph(model: SysMLModel, layout: LayoutFn, exposedExternal?: Expos
   //     提前遍历会一条都解析不出端点。
   for (const { node: alloc } of allocations) {
     const edge = makeAllocationEdge(alloc, nameToPartId, nameToQName, keys);
+    if (edge) edges.push(edge);
+  }
+
+  // 4c. M19 第六轮：**定义体里**的关系（connect / flow / succession / allocate）。
+  //
+  // 官方模型里绝大多数 connect 都写在 part def 体内（ptc/25-04-31 第 636 /
+  // 699 / 707 行等），端点是**相对宿主**的路径
+  // （`connect engine.drivePwrPort to transmission.clutchPort;`）。
+  // 改造前只收集包级成员 → 这些关系一条都没进画布（官方模型 edges = 0）。
+  for (const rel of index.relations) {
+    const edge = makeRelationEdge(rel, index, nameToPartId, nameToQName, keys);
     if (edge) edges.push(edge);
   }
 
@@ -770,7 +799,7 @@ function collectPortNodes(
   keys: StableKeys
 ): Map<string, string> {
   const portIds = new Map<string, string>();
-  for (const m of body) {
+  for (const m of body ?? []) {
     if (m.kind === 'portUsage') {
       const portId = `port:${m.id}`;
       portIds.set(m.name ?? '', portId);
@@ -826,16 +855,57 @@ function collectPortNodes(
  *     会把画布塞满小方块
  *   - `connection` / `allocation` —— 它们是**边**，不是节点
  *   - `doc` / `import` / `alias` / 注释 —— 不是元素
- *   - `controlFlow` / `successionAsUsage` —— 同样是语句（画成边更合适）
+ *   - `flowUsage` / `successionAsUsage` —— 同样是语句（画成边更合适）
  */
 function collectBodyMembers(
   out: Node[],
   body: readonly any[] | undefined,
   ownerQName: string,
-  keys: StableKeys,
+  ownerNodeId: string | null,
+  scopes: string[],
+  index: BuildIndex,
 ): void {
+  const keys = index.keys;
   for (const m of body ?? []) {
     const kind = m.kind as string;
+
+    // ── 关系语句（官方 §7.12 / §7.14 / §7.15 / §7.20）─────────────
+    //
+    // 连接 / 流 / 接续 / 分配都是**关系**，不是节点 —— 画成边。
+    // 但它们**写在定义体里**（官方模型里绝大多数 connect 都在 part def 体内），
+    // 改造前只收集包级成员 → 定义体里的关系一条都没进画布。
+    //
+    // ⚠️ `flowUsage` 例外：官方 FlowUsage **有名字时是一个 usage**
+    //    （`flow generateToAmplify from a to b;` → 它是命名空间成员），
+    //    所以有名字的 flowUsage 既画成节点（需求②等价性）也画成边。
+    if (
+      kind === 'connection' ||
+      kind === 'allocation' ||
+      kind === 'flowUsage' ||
+      kind === 'successionAsUsage'
+    ) {
+      index.relations.push({ kind, node: m, scopes, ownerQName });
+      // 关系语句**可以带体**（官方第 1230 行 `then action a { action b; }`），
+      // 体里是真正的元素 → 必须继续下潜，否则体里的动作全丢。
+      if (Array.isArray(m.body) && m.body.length > 0) {
+        collectBodyMembers(
+          out,
+          m.body,
+          joinQName([ownerQName], m.name ?? ''),
+          null,
+          scopes,
+          index,
+        );
+      }
+      if (kind === 'flowUsage' && m.name) {
+        const qname = joinQName([ownerQName], m.name);
+        const id = `usage:${m.id}`;
+        out.push(makeGenericUsageNode(id, m, keys.alloc(elementKeyBase('flowUsage', qname))));
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
+      }
+      continue;
+    }
 
     // 端口 / 语句本身不画，但它们的**体**里可能有元素 ——
     // 官方写法里就有：`port redefines setSpeedPort { event occurrence x; }`
@@ -844,8 +914,28 @@ function collectBodyMembers(
     //
     // ⚠️ 这段必须在「跳过列表」**之前** —— 端口/语句在列表里，
     //    先 continue 就永远走不到这里。
-    if (kind === 'portUsage' || kind === 'successionAsUsage' || kind === 'satisfy') {
-      collectBodyMembers(out, m.body, joinQName([ownerQName], m.name), keys);
+    if (kind === 'portUsage' || kind === 'satisfy') {
+      if (kind === 'portUsage') {
+        // 端口里的**嵌套端口**（官方 `port x { port y; }`，ptc/25-04-31 第 571 行）
+        // 也得画出来 —— 官方第 334 行的 connect 端点就是这种嵌套端口。
+        //
+        // ⚠️ 嵌套端口的 parentId 是**宿主卡片**（端口徽标本身不是卡片），
+        //    所以它挂在 owner 的边框上，和 owner 自己的端口并列。
+        const nested = collectPortNodes(
+          out,
+          m.body,
+          ownerNodeId,
+          joinQName([ownerQName], m.name ?? ''),
+          keys,
+        );
+        if (ownerNodeId) {
+          const ownerPorts = index.partToPortIds.get(ownerNodeId);
+          if (ownerPorts) {
+            for (const [name, id] of nested) ownerPorts.set(name, id);
+          }
+        }
+      }
+      collectBodyMembers(out, m.body, joinQName([ownerQName], m.name), null, scopes, index);
       continue;
     }
 
@@ -853,10 +943,6 @@ function collectBodyMembers(
     if (
       kind === 'portUsage' ||
       kind === 'attributeUsage' ||
-      kind === 'connection' ||
-      kind === 'allocation' ||
-      kind === 'controlFlow' ||
-      kind === 'successionAsUsage' ||
       kind === 'doc' ||
       kind === 'import' ||
       kind === 'alias' ||
@@ -878,25 +964,48 @@ function collectBodyMembers(
             ? makeItemUsageNode(id, m, keys.alloc(elementKeyBase('itemUsage', qname)))
             : makePartUsageNode(id, m, keys.alloc(elementKeyBase('partUsage', qname))),
         );
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
+        if (m.typeRef) index.nodeTypeRef.set(id, m.typeRef);
+        // 体成员的**端口**也要画（官方 connect 的端点常常是「体成员的端口」：
+        // `connect engine.drivePwrPort to transmission.clutchPort;`
+        //  —— engine / transmission 都是 part def 体里的 usage）。
+        index.partToPortIds.set(
+          id,
+          collectPortNodes(out, m.body, id, qname, keys),
+        );
         // 用法体里还能再套一层（`part a { part b { … } }`）
-        collectBodyMembers(out, m.body, qname, keys);
+        // ⚠️ usage **不是**命名空间 → 关系语句的上下文保持外层
+        collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
         break;
       }
       case 'referenceUsage': {
         const id = `ru:${m.id}`;
         out.push(makeReferenceUsageNode(id, m, keys.alloc(elementKeyBase('referenceUsage', qname))));
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
         break;
       }
       case 'partDef': {
         const id = `pd:${m.id}`;
         out.push(makePartDefNode(id, m, keys.alloc(elementKeyBase('partDef', qname))));
-        collectBodyMembers(out, m.body, qname, keys);
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
+        index.partToPortIds.set(
+          id,
+          collectPortNodes(out, m.body, id, qname, keys),
+        );
+        // part def 是命名空间 → 它体里关系语句的上下文就是它自己
+        collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
         break;
       }
       case 'portDef': {
         const id = `portdef:${m.id}`;
         out.push(makePortDefNode(id, m, keys.alloc(elementKeyBase('portDef', qname))));
-        collectBodyMembers(out, m.body, qname, keys);
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
+        // port 是命名空间
+        collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
         break;
       }
       case 'stateMachine': {
@@ -920,6 +1029,8 @@ function collectBodyMembers(
       case 'activity': {
         const id = `act:${m.id}`;
         out.push(makeActivityNode(id, m, keys.alloc(elementKeyBase('activity', qname))));
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
         for (const a of m.actions ?? []) {
           out.push(
             makeActionNode(
@@ -939,8 +1050,10 @@ function collectBodyMembers(
         out.push(
           makeRequirementNode(id, m.name, m.reqId, m.text, keys.alloc(elementKeyBase('requirement', qname))),
         );
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
         // 需求体里的成员（subject / objective / verify / requirement usage …）
-        collectBodyMembers(out, m.body, qname, keys);
+        collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
         break;
       }
       case 'constraintBlock': {
@@ -948,11 +1061,15 @@ function collectBodyMembers(
         out.push(
           makeConstraintBlockNode(id, m.name, m.constraint, keys.alloc(elementKeyBase('constraintBlock', qname))),
         );
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
         break;
       }
       case 'exhibitStateUsage': {
         const id = `usage:${m.id}`;
         out.push(makeGenericUsageNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
+        registerChild(index, ownerNodeId, m.name, id);
+        index.qnameToNodeId.set(qname, id);
         // 官方 exhibit state 的状态在 `states` 字段
         collectExhibitStates(out, m, qname, keys);
         break;
@@ -962,20 +1079,189 @@ function collectBodyMembers(
         if (STRUCTURE_DEF_KINDS.has(kind)) {
           const id = `sd:${m.id}`;
           out.push(makeStructureDefNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
-          collectBodyMembers(out, m.body, qname, keys);
+          registerChild(index, ownerNodeId, m.name, id);
+          index.qnameToNodeId.set(qname, id);
+          index.partToPortIds.set(
+            id,
+            collectPortNodes(out, m.body, id, qname, keys),
+          );
+          // Definition 类是命名空间；attributeDef 不是
+          const isNs = NAMESPACE_DEF_KINDS.has(kind);
+          collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
           break;
         }
         // M19 需求①：官方新增的那批用法元素 → 通用节点
         if (GENERIC_USAGE_KINDS.has(kind)) {
           const id = `usage:${m.id}`;
           out.push(makeGenericUsageNode(id, m, keys.alloc(elementKeyBase(kind, qname))));
+          registerChild(index, ownerNodeId, m.name, id);
+          index.qnameToNodeId.set(qname, id);
           // 通用节点也可能有体（`individual a { timeslice … { … } }`）
-          collectBodyMembers(out, m.body, qname, keys);
+          collectBodyMembers(out, m.body, qname, id, [...scopes, id], index);
         }
         break;
       }
     }
   }
+}
+
+/**
+ * 把一个成员登记到宿主的「直接成员表」里（端点路径逐段下钻要用）。
+ *
+ * 官方模型里的端点路径是**相对宿主**的：
+ * `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;`
+ * —— `differential` / `rearAxle` 都是宿主 part def **体里**的成员。
+ */
+function registerChild(
+  index: BuildIndex,
+  ownerNodeId: string | null,
+  name: string | undefined,
+  nodeId: string,
+): void {
+  if (!ownerNodeId || !name) return;
+  let children = index.nodeChildren.get(ownerNodeId);
+  if (!children) {
+    children = new Map<string, string>();
+    index.nodeChildren.set(ownerNodeId, children);
+  }
+  children.set(name, nodeId);
+}
+
+/**
+ * 把端点路径拆成**段**。
+ *
+ * 官方同时用两种分隔符：
+ *   - `.` —— 成员访问（`rearAxle.leftHalfAxle.leftAxleToDiffPort`）
+ *   - `::` —— 命名空间限定（`ActionTree::providePower.generateToAmplify`）
+ * 两种都当分隔符处理。
+ */
+function endpointSegments(path: string): string[] {
+  return path
+    .split(/::|\./)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * 查一个节点的端口（徽标节点 id），**含类型继承**。
+ *
+ * 官方 SysML v2：usage 的端口来自**它的类型的定义** ——
+ * `part starterMotor : StarterMotor;`（官方第 644 行）里的
+ * `starterMotor.gearPort` 指的是 `StarterMotor` **定义体里**的端口，
+ * 不是 usage 自己体里的（usage 体里根本没有端口）。
+ *
+ * 不做这一步，官方模型里大量 `connect engine.drivePwrPort to …` 的端点
+ * 就解析不到 → 边画不出来。
+ */
+function lookupPort(
+  index: BuildIndex,
+  nodeId: string,
+  portName: string,
+  depth = 0,
+): string | null {
+  const direct = index.partToPortIds.get(nodeId)?.get(portName);
+  if (direct) return direct;
+  // 类型继承链要能走多级：`vehicle_b_1` 的类型是 `vehicle_b`（usage），
+  // 而 vehicle_b 的类型又是 `Vehicle`（definition）→ 端口在最后一层。
+  if (depth > 4) return null;
+  const typeRef = index.nodeTypeRef.get(nodeId);
+  if (!typeRef) return null;
+  const defId = lookupTypeNode(index, typeRef);
+  if (!defId || defId === nodeId) return null;
+  return lookupPort(index, defId, portName, depth + 1);
+}
+
+/**
+ * 按**类型名**找到类型定义/用法所在的节点。
+ *
+ * 类型名可能是：
+ *   - 短名（`StarterMotor`）；
+ *   - **限定名**（`ContextDefinitions::Driver`，官方第 1451 行）；
+ *   - 相对限定名（`ActionTree::providePower`）—— 我们的限定名是**绝对**的
+ *     （`Path::ContextDefinitions::Driver`），所以要**后缀匹配**。
+ */
+function lookupTypeNode(index: BuildIndex, typeRef: string): string | null {
+  const exact = index.qnameToNodeId.get(typeRef);
+  if (exact) return exact;
+  const short = index.nameToPartId.get(typeRef);
+  if (short) return short;
+  // 后缀匹配：`X::Y::Driver` 以 `::Y::Driver` 结尾
+  const suffix = `::${typeRef}`;
+  for (const [qname, id] of index.qnameToNodeId) {
+    if (qname.endsWith(suffix)) return id;
+  }
+  return null;
+}
+
+/**
+ * 解析一个端点 → 画布节点 id（解析不到返回 null）。
+ *
+ * ## 作用域链：逐层向外（官方 §6.4 名称解析）
+ *
+ * 官方 SysML v2 的名称解析是**逐层向外**的：先在当前 scope（usage 自己的成员）
+ * 找，找不到再往外层（enclosing namespace）找。
+ *
+ * 官方模型里两种写法都真实存在，必须都支持：
+ *
+ *   - `part vehicle_b : Vehicle { part differential : Differential; … }`
+ *     体里的 `connect differential.leftDiffPort to …`
+ *     → `differential` 是**这个 usage 自己**的成员（第 636 行）；
+ *   - `interface engineToTransmissionInterface:EngineToTransmissionInterface
+ *     { connect engine.drivePwrPort to transmission.clutchPort; }`
+ *     → `engine` 不在 interface usage 里，而是**宿主 part def 体里**的成员
+ *       （第 699 行）→ 要再往外一层才找得到。
+ *
+ * 所以作用域链 = [直接父成员, 命名空间宿主]，逐个试，最后再按全局短名兜底。
+ */
+function resolveEndpointNode(
+  path: string,
+  scopes: (string | null)[],
+  index: BuildIndex,
+  nameToPartId: Map<string, string>,
+): string | null {
+  const segs = endpointSegments(path);
+  if (segs.length === 0) return null;
+
+  // ① 逐层向外下钻
+  for (const scope of scopes) {
+    if (!scope) continue;
+    let cur: string | null = scope;
+    for (const seg of segs) {
+      if (!cur) break;
+      const child = index.nodeChildren.get(cur)?.get(seg);
+      if (child) {
+        cur = child;
+        continue;
+      }
+      const port = lookupPort(index, cur, seg);
+      if (port) {
+        cur = port;
+        continue;
+      }
+      cur = null;
+    }
+    if (cur) return cur;
+  }
+
+  // ② 限定名（`::` 连接）
+  const byQName = index.qnameToNodeId.get(segs.join('::'));
+  if (byQName) return byQName;
+  // ②b 相对限定名 → 绝对限定名的后缀匹配
+  const suffix = `::${segs.join('::')}`;
+  for (const [qname, id] of index.qnameToNodeId) {
+    if (qname.endsWith(suffix)) return id;
+  }
+
+  // ③ 短名兜底（只有一段时）：先查 part，再查**端口**（跨包的端口只能按名找）
+  if (segs.length === 1) {
+    const byName = nameToPartId.get(segs[0]);
+    if (byName) return byName;
+    for (const ports of index.partToPortIds.values()) {
+      const hit = ports.get(segs[0]);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1131,6 +1417,74 @@ function makeEdge(
 }
 
 /**
+ * M19 第六轮：**定义体里**的关系语句 → 画布边。
+ *
+ * 四种关系的端点形状不同，统一先转成「路径字符串」再解析：
+ *
+ * | kind | 端点字段 | 官方例子（ptc/25-04-31） |
+ * |---|---|---|
+ * | `connection` | `{ partName, portName? }` | 第 636 行 `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;` |
+ * | `flowUsage` | `source` / `target`（字符串路径） | 第 321 行 `flow of Fuel from fuelOutPort.fuel to fuelInPort.fuel;` |
+ * | `successionAsUsage` | `source` / `target` | 第 780 行 `first vehicle.doorClosed then driver.driverReady;` |
+ * | `allocation` | `source` / `target` | 第 505 行 `allocate vehicleLogical to vehicle_b;` |
+ */
+function makeRelationEdge(
+  rel: RelationStmt,
+  index: BuildIndex,
+  nameToPartId: Map<string, string>,
+  nameToQName: Map<string, string>,
+  keys: StableKeys,
+): Edge | null {
+  const n = rel.node;
+  const srcPath =
+    rel.kind === 'connection'
+      ? [n.source?.partName, n.source?.portName].filter(Boolean).join('.')
+      : String(n.source ?? '');
+  const tgtPath =
+    rel.kind === 'connection'
+      ? [n.target?.partName, n.target?.portName].filter(Boolean).join('.')
+      : String(n.target ?? '');
+  if (!srcPath || !tgtPath) return null;
+
+  const srcId = resolveEndpointNode(srcPath, rel.scopes, index, nameToPartId);
+  const tgtId = resolveEndpointNode(tgtPath, rel.scopes, index, nameToPartId);
+  if (!srcId || !tgtId) return null;
+
+  // 视觉语义：连接=蓝、流=青、接续=紫、分配=绿虚线
+  const stroke =
+    rel.kind === 'connection' ? '#1890ff' :
+    rel.kind === 'flowUsage' ? '#13c2c2' :
+    rel.kind === 'successionAsUsage' ? '#722ed1' :
+    '#52c41a';
+
+  return {
+    id: `edge:${n.id}`,
+    source: srcId,
+    target: tgtId,
+    // 与结构连线同款自定义边（端点由锚点算，见 AnchoredEdge.tsx）
+    type: 'anchored',
+    label: n.name,
+    animated: false,
+    style: { stroke, strokeWidth: 2, strokeDasharray: rel.kind === 'allocation' ? '6 4' : undefined },
+    data: {
+      location: n.location,
+      stableKey: keys.alloc(connKeyBase(srcPath, tgtPath)),
+      semantics: {
+        kind: rel.kind,
+        name: n.name,
+        sourceRef: srcPath,
+        targetRef: tgtPath,
+        sourcePort: rel.kind === 'connection' ? n.source?.portName : undefined,
+        targetPort: rel.kind === 'connection' ? n.target?.portName : undefined,
+        ownerQName: rel.ownerQName,
+        // 流的载荷类型（官方 §7.14 `flow of <Type>`）
+        payloadType: n.payloadType,
+      },
+    } as EdgeData,
+  };
+}
+
+/**
  * §7.12 分配边 —— `allocate <logical> to <physical>;`
  *
  * 改造前**完全没有这条渲染路径**：语法能解析、校验能过、`addConnection`
@@ -1245,6 +1599,76 @@ interface Buckets {
 }
 
 /**
+ * M19 第六轮：定义体成员里的**关系语句**（connect / flow / succession / allocate）。
+ *
+ * ## 为什么要单独收一层
+ *
+ * 这些语句既可能写在**命名空间层**（包里），也可能写在**定义体**里。
+ * 而它们的**端点是相对宿主的路径** —— 官方模型里的写法是
+ * `connect differential.leftDiffPort to rearAxle.leftHalfAxle.leftAxleToDiffPort;`
+ * （ptc/25-04-31 第 636 行），这里的 `differential` / `rearAxle` 都是
+ * **宿主 part def 体里的成员**，不是全局名。
+ *
+ * 改造前 `collectMembers` 只走**包级成员**，定义体里的 connect / flow /
+ * succession 一条都没被收集 → 官方模型画布上 **0 条边**。
+ *
+ * ## 上下文是「最近的命名空间宿主」，不是直接父成员
+ *
+ * 官方的名称解析规则：usage 里的成员归属于**最近的命名空间所有者**
+ * （Namespace owner），而不是 usage 本身 —— usage 不是命名空间。
+ *
+ * 这条规则在官方模型里是刚需：绝大多数 connect 写在
+ * `interface engineToTransmissionInterface:EngineToTransmissionInterface
+ * { connect engine.drivePwrPort to transmission.clutchPort; }`
+ * （第 699 行）—— interface usage **不是**命名空间，里面的 `engine` /
+ * `transmission` 指的是**宿主 part def 体里**的同名成员。
+ *
+ * 所以关系语句的上下文 = 最近的 **part def / interface def / …**（命名空间类），
+ * 穿过 usage / interface usage / action usage 时**不下降**。
+ */
+interface RelationStmt {
+  kind: 'connection' | 'allocation' | 'flowUsage' | 'successionAsUsage';
+  /** AST 节点原样（端点字段形状各不相同） */
+  node: any;
+  /**
+   * 祖先 scope 链（**外 → 内**）—— 官方名称解析逐层向外时要找的每一层。
+   *
+   * 例：官方 `interface engineToTransmissionInterface:… { connect engine.drivePwrPort to … }`
+   * （第 699 行）里的 `engine` 是**宿主 part usage 体里**的成员 →
+   * 链 = [宿主 part usage, 这个 interface usage] → 往外一层就找得到。
+   */
+  scopes: string[];
+  /** 命名空间宿主的限定名（写进边的语义，供属性窗展示） */
+  ownerQName: string;
+}
+
+/**
+ * 画图期间的**层级索引**。
+ *
+ * 端点解析要能回答「这个路径指的是哪个节点」，需要三层信息：
+ *   ① 宿主 → 直接成员（相对路径逐段下钻）；
+ *   ② 宿主 → 端口（`part.port` 的第二段是端口徽标）；
+ *   ③ 限定名 → 节点（`Pkg::Part` 形式的绝对引用）。
+ */
+interface BuildIndex {
+  keys: StableKeys;
+  /** 节点 id → (直接成员名 → 成员节点 id) */
+  nodeChildren: Map<string, Map<string, string>>;
+  /** 节点 id → (端口名 → 端口徽标节点 id) */
+  partToPortIds: Map<string, Map<string, string>>;
+  /** 限定名 → 节点 id */
+  qnameToNodeId: Map<string, string>;
+  /** 节点 id → 它的类型名（usage 的 typeRef）—— 用于端口的类型继承查找 */
+  nodeTypeRef: Map<string, string>;
+  /** 短名 → 节点 id（全局表，端口继承查找用） */
+  nameToPartId: Map<string, string>;
+  /** 短名 → 限定名 */
+  nameToQName: Map<string, string>;
+  /** 待画边的关系语句 */
+  relations: RelationStmt[];
+}
+
+/**
  * StructureDefinition 的 11 个 kind（itemDef / attributeDef / interfaceDef /
  * occurrenceDef / connectionDef / actionDefinition / stateDefinition /
  * calcDefinition / useCaseDef / analysisCaseDef / verificationCaseDef）。
@@ -1272,8 +1696,32 @@ const STRUCTURE_DEF_KINDS = new Set<string>([
  *    / `alias` 这类**不是元素**的语句也画成节点，画布上多出一堆噪音。
  *    白名单 = 「确实是官方元素、且当前没有专用节点类型」的那一批。
  */
-const GENERIC_USAGE_KINDS = new Set<string>([
-  'actionUsage',
+/**
+ * 哪些 definition kind 是**命名空间**（官方 SysML v2：Namespace 的子类 =
+ * Package / Definition / View / Viewpoint）。
+ *
+ * 官方名称解析规则：usage 里的成员归属于**最近的命名空间所有者**，
+ * 而不是 usage 本身。所以关系语句的端点上下文 = 最近的命名空间宿主。
+ *
+ * ⚠️ `attributeDef` **不是**命名空间（AttributeDefinition 没有成员），
+ *    `individualDef` 也不是（Individual 是实例不是容器）。
+ */
+const NAMESPACE_DEF_KINDS = new Set<string>([
+  'partDef',
+  'portDef',
+  'itemDef',
+  'interfaceDef',
+  'occurrenceDef',
+  'connectionDef',
+  'actionDefinition',
+  'stateDefinition',
+  'calcDefinition',
+  'useCaseDef',
+  'analysisCaseDef',
+  'verificationCaseDef',
+]);
+
+const GENERIC_USAGE_KINDS = new Set<string>([  'actionUsage',
   'sendActionUsage',
   'acceptActionUsage',
   'performUsage',

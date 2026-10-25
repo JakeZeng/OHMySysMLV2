@@ -149,6 +149,14 @@ Browser-based SysML v2 MBSE modeling software. Differentiation: lightweight coll
   - **夹具坑②：空白点不能写死比例**。新增画布节点后，原来那块「碰巧没人」的屏幕位置被节点占了 → 按下去变成「拖节点」而不是「拖空白」。改成扫网格 + `elementFromPoint` **自校验**（命中的元素不在任何 `.react-flow__node` / 控件 / 缩略图里才算数），并且**平移之后要重新取一次**（内容挪了，老坐标可能已压在节点上）。
   - **夹具坑③（产品特性，别当 bug 修）**：React Flow 的 `autoPanOnSelection`（默认开）—— **框选矩形拖到画布边缘 40px 以内会自动平移画布**（`@xyflow/system` 的 `calcAutoPan`：越靠近边缘越快，每帧最多 15px）。所以「空白点」必须离边缘留出「拖拽距离 + 40px」的余量，否则「不按空格拖空白不产生平移」那条用例会红在一个**产品特性**上（本轮实测平移量高达 336px）。
   - **顺带**：m16-p5 的整组用例加 `test.setTimeout(90_000)`（原来吃全局 30s 预算，实测单条 26~40s，全量连跑随机红）。
+- **M19 · 第六轮（2026-10-25）需求①规范收口 + 需求②「关系在画布上可见」**：
+  - **规范收口（官方元类名）**：官方 JSON Schema（`ptc/25-04-32`）里 **`ControlFlow` 出现 0 次** —— 那是早期草案的说法，2025 版正式规范只剩 `Flow` / `FlowUsage` / `FlowDefinition` / `FlowEnd`。我们 AST 里的 `kind: 'controlFlow'` 是**非官方元类** → 统一改成官方的 **`flowUsage`**（`ast/model.ts` / `sysml.pegjs` / `textEdit` / `TreeRow` / 官方语法用例同步改）。同理 **`ItemUsage.referenced` 也不是官方关键字**（schema 里 `referenced` 出现 0 次，官方用 `~` 引用标记）→ 这条遗留项**关闭**，不要实现。
+  - **🔴 真 bug（解析层）**：`QualifiedNamePart` 写的是 `tail.map(t => t[3])`，但 `tail` 的元素是**动作的返回值**（标识符字符串）不是匹配数组 → 取的是**字符串第 4 个字符**。于是官方限定名 `ActionTree::providePower` 被截成 `ActionTree::v`（`providePower[3] === 'v'`），`perform ActionTree::xxx` 全部名字错 → 端点解析、限定名查找全命中不了。改成 `[head, ...tail].join('::')`。
+  - **需求②的断点：官方模型画布上 0 条边**。三个原因：① `collectMembers` 只走**包级成员**，定义体里的 connect/flow/succession 一条都没收集（官方绝大多数 connect 写在 part def 体内）；② 端点解析只认**全局短名**，而官方端点是**相对宿主的路径**（`connect engine.drivePwrPort to transmission.clutchPort;`）；③ usage 的端口来自**类型的定义**（`part starterMotor : StarterMotor;`），端点根本找不到那个端口。
+  - **做法**：`transform/modelToFlow.ts` 新增 `BuildIndex`（宿主→成员表 / 宿主→端口表 / 限定名→节点表 / 关系桶）+ `resolveEndpointNode()`：端点按官方 §6.4 **逐层向外**解析（usage scope → 外层 scope → 限定名 → 短名），端口支持**多级类型继承**；定义体里的 connect/flow/succession/allocate 统一收集并**画成边**（`data.semantics.kind` 区分）。官方模型：**0 → 28 条边**。
+  - **顺带**：体成员的**端口徽标**上画布（62 → 80 个徽标），端口里的**嵌套端口**（官方 `port x { port y; }`）也画；**有名字的 flowUsage** 是官方 usage（命名空间成员）→ 画成节点（无名的不画）。
+  - **能力边界（明确记录）**：端点是**特性**的流画不出边 —— 端口内特性 / action 的 in-out 参数 / 属性在本产品里用**数量徽标**表达，不是画布节点。官方 69 条关系里 28 条能画成边，剩下 41 条的端点全是特性级。
+  - **回归**：新增 `poc-v2/tests/relationVisibility.test.ts`（12 条）；`officialSyntax.test.ts` 加第 28b 条（`flow` 的 kind 必须是官方 `FlowUsage`、不得出现 `controlFlow`）。
 
 
 - Tech review (`tech_review_report.md`) scored 4.4/10 — historical artifact from the pre-M1 design phase; read it before scoping new work

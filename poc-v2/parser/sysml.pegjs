@@ -885,6 +885,10 @@ PartBodyMember
   / ConnectStatement
   / RequirementUsage
   / SatisfyStatement
+  // M19 第六轮（需求①规范收口）：`flow` 一律是官方 **FlowUsage**。
+  // 官方 JSON Schema（ptc/25-04-32）里没有 `ControlFlow` 这个元类
+  // （全文出现 0 次）—— 那是早期草案的说法，2025 版正式规范只剩
+  // Flow / FlowUsage / FlowDefinition / FlowEnd。
   / FlowStatement
   / SuccessionAsUsage
   / PerformActionUsage
@@ -1850,7 +1854,15 @@ PerformTarget
 // 限定名的一段（`::` 分隔）
 QualifiedNamePart
   = head:Identifier tail:(_ "::" _ n:Identifier { return n; })*
-    { return [head, ...tail.map(t => t[3])].join('::'); }
+    {
+      // ⚠️ `tail` 的元素是**动作的返回值**（标识符字符串），不是匹配数组 ——
+      //    序列 `(_ "::" _ n:Identifier { return n; })` 的值就是 `n` 本身。
+      //    改造前写的是 `tail.map(t => t[3])` → 取的是**字符串第 4 个字符**，
+      //    于是官方限定名 `ActionTree::providePower` 被截成 `ActionTree::v`
+      //    （providePower[3] === 'v'）。
+      //    后果：perform 语句的限定名全错 → 端点解析、限定名查找全部命中不了。
+      return [head, ...tail].join('::');
+    }
 
 // ─── Exhibit State Usage（官方 §7.11 ExhibitStateUsage）─────────────────
 //
@@ -2123,7 +2135,7 @@ Activity
       for (const pair of members) {
         const m = pair[1];
         if (m.kind === 'actionDef') actions.push(m);
-        else if (m.kind === 'controlFlow') flows.push(m);
+        else if (m.kind === 'flowUsage') flows.push(m);
       }
       return {
         kind: 'activity',
@@ -2167,6 +2179,11 @@ ActionDef
 //
 // ⚠️ `from` 是**必需**的官方形式；历史形式没有 from —— 两条备选都留。
 //    `of <Type>` 必须在 `from` 之前（官方 BNF 顺序）。
+//
+// ⚠️ **kind 统一是 `flowUsage`**（M19 第六轮 · 需求①规范收口）：
+//    官方 JSON Schema（ptc/25-04-32）里没有 `ControlFlow` 元类（出现 0 次），
+//    `flow` 在 part 体 / interface 体 / action 体里都是同一个 metaclass
+//    `FlowUsage`（官方模型 ptc/25-04-31 第 316 / 321 / 737 / 759 行）。
 FlowStatement
   = OfficialFlowStatement
   / LegacyFlowStatement
@@ -2182,7 +2199,7 @@ OfficialFlowStatement
   = "flow" WS payload:(_ "of" WS t:QualifiedName { return t; })? name:(_ n:FlowName { return n; })? _ "from" WS src:FlowEndpoint WS "to" WS tgt:FlowEndpoint guard:FlowGuard? _ ";"
     {
       return {
-        kind: 'controlFlow',
+        kind: 'flowUsage',
         id: nextId('flow'),
         name: name || undefined,
         payloadType: payload || undefined,
@@ -2201,7 +2218,7 @@ LegacyFlowStatement
   = "flow" WS src:FlowEndpoint WS "to" WS tgt:FlowEndpoint guard:FlowGuard? _ ";"
     {
       return {
-        kind: 'controlFlow',
+        kind: 'flowUsage',
         id: nextId('flow'),
         source: src,
         target: tgt,

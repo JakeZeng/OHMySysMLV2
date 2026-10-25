@@ -138,7 +138,7 @@ describe('M19 需求①：SysML v2 官方语法（逐条抄自 OMG ptc/25-04-31.
     const m = ok(
       'package P { part def F { flow of Fuel from fuelOutPort.fuel to fuelInPort.fuel; } }',
     );
-    const flow = findByKind(m, 'controlFlow');
+    const flow = findByKind(m, 'flowUsage');
     expect(flow?.payloadType).toBe('Fuel');
     expect(flow?.source).toBe('fuelOutPort.fuel');
     expect(flow?.target).toBe('fuelInPort.fuel');
@@ -148,7 +148,7 @@ describe('M19 需求①：SysML v2 官方语法（逐条抄自 OMG ptc/25-04-31.
     const m = ok(
       'package P { part def F { flow generateToAmplify from generateTorque.engineTorque to amplifyTorque.engineTorque; } }',
     );
-    const flow = findByKind(m, 'controlFlow');
+    const flow = findByKind(m, 'flowUsage');
     expect(flow?.name).toBe('generateToAmplify');
     expect(flow?.source).toBe('generateTorque.engineTorque');
   });
@@ -157,7 +157,7 @@ describe('M19 需求①：SysML v2 官方语法（逐条抄自 OMG ptc/25-04-31.
     const m = ok(
       'package P { part def F { flow from weighVehicle.massMeasured to evaluatePassFail.massMeasured; } }',
     );
-    const flow = findByKind(m, 'controlFlow');
+    const flow = findByKind(m, 'flowUsage');
     expect(flow?.name).toBeUndefined();
     expect(flow?.source).toBe('weighVehicle.massMeasured');
   });
@@ -352,9 +352,18 @@ describe('M19 需求①：SysML v2 官方语法（逐条抄自 OMG ptc/25-04-31.
 
   it('28. 官方 `flow a to b;` 历史写法仍可用（不破坏存量内容）', () => {
     const m = ok('package P { activity A { action a; action b; flow a to b; } }');
-    const flow = findByKind(m, 'controlFlow');
+    const flow = findByKind(m, 'flowUsage');
     expect(flow?.source).toBe('a');
     expect(flow?.target).toBe('b');
+  });
+
+  it('28b. `flow` 的 kind 是官方元类 FlowUsage —— 官方没有 ControlFlow', () => {
+    // 官方 JSON Schema（ptc/25-04-32）里 `ControlFlow` 出现 **0 次**，
+    // 只有 Flow / FlowUsage / FlowDefinition / FlowEnd。
+    // 改造前本项目一律落成 `controlFlow`（早期草案的说法）→ 非官方元类。
+    const m = ok('package P { part def F { flow of Fuel from a.b to c.d; } }');
+    expect(findByKind(m, 'flowUsage'), 'flow 应当是官方元类 FlowUsage').toBeTruthy();
+    expect(findByKind(m, 'controlFlow'), '官方没有 ControlFlow 这个元类').toBeFalsy();
   });
 
   it('29. action usage 带类型 + 体（官方第 726 行）', () => {
